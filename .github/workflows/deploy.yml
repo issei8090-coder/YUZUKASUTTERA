@@ -142,7 +142,10 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: https://${{ vars.FIREBASE_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}.web.app
+      # environment.url では secrets を参照できない（vars だけ）。
+      # プロジェクト ID は Variables / Secrets のどちらに置いてもよいので、
+      # URL はデプロイ手順の出力から受け取る。
+      url: ${{ steps.deploy.outputs.url }}
     steps:
       # firebase.json / database.rules.json / tools/ を使うため、リポジトリも要る。
       - uses: actions/checkout@v4
@@ -168,6 +171,7 @@ jobs:
       # ありうる。ただし両者のずれは internal/order/rules_test.go が push 前に
       # 落としているので、ここで起きうるのは認証・通信の失敗だけ。
       - name: firebase deploy
+        id: deploy
         env:
           SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           FIREBASE_PROJECT: ${{ vars.FIREBASE_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}
@@ -182,6 +186,7 @@ jobs:
           npx -y firebase-tools@13 deploy --only hosting,database \
             --project "$FIREBASE_PROJECT" --non-interactive \
             --message "${GITHUB_SHA::7}"
+          echo "url=https://${FIREBASE_PROJECT}.web.app" >> "$GITHUB_OUTPUT"
 
       - name: 鍵を消す
         if: always()
