@@ -8,12 +8,10 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # デプロイは同時に 1 本だけ。進行中のものはキャンセルせず終わらせる。
 concurrency:
-  group: pages
+  group: firebase
   cancel-in-progress: false
 
 jobs:
@@ -57,35 +55,8 @@ jobs:
           # $('id') の打ち間違いは実行時まで気づけない。静的に照合する。
           node test/dom_wiring_test.mjs
 
-  rules:
-    name: データベースのルールを反映
-    # ルールと Go の型がずれると、画面では確定できるのに DB だけが全部拒否する。
-    # 人が手で貼る運用だと必ず忘れるので、テストを通ったものを自動で反映する。
-    # 認証情報が未設定のときは黙って飛ばす（ビルドは落とさない）。
-    needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - id: creds
-        env:
-          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: echo "ok=$([ -n "$SA" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
-      - if: steps.creds.outputs.ok == 'no'
-        run: |
-          echo "::warning::FIREBASE_SERVICE_ACCOUNT が未設定のため、ルールの自動反映を飛ばしました。"
-          echo "::warning::Firebase コンソールで database.rules.json を手で公開してください。"
-      - if: steps.creds.outputs.ok == 'yes'
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
-          FIREBASE_PROJECT: ${{ vars.FIREBASE_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}
-        run: |
-          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/sa.json
-          npx -y firebase-tools@13 deploy --only database --project "$FIREBASE_PROJECT" --non-interactive
-          rm -f /tmp/sa.json
-
   build:
-    name: サイトのビルド
+    name: 配信物のビルド
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -141,35 +112,77 @@ jobs:
           EOF
 
       - name: 配信物をまとめる
+        # firebase.json の hosting.public が public/ を指している。
         run: |
-          mkdir -p _site
-          cp index.html app.js sw.js main.wasm wasm_exec.js firebase-config.js _site/
+          mkdir -p public
+          cp index.html app.js sw.js main.wasm wasm_exec.js firebase-config.js public/
           # 画面が参照するものは全部入れる。ここから漏れると本番だけ壊れ、
           # ローカルでは動くので気づけない（実際に art/ が漏れていた）。
-          cp -r art lib vendor _site/
-          [ -f tailwind.local.js ] && cp tailwind.local.js _site/ || true
-          # GitHub Pages の Jekyll 処理を無効化する。
-          touch _site/.nojekyll
-          ls -la _site
+          cp -r art lib vendor public/
+          [ -f tailwind.local.js ] && cp tailwind.local.js public/ || true
+          ls -la public
 
       # 参照しているファイルが 1 つでも欠けていないか、配信物そのものを検査する。
       # 「ローカルでは動くのに本番だけ壊れる」を二度と起こさないための関門。
+      # PR でもここまで走らせる（デプロイはしない）。
       - name: 配信物の参照チェック
-        run: node tools/check-site.mjs _site
+        run: node tools/check-site.mjs public
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          path: _site
+          name: site
+          path: public
+          retention-days: 7
 
   deploy:
-    name: GitHub Pages へデプロイ
+    name: Firebase Hosting へデプロイ
     # PR ではデプロイしない（ビルドとテストまで）。
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      name: production
+      url: https://${{ vars.FIREBASE_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}.web.app
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      # firebase.json / database.rules.json / tools/ を使うため、リポジトリも要る。
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: public
+
+      # 実際に出る直前のものを、もう一度検査する。artifact の受け渡しで
+      # 欠けたものがあれば、ここで止める。
+      - name: 配信物の参照チェック
+        run: node tools/check-site.mjs public
+
+      # 画面とデータベースのルールを、同じ 1 コマンド・同じ認証で出す。
+      # ルールだけ人が手で貼る運用に戻すと必ず忘れ、「画面では確定できるのに
+      # DB だけが全部拒否する」が起きる。
+      #
+      # hosting と database は別々に反映されるため、片方だけ成功する瞬間は
+      # ありうる。ただし両者のずれは internal/order/rules_test.go が push 前に
+      # 落としているので、ここで起きうるのは認証・通信の失敗だけ。
+      - name: firebase deploy
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT: ${{ vars.FIREBASE_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: |
+          if [ -z "$SA" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT が未設定です。"
+            echo "::error::Settings > Secrets and variables > Actions > Secrets に登録してください。"
+            exit 1
+          fi
+          printf '%s' "$SA" > "$GOOGLE_APPLICATION_CREDENTIALS"
+          npx -y firebase-tools@13 deploy --only hosting,database \
+            --project "$FIREBASE_PROJECT" --non-interactive \
+            --message "${GITHUB_SHA::7}"
+
+      - name: 鍵を消す
+        if: always()
+        run: rm -f "${{ runner.temp }}/sa.json"

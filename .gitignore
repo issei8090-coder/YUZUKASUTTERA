@@ -15,3 +15,6 @@ tailwind.local.js
 
 # 作業バックアップ
 *.bak
+
+# Firebase Hosting へ出す配信物（毎回組み直す）
+public/

@@ -36,13 +36,13 @@ Go言語 (WebAssembly) と Firebase Realtime Database を使用して構築さ�
 | `internal/order/` | ドメインロジック（状態遷移・集計・CSV）。ブラウザに依存せずテスト可能 |
 | `tools/` | SDK の取り込みと、配信物の参照チェック |
 | `database.rules.json` | **Realtime Database のセキュリティルール（必ず適用すること）** |
-| `firebase.json` | `firebase deploy --only database` 用の設定 |
+| `firebase.json` | `firebase deploy` の設定（Hosting の配信内容とヘッダ、Database のルール） |
 | `firebase-config.sample.js` | 接続設定のひな形。コピーして `firebase-config.js` を作る |
 | `test/wasm_contract_test.mjs` | ビルド済み `main.wasm` を Node から叩く契約テスト |
 | `docs/FLOW.md` | 注文の一生と、場合分けの一覧（コードから起こしたもの） |
 | `docs/ISSUES.md` | 見つかっている問題と、直したもの |
-| `build.sh` | ローカル用のビルド & 配信スクリプト |
-| `.github/workflows/deploy.yml` | テスト → ビルド → GitHub Pages デプロイ |
+| `build.sh` | ローカル用のビルド & 配信スクリプト（`public/` も組むので手動デプロイに使える） |
+| `.github/workflows/deploy.yml` | テスト → ビルド → Firebase Hosting へデプロイ |
 
 `main.wasm` / `wasm_exec.js` / `firebase-config.js` は生成物のため Git 管理外です。
 
@@ -98,6 +98,9 @@ firebase login
 firebase deploy --only database
 ```
 
+CI を設定してあれば、`main` に push した時点で画面と一緒に自動で反映されます
+（下記「デプロイ（GitHub Actions → Firebase Hosting）」）。上のコマンドは手で出すときの手順です。
+
 ルールで担保していること:
 
 - **認証必須** — 匿名サインイン済みの端末だけが読み書きできる。
@@ -123,9 +126,40 @@ CI では両方に加えて `gofmt` / `go vet` が走ります。
 
 ---
 
-## 🚀 デプロイ（GitHub Pages）
+## 🚀 デプロイ（GitHub Actions → Firebase Hosting）
 
-リポジトリの **Settings → Secrets and variables → Actions → Variables** に以下を登録します。
+`main` に push すると、GitHub Actions が
+テスト → WASM ビルド → `firebase-config.js` 生成 → 配信物の参照チェック →
+`firebase deploy --only hosting,database` まで流します。
+公開先は `https://<プロジェクトID>.web.app` です。
+
+配信も Firebase に寄せてあるのは、**画面とデータベースのルールが、同じ 1 コマンド・
+同じ認証で出る**からです。ルールだけ人が手で貼る運用に戻すと必ず忘れ、
+「画面では確定できるのに DB だけが全部拒否する」が起きます。
+
+プルリクエストではビルドと参照チェックまで走り、デプロイはしません。
+
+### 1. サービスアカウントを作る
+
+GCP コンソール → IAM と管理 → サービスアカウント → 作成し、鍵（JSON）を発行します。
+ロールは最小にするなら次の 3 つ、迷うなら **Firebase Admin** 1 つで足ります。
+
+- **Firebase Hosting 管理者** — 画面を出す
+- **Firebase Realtime Database 管理者** — `database.rules.json` を反映する
+- **閲覧者（Viewer）** — CLI がプロジェクト情報を読むのに要る
+
+### 2. リポジトリに登録する
+
+**Settings → Secrets and variables → Actions** で登録します。
+
+**Secrets**（1 つだけ。これが唯一の秘密情報です）
+
+| 名前 | 中身 |
+|---|---|
+| `FIREBASE_SERVICE_ACCOUNT` | 上で発行した JSON をそのまま貼る |
+
+**Variables**（Firebase の Web API キーは公開前提の値なので、Secrets でなくてよい。
+データの保護は `database.rules.json` が行います）
 
 | 名前 | 例 |
 |---|---|
@@ -137,8 +171,31 @@ CI では両方に加えて `gofmt` / `go vet` が走ります。
 | `FIREBASE_MESSAGING_SENDER_ID` | `1234567890` |
 | `FIREBASE_APP_ID` | `1:123:web:abc` |
 
-**Settings → Pages → Source** を「GitHub Actions」にしたうえで `main` に push すると、
-テスト → WASM ビルド → `firebase-config.js` 生成 → Pages 公開まで自動で流れます。
+Secrets 側に同じ名前で入れても動きます（ワークフローが両方を見ます）。
+
+**GitHub Pages の設定は要りません。** Settings → Pages は触らなくてよく、
+以前必要だった `.nojekyll` も不要になりました。
+
+### 3. 当日に効くこと
+
+**戻せる。** Firebase コンソール → Hosting のリリース一覧から、1 つ前の版に
+その場でロールバックできます。会期中に「さっきの変更で様子がおかしい」と
+なったときに、ビルドを待たずに戻せます。
+
+**手でも出せる。** GitHub や Actions が使えないときの逃げ道として、手元から直接出せます。
+
+```bash
+./build.sh                                   # public/ まで組む
+firebase deploy --only hosting,database      # 要 firebase login
+```
+
+**古い画面が居座らない。** `firebase.json` で全ファイルに `Cache-Control: no-cache`
+を付けています。`sw.js` は network-first ですが、その手前でブラウザの HTTP キャッシュが
+古い応答を返すと network-first 自体が効かず、**会期中に修正を出しても端末が古いまま
+動き続けます**。`no-cache` は「保存はするが毎回確認する」なので、変更がなければ 304 で
+終わり、通信量はほとんど増えません。`.wasm` には `application/wasm` を明示しています
+（`instantiateStreaming` が MIME を見るため。外れても `app.js` が読み込み直すので
+落ちはしませんが、起動が遅くなります）。
 
 ---
 
