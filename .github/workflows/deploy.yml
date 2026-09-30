@@ -8,10 +8,12 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 # デプロイは同時に 1 本だけ。進行中のものはキャンセルせず終わらせる。
 concurrency:
-  group: firebase
+  group: pages
   cancel-in-progress: false
 
 jobs:
@@ -120,6 +122,8 @@ jobs:
           # ローカルでは動くので気づけない（実際に art/ が漏れていた）。
           cp -r art lib vendor public/
           [ -f tailwind.local.js ] && cp tailwind.local.js public/ || true
+          # GitHub Pages の Jekyll 処理を無効化する（_ で始まる名前が消される）。
+          touch public/.nojekyll
           ls -la public
 
       # 参照しているファイルが 1 つでも欠けていないか、配信物そのものを検査する。
@@ -128,66 +132,33 @@ jobs:
       - name: 配信物の参照チェック
         run: node tools/check-site.mjs public
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-pages-artifact@v3
         with:
-          name: site
           path: public
-          retention-days: 7
 
   deploy:
-    name: Firebase Hosting へデプロイ
+    name: GitHub Pages へデプロイ
     # PR ではデプロイしない（ビルドとテストまで）。
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
-      name: production
-      # environment.url では secrets を参照できない（vars だけ）。
-      # プロジェクト ID は Variables / Secrets のどちらに置いてもよいので、
-      # URL はデプロイ手順の出力から受け取る。
-      url: ${{ steps.deploy.outputs.url }}
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # firebase.json / database.rules.json / tools/ を使うため、リポジトリも要る。
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - id: deployment
+        uses: actions/deploy-pages@v4
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: site
-          path: public
-
-      # 実際に出る直前のものを、もう一度検査する。artifact の受け渡しで
-      # 欠けたものがあれば、ここで止める。
-      - name: 配信物の参照チェック
-        run: node tools/check-site.mjs public
-
-      # 画面とデータベースのルールを、同じ 1 コマンド・同じ認証で出す。
-      # ルールだけ人が手で貼る運用に戻すと必ず忘れ、「画面では確定できるのに
-      # DB だけが全部拒否する」が起きる。
-      #
-      # hosting と database は別々に反映されるため、片方だけ成功する瞬間は
-      # ありうる。ただし両者のずれは internal/order/rules_test.go が push 前に
-      # 落としているので、ここで起きうるのは認証・通信の失敗だけ。
-      - name: firebase deploy
-        id: deploy
-        env:
-          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          FIREBASE_PROJECT: ${{ vars.FIREBASE_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+      # ルールは画面と一緒には出ない。database.rules.json を変えたら、
+      # Firebase コンソールに人が貼る必要がある。貼り忘れると $other:false に
+      # よって全書き込みが拒否される（過去 4 回これで止まっている）。
+      # 画面側は rulesVersion を測って赤い帯を出すので、当日はそれで気づく。
+      - name: ルールの貼り忘れを促す
         run: |
-          if [ -z "$SA" ]; then
-            echo "::error::FIREBASE_SERVICE_ACCOUNT が未設定です。"
-            echo "::error::Settings > Secrets and variables > Actions > Secrets に登録してください。"
-            exit 1
-          fi
-          printf '%s' "$SA" > "$GOOGLE_APPLICATION_CREDENTIALS"
-          npx -y firebase-tools@13 deploy --only hosting,database \
-            --project "$FIREBASE_PROJECT" --non-interactive \
-            --message "${GITHUB_SHA::7}"
-          echo "url=https://${FIREBASE_PROJECT}.web.app" >> "$GITHUB_OUTPUT"
-
-      - name: 鍵を消す
-        if: always()
-        run: rm -f "${{ runner.temp }}/sa.json"
+          echo "### 配信しました" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "画面: ${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**database.rules.json を変えた場合は、Firebase コンソール →" >> "$GITHUB_STEP_SUMMARY"
+          echo "Realtime Database → ルール に貼って公開してください。**" >> "$GITHUB_STEP_SUMMARY"
+          echo "貼っていないと画面上部に赤い帯が出て、注文が 1 件も保存されません。" >> "$GITHUB_STEP_SUMMARY"

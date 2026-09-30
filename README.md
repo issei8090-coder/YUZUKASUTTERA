@@ -42,7 +42,7 @@ Go言語 (WebAssembly) と Firebase Realtime Database を使用して構築さ�
 | `docs/FLOW.md` | 注文の一生と、場合分けの一覧（コードから起こしたもの） |
 | `docs/ISSUES.md` | 見つかっている問題と、直したもの |
 | `build.sh` | ローカル用のビルド & 配信スクリプト（`public/` も組むので手動デプロイに使える） |
-| `.github/workflows/deploy.yml` | テスト → ビルド → Firebase Hosting へデプロイ |
+| `.github/workflows/deploy.yml` | テスト → ビルド → GitHub Pages へデプロイ |
 
 `main.wasm` / `wasm_exec.js` / `firebase-config.js` は生成物のため Git 管理外です。
 
@@ -98,8 +98,11 @@ firebase login
 firebase deploy --only database
 ```
 
-CI を設定してあれば、`main` に push した時点で画面と一緒に自動で反映されます
-（下記「デプロイ（GitHub Actions → Firebase Hosting）」）。上のコマンドは手で出すときの手順です。
+**ルールは CI では出ません。** 配信先は GitHub Pages なので、画面だけが自動で出ます。
+`database.rules.json` を変えたら上のコマンド、または Firebase コンソール →
+Realtime Database → ルール に貼って公開してください。貼り忘れると
+`$other: false` によって全書き込みが拒否されます（過去 4 回これで止まっています）。
+画面は起動時に `rulesVersion` を測り、古ければ上部に赤い帯を出します。
 
 ルールで担保していること:
 
@@ -126,27 +129,27 @@ CI では両方に加えて `gofmt` / `go vet` が走ります。
 
 ---
 
-## 🚀 デプロイ（GitHub Actions → Firebase Hosting）
+## 🚀 デプロイ（GitHub Actions → GitHub Pages）
 
 `main` に push すると、GitHub Actions が
 テスト → WASM ビルド → `firebase-config.js` 生成 → 配信物の参照チェック →
-`firebase deploy --only hosting,database` まで流します。
-公開先は `https://<プロジェクトID>.web.app` です。
+GitHub Pages へのデプロイまで流します。
+公開先は `https://<ユーザー名>.github.io/<リポジトリ名>/` です。
 
-配信も Firebase に寄せてあるのは、**画面とデータベースのルールが、同じ 1 コマンド・
-同じ認証で出る**からです。ルールだけ人が手で貼る運用に戻すと必ず忘れ、
-「画面では確定できるのに DB だけが全部拒否する」が起きます。
+**出るのは画面だけです。** `database.rules.json` は CI では反映されないので、
+変えたときは人が貼ります（「セキュリティ」の節）。忘れると全書き込みが拒否され、
+症状は「画面では確定できるのに何も保存されない」になります。その代わり、
+画面が起動時に `rulesVersion` を測って赤い帯を出すので、当日はそこで気づけます。
 
 プルリクエストではビルドと参照チェックまで走り、デプロイはしません。
 
-### 1. サービスアカウントを作る
+### 1. Pages を有効にする
 
-GCP コンソール → IAM と管理 → サービスアカウント → 作成し、鍵（JSON）を発行します。
-ロールは最小にするなら次の 3 つ、迷うなら **Firebase Admin** 1 つで足ります。
+**Settings → Pages → Build and deployment → Source を「GitHub Actions」**にします。
+ブランチを選ぶ方式ではありません（ワークフローが成果物を直接上げます）。
 
-- **Firebase Hosting 管理者** — 画面を出す
-- **Firebase Realtime Database 管理者** — `database.rules.json` を反映する
-- **閲覧者（Viewer）** — CLI がプロジェクト情報を読むのに要る
+サービスアカウント（`FIREBASE_SERVICE_ACCOUNT`）は要りません。Pages への配信には
+`GITHUB_TOKEN` しか使わないので、リポジトリに置く秘密情報はゼロになります。
 
 ### 2. リポジトリに登録する
 
@@ -173,21 +176,25 @@ GCP コンソール → IAM と管理 → サービスアカウント → 作成
 
 Secrets 側に同じ名前で入れても動きます（ワークフローが両方を見ます）。
 
-**GitHub Pages の設定は要りません。** Settings → Pages は触らなくてよく、
-以前必要だった `.nojekyll` も不要になりました。
-
 ### 3. 当日に効くこと
 
-**戻せる。** Firebase コンソール → Hosting のリリース一覧から、1 つ前の版に
-その場でロールバックできます。会期中に「さっきの変更で様子がおかしい」と
-なったときに、ビルドを待たずに戻せます。
+**戻し方。** Pages にはリリース一覧が無いので、戻すときは `git revert` して push、
+または Actions の前の成功 run を **Re-run all jobs** します。どちらもビルドを
+一度通すので、数分かかります。
 
 **手でも出せる。** GitHub や Actions が使えないときの逃げ道として、手元から直接出せます。
+`firebase.json` は残してあるので、Firebase Hosting を使う形にも戻せます。
 
 ```bash
-./build.sh                                   # public/ まで組む
-firebase deploy --only hosting,database      # 要 firebase login
+./build.sh serve                             # public/ を組んで http://localhost:8080
+firebase deploy --only database              # ルールだけを出す（要 firebase login）
 ```
+
+**キャッシュに注意。** GitHub Pages は応答に `Cache-Control: max-age=600` を付けます
+（こちらからは変えられません）。`sw.js` は network-first ですが、その手前のブラウザの
+HTTP キャッシュが古い応答を返すと network-first が効かず、**修正を出しても最大 10 分は
+端末が古いまま動きます**。会期中に直したものを急いで行き渡らせるときは、
+端末側でスーパーリロード（またはタブを開き直す）が要ります。
 
 **古い画面が居座らない。** `firebase.json` で全ファイルに `Cache-Control: no-cache`
 を付けています。`sw.js` は network-first ですが、その手前でブラウザの HTTP キャッシュが
