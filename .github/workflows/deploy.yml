@@ -1,0 +1,175 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# デプロイは同時に 1 本だけ。進行中のものはキャンセルせず終わらせる。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: ドメインロジックのテスト
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l . )
+          if [ -n "$unformatted" ]; then
+            echo "gofmt が必要なファイル:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: |
+          go vet ./internal/...
+          GOOS=js GOARCH=wasm go vet .
+
+      - name: go test
+        run: go test -race ./internal/...
+
+      # index.html が呼ぶとおりに main.wasm を叩き、JS との契約を検証する。
+      # Go 側のテストだけでは syscall/js の受け渡しまでは確認できない。
+      - name: WASM ビルド & 契約テスト
+        run: |
+          GOOS=js GOARCH=wasm go build -o main.wasm .
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .
+          node test/wasm_contract_test.mjs
+          node test/wasm_ready_guard_test.mjs
+          node test/tag_contract_test.mjs
+          # 画面側のロジック（在庫・札・営業回）と、Go との二重実装のずれ。
+          node test/pure_logic_test.mjs
+          node test/pure_parity_test.mjs
+          # $('id') の打ち間違いは実行時まで気づけない。静的に照合する。
+          node test/dom_wiring_test.mjs
+
+  rules:
+    name: データベースのルールを反映
+    # ルールと Go の型がずれると、画面では確定できるのに DB だけが全部拒否する。
+    # 人が手で貼る運用だと必ず忘れるので、テストを通ったものを自動で反映する。
+    # 認証情報が未設定のときは黙って飛ばす（ビルドは落とさない）。
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: creds
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: echo "ok=$([ -n "$SA" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - if: steps.creds.outputs.ok == 'no'
+        run: |
+          echo "::warning::FIREBASE_SERVICE_ACCOUNT が未設定のため、ルールの自動反映を飛ばしました。"
+          echo "::warning::Firebase コンソールで database.rules.json を手で公開してください。"
+      - if: steps.creds.outputs.ok == 'yes'
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
+          FIREBASE_PROJECT: ${{ vars.FIREBASE_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/sa.json
+          npx -y firebase-tools@13 deploy --only database --project "$FIREBASE_PROJECT" --non-interactive
+          rm -f /tmp/sa.json
+
+  build:
+    name: サイトのビルド
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: WASM をビルド
+        run: |
+          GOOS=js GOARCH=wasm go build \
+            -ldflags "-s -w -X main.version=${GITHUB_SHA::7}" \
+            -o main.wasm .
+          ls -lh main.wasm
+
+      - name: wasm_exec.js をコピー
+        # Go 1.24 で misc/wasm から lib/wasm へ移動した。両方を見る。
+        run: |
+          GOROOT=$(go env GOROOT)
+          if   [ -f "$GOROOT/lib/wasm/wasm_exec.js" ];  then cp "$GOROOT/lib/wasm/wasm_exec.js" .
+          elif [ -f "$GOROOT/misc/wasm/wasm_exec.js" ]; then cp "$GOROOT/misc/wasm/wasm_exec.js" .
+          else echo "wasm_exec.js が見つかりません"; exit 1
+          fi
+
+      - name: Firebase 接続設定を生成
+        # これらは秘密情報ではない（Web API キーは公開前提）。データの保護は
+        # database.rules.json が行う。リポジトリ変数・シークレットどちらでも動く。
+        env:
+          API_KEY:     ${{ vars.FIREBASE_API_KEY     || secrets.FIREBASE_API_KEY }}
+          AUTH_DOMAIN: ${{ vars.FIREBASE_AUTH_DOMAIN || secrets.FIREBASE_AUTH_DOMAIN }}
+          DB_URL:      ${{ vars.FIREBASE_DATABASE_URL || secrets.FIREBASE_DATABASE_URL }}
+          PROJECT_ID:  ${{ vars.FIREBASE_PROJECT_ID  || secrets.FIREBASE_PROJECT_ID }}
+          BUCKET:      ${{ vars.FIREBASE_STORAGE_BUCKET || secrets.FIREBASE_STORAGE_BUCKET }}
+          SENDER_ID:   ${{ vars.FIREBASE_MESSAGING_SENDER_ID || secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          APP_ID:      ${{ vars.FIREBASE_APP_ID      || secrets.FIREBASE_APP_ID }}
+        run: |
+          if [ -z "$DB_URL" ] || [ -z "$API_KEY" ]; then
+            echo "::error::FIREBASE_API_KEY と FIREBASE_DATABASE_URL を"
+            echo "::error::リポジトリの Settings > Secrets and variables > Actions に設定してください。"
+            exit 1
+          fi
+          cat > firebase-config.js <<EOF
+          window.FIREBASE_CONFIG = {
+            apiKey: "${API_KEY}",
+            authDomain: "${AUTH_DOMAIN}",
+            databaseURL: "${DB_URL}",
+            projectId: "${PROJECT_ID}",
+            storageBucket: "${BUCKET}",
+            messagingSenderId: "${SENDER_ID}",
+            appId: "${APP_ID}"
+          };
+          EOF
+
+      - name: 配信物をまとめる
+        run: |
+          mkdir -p _site
+          cp index.html app.js sw.js main.wasm wasm_exec.js firebase-config.js _site/
+          # 画面が参照するものは全部入れる。ここから漏れると本番だけ壊れ、
+          # ローカルでは動くので気づけない（実際に art/ が漏れていた）。
+          cp -r art lib vendor _site/
+          [ -f tailwind.local.js ] && cp tailwind.local.js _site/ || true
+          # GitHub Pages の Jekyll 処理を無効化する。
+          touch _site/.nojekyll
+          ls -la _site
+
+      # 参照しているファイルが 1 つでも欠けていないか、配信物そのものを検査する。
+      # 「ローカルでは動くのに本番だけ壊れる」を二度と起こさないための関門。
+      - name: 配信物の参照チェック
+        run: node tools/check-site.mjs _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: GitHub Pages へデプロイ
+    # PR ではデプロイしない（ビルドとテストまで）。
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

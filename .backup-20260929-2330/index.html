@@ -1,0 +1,2146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ゆず香ステラ — 注文管理</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+
+<script src="wasm_exec.js"></script>
+<style>
+/* ============================================================
+   ゆず香ステラ — デザイントークン
+   配色はモックアップ（157331/157332.jpg）から実測した値。
+   金色 #BB985F はクリーム地に対して約2.4:1 しかないため、
+   罫線・装飾専用とし、文字色には一切使わない。
+   ============================================================ */
+:root{
+  --cream:#FCF6DC;      /* 地 */
+  --card:#FDF8E4;       /* カード地 */
+  --lift:#FFFBEC;       /* 一段明るい面 */
+  --brown:#613E28;      /* 主文字・CTA（クリーム地に 9.0:1） */
+  --brown-soft:#6B4E35; /* 本文（クリーム地に 6.3:1） */
+  --gold:#BB985F;       /* 罫線・装飾のみ。地に対し 2.5:1 なので文字には使わない */
+  --gold-text:#8A6C34;  /* 金系の文字用。地に対し 4.5:1 を満たす濃さ */
+  --gold-line:rgba(187,152,95,.38);
+  --yellow:#F1CA63;     /* ステッパー */
+  --yellow-soft:#F5E2A5;
+  --leaf:#7E8A4A;
+  --red:#A63D30;        /* 中止・取消 */
+
+  --serif:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',YuMincho,'MS PMincho',serif;
+  --sans:'Zen Kaku Gothic New','Hiragino Sans','Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif;
+
+  --r-card:22px;
+  --r-ctl:999px;
+  --tap:56px;           /* 主要操作の最小タップ寸法 */
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{touch-action:manipulation;-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--cream);color:var(--brown-soft);
+  font-family:var(--sans);font-size:16px;line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:env(safe-area-inset-bottom);
+  overflow-x:hidden;
+}
+button{font:inherit;color:inherit}
+img{max-width:100%;display:block}
+
+/* --- 背景の水彩装飾（モックアップから切り出し） --- */
+.deco{position:fixed;pointer-events:none;user-select:none;z-index:0;opacity:.95}
+body[data-tab="kitchen"] .deco,
+body[data-tab="records"] .deco{opacity:.35}
+.deco-tl{top:0;left:0;width:min(23vw,300px)}
+.deco-tr{top:0;right:0;width:min(19vw,246px)}
+.deco-bl{bottom:0;left:0;width:min(19vw,255px)}
+.deco-br{bottom:0;right:0;width:min(20vw,256px)}
+@media (max-width:820px){ .deco-tr,.deco-bl{display:none} .deco-tl,.deco-br{width:38vw;opacity:.6} }
+
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 24px 64px}
+
+/* --- 表札 --- */
+.masthead{text-align:center;padding:38px 0 26px}
+.brand{
+  font-family:var(--serif);font-weight:600;color:var(--brown);
+  font-size:clamp(34px,5.4vw,58px);letter-spacing:.14em;line-height:1.2;margin:0;
+}
+.romaji{
+  font-family:var(--serif);color:var(--gold-text);font-size:clamp(12px,1.4vw,16px);
+  letter-spacing:.42em;margin:10px 0 0;text-indent:.42em;
+}
+.rule{display:flex;align-items:center;justify-content:center;gap:14px;margin:18px auto 0;max-width:640px}
+.rule::before,.rule::after{content:"";height:1px;background:var(--gold-line);flex:1}
+.rule img{width:42px}
+.tagline{font-size:clamp(14px,1.6vw,17px);color:var(--brown-soft);margin:14px 0 0;letter-spacing:.08em}
+
+/* 厨房・受渡では表札を畳んで作業領域を広く取る */
+body[data-tab="kitchen"] .masthead,
+body[data-tab="records"] .masthead{padding:22px 0 14px}
+body[data-tab="kitchen"] .romaji, body[data-tab="records"] .romaji,
+body[data-tab="kitchen"] .rule,   body[data-tab="records"] .rule,
+body[data-tab="kitchen"] .tagline,body[data-tab="records"] .tagline{display:none}
+body[data-tab="kitchen"] .brand,  body[data-tab="records"] .brand{font-size:clamp(22px,3vw,30px)}
+
+/* --- 画面切替（設営時のみ使う控えめなもの。受付はお客様に向くため前面に出さない） --- */
+.nav-mini{position:fixed;right:14px;bottom:14px;z-index:40;
+  right:calc(14px + env(safe-area-inset-right));bottom:calc(14px + env(safe-area-inset-bottom))}
+.nav-toggle{
+  width:var(--tap);height:var(--tap);border-radius:50%;cursor:pointer;
+  background:var(--card);border:1px solid var(--gold-line);color:var(--gold-text);
+  display:grid;place-items:center;opacity:.5;transition:opacity .2s ease,background .2s ease;
+}
+.nav-toggle:hover,.nav-toggle:focus-visible,.nav-toggle[aria-expanded="true"]{opacity:1;background:var(--lift)}
+.nav-toggle svg{width:22px;height:22px}
+.nav-menu{position:absolute;right:0;bottom:calc(var(--tap) + 10px);min-width:190px;
+  background:var(--lift);border:1px solid var(--gold);border-radius:18px;padding:8px;
+  display:flex;flex-direction:column;gap:4px}
+.nav-menu button{
+  min-height:var(--tap);padding:0 20px;border-radius:12px;cursor:pointer;text-align:left;
+  font-family:var(--serif);font-size:17px;letter-spacing:.08em;
+  background:transparent;border:0;color:var(--brown-soft);
+}
+.nav-menu button:hover{background:var(--card)}
+.nav-menu button[aria-current="page"]{background:var(--brown);color:var(--lift)}
+
+/* --- 面 --- */
+.panel{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:30px}
+.panel + .panel{margin-top:26px}
+.sec-title{
+  font-family:var(--serif);font-weight:600;color:var(--brown);
+  font-size:clamp(20px,2.4vw,26px);letter-spacing:.1em;margin:0 0 20px;
+}
+
+/* --- 商品カード --- */
+.menu{display:grid;grid-template-columns:repeat(2,1fr);gap:24px}
+@media (max-width:880px){ .menu{grid-template-columns:1fr} }
+
+.item{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:26px;display:flex;flex-direction:column;gap:20px}
+.item-head{display:flex;gap:22px;align-items:flex-start}
+.item-photo{width:172px;flex:none;border-radius:16px;overflow:hidden;border:1px solid var(--gold-line)}
+.item-photo img{width:100%;height:auto;aspect-ratio:242/316;object-fit:cover}
+.item-body{min-width:0;flex:1}
+.item-name{font-family:var(--serif);font-weight:600;color:var(--brown);font-size:clamp(21px,2.5vw,27px);letter-spacing:.08em;margin:0}
+.item-name::after{content:"";display:block;width:52px;height:1px;background:var(--gold);margin:12px 0 14px}
+.item-note{font-size:14px;line-height:1.85;margin:0;max-width:34ch}
+.price-row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:18px 0 0}
+.item-mark{width:74px;height:auto;flex:none}
+.item-price{font-family:var(--serif);color:var(--brown);font-size:32px;font-weight:500;margin:0;letter-spacing:.04em}
+.item-price small{font-size:17px;margin-left:2px}
+.item-per{display:block;font-family:var(--sans);font-size:13px;color:var(--brown-soft);letter-spacing:.04em;margin-top:2px}
+.order-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:0 0 10px}
+.tagmode{
+  min-height:40px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:13px;letter-spacing:.06em;border:1px solid var(--gold);background:transparent;color:var(--brown-soft);
+}
+.tagmode[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
+/* 番号札を使わない時間は、番号を出す動線そのものを消す */
+body[data-tags="false"] #confirm-now{font-family:var(--serif);font-size:clamp(19px,2.3vh,24px);
+  background:var(--brown);border-color:var(--brown);color:var(--lift);padding:0 46px}
+body[data-tags="false"] #lane-note{color:var(--brown-soft)}
+.lane-note{margin:0;font-size:13px;letter-spacing:.06em;color:var(--brown-soft);text-align:right}
+.lane-note[data-warn="true"]{color:var(--red);font-weight:700;text-align:center}
+.item-stock{margin:10px 0 0;font-size:14px;letter-spacing:.06em}
+.item-stock[data-state="low"]{color:#8A6A1E;font-weight:700}
+.item-stock[data-state="out"]{color:var(--red);font-weight:700}
+.item[data-soldout="true"] .item-photo{filter:grayscale(1);opacity:.5}
+.item[data-soldout="true"] .stepper{opacity:.45}
+.item[data-soldout="true"] .item-name,
+.item[data-soldout="true"] .item-price{opacity:.55}
+
+/* --- ステッパー --- */
+.stepper{display:flex;align-items:center;justify-content:space-between;gap:16px;background:var(--lift);border-radius:var(--r-ctl);padding:10px 14px}
+.step{
+  width:var(--tap);height:var(--tap);flex:none;border-radius:50%;border:none;
+  background:var(--yellow);color:var(--brown);cursor:pointer;
+  display:grid;place-items:center;transition:transform .15s ease,background .15s ease;
+}
+.step:hover{background:#EDBF4C}
+.step:active{transform:scale(.93)}
+.step[disabled]{background:var(--yellow-soft);color:#8B7550;cursor:not-allowed}
+.step svg{width:24px;height:24px}
+.qty{font-family:var(--serif);color:var(--brown);font-size:34px;font-weight:500;min-width:3.2em;text-align:center}
+.qty small{font-size:17px;margin-left:3px}
+.qty[data-zero="true"]{color:#A8916B}
+
+/* --- 合計・CTA --- */
+.total-row{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap;margin:34px 0 0}
+.total-label{font-size:17px;letter-spacing:.14em}
+.total-yen{font-family:var(--serif);color:var(--brown);font-size:clamp(38px,5.6vw,56px);font-weight:500;letter-spacing:.03em}
+.total-yen small{font-size:.45em;margin-left:4px}
+
+.cta-row{display:flex;align-items:center;justify-content:center;gap:18px;margin:26px 0 0;flex-wrap:wrap}
+.cta-row--ruled::before,.cta-row--ruled::after{content:"";height:1px;background:var(--gold-line);flex:1 1 60px;max-width:170px}
+
+
+@media (max-width:620px){ .cta-row--ruled::before,.cta-row--ruled::after{display:none} }
+.cta{
+  font-family:var(--serif);font-size:clamp(19px,2.3vw,24px);letter-spacing:.14em;
+  min-height:68px;padding:0 54px;border-radius:var(--r-ctl);cursor:pointer;
+  background:var(--brown);color:var(--lift);border:1px solid var(--brown);
+  outline:3px solid transparent;outline-offset:-7px;
+  box-shadow:inset 0 0 0 1px rgba(241,202,99,.55);
+  display:inline-flex;align-items:center;gap:20px;transition:background .2s ease;
+}
+.cta:hover{background:#4E3120}
+.cta[disabled]{background:#D8CBB4;border-color:#D8CBB4;color:#7C6A52;box-shadow:none;cursor:not-allowed}
+.cta-ghost{
+  font-family:var(--serif);font-size:19px;letter-spacing:.14em;min-height:68px;padding:0 42px;
+  border-radius:var(--r-ctl);background:transparent;border:1px solid var(--gold);color:var(--brown-soft);
+  cursor:pointer;display:inline-flex;align-items:center;gap:16px;transition:background .2s ease;
+}
+.cta-ghost:hover{background:var(--lift)}
+#m-confirm .cta-row{gap:12px}
+
+/* 番号札は手元の実物を見て入力させる。山の並び順にも在庫表示にも依存しない。
+   OS のキーボードは文脈が合わないので、数字だけの操作盤をこの画面用に作る。 */
+.pad{margin-top:20px;border-top:1px solid var(--gold-line);padding-top:16px}
+body[data-tags="false"] .pad{display:none}
+.pad-head{font-family:var(--serif);color:var(--brown);font-size:16px;letter-spacing:.1em;margin:0 0 10px}
+.pad-display{
+  font-family:var(--serif);color:var(--brown);font-size:clamp(32px,5.6vh,50px);line-height:1.1;
+  margin:0 auto 4px;min-width:3.2em;padding:4px 20px;border-bottom:2px solid var(--gold);
+  font-variant-numeric:tabular-nums;display:inline-block;
+}
+.pad-display[data-empty="true"]{color:#C3B49A}
+.pad-err{min-height:1.2em;margin:4px 0 10px;font-size:14px;color:var(--red);font-weight:700}
+.pad-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:320px;margin:0 auto}
+.pad-keys button{
+  min-height:clamp(44px,6.6vh,56px);border-radius:12px;cursor:pointer;
+  font-family:var(--serif);font-size:clamp(19px,2.8vh,25px);color:var(--brown);
+  background:var(--lift);border:1px solid var(--gold);font-variant-numeric:tabular-nums;
+}
+.pad-keys button:hover{background:var(--card)}
+.pad-keys button:active{transform:scale(.96)}
+.pad-fn{font-size:15px !important;color:var(--brown-soft) !important;background:transparent !important}
+.pad-ok{background:var(--brown) !important;border-color:var(--brown) !important;color:var(--lift) !important;font-size:17px !important}
+.pad-ok[disabled]{background:#D8CBB4 !important;border-color:#D8CBB4 !important;color:#7C6A52 !important;cursor:not-allowed}
+
+/* 番号入力が主操作なので、確認カードを詰めて操作盤を画面内に収める。
+   写真は受付画面で既に見せているため、ここでは省く。 */
+body[data-tags="true"] #m-confirm .sheet{padding:24px 30px 0}
+body[data-tags="true"] #m-confirm .sheet > h2{font-size:clamp(19px,2.5vh,24px);margin-bottom:4px}
+body[data-tags="true"] #m-confirm .sheet-sub{margin-bottom:14px;font-size:14px}
+body[data-tags="true"] #m-confirm .recap{padding:14px}
+body[data-tags="true"] #m-confirm .recap-item img{display:none}
+body[data-tags="true"] #m-confirm .recap-item{min-width:0;gap:10px}
+body[data-tags="true"] #m-confirm .recap-total{margin-top:10px;padding-top:10px}
+body[data-tags="true"] #m-confirm .recap-total img{display:none}
+body[data-tags="true"] #m-confirm .recap-total .total-yen{font-size:clamp(26px,4vh,38px)}
+/* 金額は合計だけ見えれば足りる。商品ごとの単価は受付画面で見せている。 */
+body[data-tags="true"] #m-confirm .sheet-sub{display:none}
+body[data-tags="true"] #m-confirm .recap-items{gap:16px}
+body[data-tags="true"] #m-confirm .recap-name{font-size:15px}
+body[data-tags="true"] #m-confirm .recap-price{display:none}
+body[data-tags="true"] #m-confirm .recap-qty{font-size:13px;padding:3px 14px}
+body[data-tags="true"] #m-confirm .pad-head{font-size:15px;margin-bottom:6px}
+body[data-tags="true"] #m-confirm .pad-display{font-size:clamp(28px,4.6vh,42px);margin-bottom:2px}
+body[data-tags="true"] #m-confirm .pad-err{min-height:1em;margin:2px 0 8px;font-size:13px}
+/* 番号札モードでは「決定」が確定操作。個別の「すぐ渡す」は出さない
+   （番号を使わない時間は受付画面のトグルでまとめて切り替える）。 */
+body[data-tags="true"] #confirm-now{display:none}
+body[data-tags="true"] #m-confirm .cta-ghost{min-height:46px;font-size:16px;padding:0 30px}
+body[data-tags="true"] #m-confirm .cta-row{margin-top:12px;padding:12px 0}
+body[data-tags="true"] .pad-keys button{min-height:clamp(42px,6vh,52px)}
+
+/* --- 支払い口：お客様に見せる金額 --- */
+/* 離れたところから読める必要があるので、画面の高さいっぱいまで大きくする。 */
+.collect-amount{font-family:var(--serif);color:var(--brown);margin:0;line-height:1;
+  font-size:clamp(64px,16vh,132px);letter-spacing:.02em}
+.collect-amount small{font-size:.36em;margin-left:.1em}
+
+/* 縦に伸びても操作ボタンは常に見える位置に残す。 */
+#m-confirm .sheet{max-height:90vh;overflow-y:auto;padding-bottom:0}
+#m-confirm .cta-row{position:sticky;bottom:0;z-index:2;background:var(--cream);
+  margin-top:16px;padding:14px 0;border-top:1px solid var(--gold-line)}
+
+/* --- 直前の注文 --- */
+
+/* --- 注文カード（厨房・受渡） --- */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px}
+.ocard{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:24px;display:flex;flex-direction:column;gap:16px}
+.ocard.is-ready{background:var(--lift);border-color:var(--gold)}
+.ocard-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.ocard-num{font-family:var(--serif);color:var(--brown);font-size:40px;line-height:1;letter-spacing:.03em}
+.ocard-time{font-size:13px;text-align:right;line-height:1.5}
+.ocard-time b{display:block;font-weight:700}
+.t-warn{color:#8A6A1E}
+.t-late{color:var(--red)}
+.ocard-lines{list-style:none;margin:0;padding:0;border-top:1px solid var(--gold-line);padding-top:14px}
+.ocard-lines li{display:flex;justify-content:space-between;gap:12px;font-size:16px;padding:3px 0}
+.ocard-lines b{font-family:var(--serif);color:var(--brown);font-weight:500;font-size:19px}
+.ocard-actions{display:flex;gap:10px;margin-top:auto}
+
+.btn{
+  flex:1;min-height:var(--tap);border-radius:var(--r-ctl);cursor:pointer;
+  font-family:var(--serif);font-size:17px;letter-spacing:.1em;
+  border:1px solid var(--brown);background:var(--brown);color:var(--lift);transition:background .2s ease;
+}
+.btn:hover{background:#4E3120}
+.btn-soft{background:transparent;color:var(--brown-soft);border-color:var(--gold)}
+.btn-soft:hover{background:var(--lift)}
+
+.empty{background:var(--card);border:1px dashed var(--gold-line);border-radius:var(--r-card);padding:44px 28px;text-align:center;font-size:16px}
+
+/* --- 焼き数 --- */
+.queue{display:flex;flex-wrap:wrap;gap:34px;align-items:flex-end}
+.queue-cell{display:flex;align-items:baseline;gap:12px}
+.queue-name{font-size:16px;letter-spacing:.08em}
+.queue-n{font-family:var(--serif);color:var(--brown);font-size:52px;line-height:1}
+.queue-n small{font-size:18px;margin-left:3px}
+
+/* --- 売上 --- */
+.figures{display:flex;flex-wrap:wrap;gap:14px 52px;align-items:flex-end;border-top:1px solid var(--gold-line);padding-top:24px}
+.fig-k{font-size:14px;letter-spacing:.1em;display:block}
+.fig-v{font-family:var(--serif);color:var(--brown);font-size:34px;line-height:1.25}
+.fig-v small{font-size:16px;margin-left:2px}
+.fig-wait{margin:0;font-size:15px}
+
+/* --- 表 --- */
+.tags-count{margin:0;font-size:14px;letter-spacing:.06em}
+.tags-grid{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}
+.tag-chip{min-width:44px;min-height:34px;display:grid;place-items:center;padding:0 8px;
+  border-radius:9px;border:1px solid var(--gold-line);background:var(--lift);
+  font-size:14px;color:var(--brown-soft);font-variant-numeric:tabular-nums}
+/* 出ている札＝お客様が持っている札。手元にある札と一目で分ける。 */
+.tag-chip[data-out="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift);font-weight:700}
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:15px;min-width:760px}
+caption{text-align:left;font-size:14px;padding-bottom:12px}
+th{font-family:var(--serif);font-weight:500;color:var(--brown);text-align:left;font-size:15px;letter-spacing:.08em;padding:12px 14px;border-bottom:1px solid var(--gold);white-space:nowrap}
+td{padding:14px;border-bottom:1px solid var(--gold-line);vertical-align:middle}
+tbody tr:hover{background:var(--lift)}
+.num-cell{font-family:var(--serif);color:var(--brown);font-size:19px}
+.tag{display:inline-block;border-radius:var(--r-ctl);padding:5px 15px;font-size:13px;border:1px solid var(--gold-line);background:var(--lift);white-space:nowrap}
+.tag-unpaid{background:#7f1d1d;color:#fff}
+.tag-pending{border-color:#D8B871}
+.tag-ready{background:var(--yellow-soft);border-color:var(--yellow)}
+.tag-completed{border-color:var(--leaf);color:#4E5A2C}
+.tag-cancelled{border-color:#D8A79E;color:var(--red)}
+.row-actions{display:flex;gap:8px;justify-content:flex-end}
+.mini{min-width:var(--tap);min-height:var(--tap);padding:0 18px;white-space:nowrap;border-radius:var(--r-ctl);font-family:var(--serif);font-size:15px;cursor:pointer;background:transparent;border:1px solid var(--gold);color:var(--brown-soft)}
+.mini:hover{background:var(--lift)}
+.mini-stop{border-color:#D8A79E;color:var(--red)}
+.mini-stop:hover{background:#FBF0EE}
+
+/* --- モーダル --- */
+.modal{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(70,48,30,.42);backdrop-filter:blur(3px)}
+.modal.open{display:flex}
+.sheet{background:var(--cream);border:1px solid var(--gold);border-radius:28px;padding:40px;max-width:760px;width:100%;max-height:90vh;overflow:auto;text-align:center;position:relative}
+.sheet h2{font-family:var(--serif);color:var(--brown);font-size:clamp(23px,3vw,31px);letter-spacing:.1em;margin:0 0 8px;font-weight:600}
+.sheet-sub{font-size:15px;margin:0 0 26px}
+.recap{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:26px}
+.recap-items{display:flex;flex-wrap:wrap;gap:22px;justify-content:center}
+.recap-item{display:flex;gap:16px;align-items:center;text-align:left;min-width:230px}
+.recap-item + .recap-item{border-left:1px solid var(--gold-line);padding-left:22px}
+@media (max-width:620px){ .recap-item + .recap-item{border-left:0;padding-left:0;border-top:1px solid var(--gold-line);padding-top:18px} }
+.recap-item img{width:82px;border-radius:12px;flex:none}
+.recap-name{font-family:var(--serif);color:var(--brown);font-size:19px;letter-spacing:.06em}
+.recap-price{font-family:var(--serif);color:var(--brown);font-size:20px;margin:2px 0 6px}
+.recap-price small{font-size:13px}
+.recap-qty{display:inline-block;background:var(--lift);border-radius:var(--r-ctl);padding:4px 20px;font-size:15px}
+.recap-total{display:flex;align-items:baseline;justify-content:center;gap:24px;border-top:1px solid var(--gold-line);margin-top:22px;padding-top:20px}
+
+/* 完了オーバーレイ */
+.done{background:var(--cream)}
+.done .sheet{max-width:600px;cursor:pointer}
+.done-label{font-size:17px;letter-spacing:.16em;margin:0}
+.done-num{font-family:var(--serif);color:var(--brown);font-size:clamp(84px,17vw,150px);line-height:1;margin:14px 0 6px;letter-spacing:.03em}
+.done-meta{font-size:17px;margin:0 0 26px}
+
+/* 単価設定 */
+.field{text-align:left;margin-bottom:18px}
+.field label{display:block;font-size:15px;margin-bottom:8px;letter-spacing:.06em}
+.field input{
+  width:100%;font-family:var(--serif);font-size:26px;color:var(--brown);
+  padding:14px 18px;border-radius:14px;border:1px solid var(--gold);background:var(--lift);
+}
+.err{display:none;color:var(--red);font-size:15px;text-align:left;margin:0 0 18px}
+.field-group{font-family:var(--serif);color:var(--brown);font-size:17px;letter-spacing:.1em;font-weight:600;
+  margin:22px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--gold-line)}
+.field-group:first-child{margin-top:0}
+.field-hint{margin:6px 0 0;font-size:13px;color:var(--brown-soft)}
+/* 設定は項目が多い。入力欄だけを送り、保存・やめるは常に見える位置に残す。 */
+#m-price .sheet{display:flex;flex-direction:column;max-height:88vh;overflow:hidden}
+#m-price #price-fields{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
+#m-price .err{flex:none;margin:14px 0 0}
+#m-price .cta-row{flex:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--gold-line)}
+.err.show{display:block}
+
+/* ============================================================
+   厨房＝キッチンディスプレイ。
+   受付はお客様に向ける「見せる画面」だが、厨房は離れた位置から
+   何度も見て手を動かす「捌く画面」。用途が違うので意匠も分ける。
+   暗い地・装飾なし・サンセリフ・太い数字で、グレアと視認距離に耐えさせる。
+   ============================================================ */
+body[data-tab="kitchen"]{background:#141210;color:#F2ECE0}
+body[data-tab="kitchen"] .deco,
+body[data-tab="kitchen"] .masthead{display:none}
+body[data-tab="kitchen"] .wrap{max-width:none;padding-left:16px;padding-right:16px}
+body[data-tab="kitchen"] .nav-toggle{background:#242019;border-color:#3A322A;color:#C9BFAE}
+
+.kds{--ok:#5BB98C;--warn:#F0B429;--late:#E2574C;--line:#332C24;--panel:#1F1B16;--dim:#A99E8C;
+  display:flex;flex-direction:column;gap:12px;min-height:0}
+
+/* 上部の状況バー */
+.kds-bar{display:flex;align-items:center;gap:26px;flex-wrap:wrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 18px}
+.kds-label{font-size:15px;letter-spacing:.24em;color:var(--dim)}
+.kds-stat{font-size:15px;color:var(--dim)}
+.kds-stat b{font-size:26px;color:#F2ECE0;font-variant-numeric:tabular-nums;margin-right:2px}
+.kds-sound{margin-left:auto;display:inline-flex;align-items:center;gap:10px;
+  min-height:44px;padding:0 12px;cursor:pointer;font-size:15px;color:var(--dim)}
+.kds-sound input{width:22px;height:22px;accent-color:var(--ok)}
+
+/* 焼く数＝調理者が最初に見る数字。ここを一番大きくする */
+.kds-batch{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:12px}
+.kds-batch-cell{background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--ok);
+  border-radius:10px;padding:10px 20px;display:flex;align-items:baseline;gap:16px}
+.kds-batch-cell[data-low="true"]{border-left-color:var(--warn)}
+.kds-batch-cell[data-zero="true"]{border-left-color:var(--late);opacity:.55}
+.kds-batch-n{font-size:clamp(44px,9vh,76px);line-height:1;font-weight:800;font-variant-numeric:tabular-nums}
+.kds-batch-name{font-size:clamp(14px,2vh,19px);color:var(--dim)}
+.kds-batch-unit{font-size:clamp(13px,1.7vh,17px);color:var(--dim);margin-left:-10px}
+
+/* 伝票 */
+.kds-grid{flex:1;min-height:0;overflow-y:auto;display:grid;gap:12px;align-content:start;
+  grid-template-columns:repeat(auto-fill,minmax(226px,1fr));padding-bottom:4px}
+.kds-ticket{background:var(--panel);border:1px solid var(--line);border-top:7px solid var(--ok);
+  border-radius:10px;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.kds-ticket[data-age="warn"]{border-top-color:var(--warn)}
+.kds-ticket[data-age="late"]{border-top-color:var(--late);background:#251A17}
+.kds-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.kds-num{font-size:clamp(28px,4.4vh,38px);font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.kds-timer{font-size:clamp(17px,2.6vh,22px);font-weight:700;font-variant-numeric:tabular-nums;color:var(--dim)}
+.kds-ticket[data-age="warn"] .kds-timer{color:var(--warn)}
+.kds-ticket[data-age="late"] .kds-timer{color:var(--late)}
+
+/* 個数を商品名より大きく。読むのではなく数えるため */
+.kds-lines{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);padding-top:8px;
+  display:flex;flex-direction:column;gap:4px}
+.kds-lines li{display:flex;align-items:baseline;gap:10px}
+.kds-qty{font-size:clamp(24px,3.6vh,32px);font-weight:800;line-height:1.1;min-width:1.5em;
+  font-variant-numeric:tabular-nums}
+.kds-name{font-size:clamp(13px,1.9vh,16px);color:#D8CFBF}
+
+/* 打ち返しボタン。伝票の幅いっぱい・確認なし（誤操作は受渡側から戻せる） */
+.kds-bump{margin-top:auto;width:100%;min-height:clamp(52px,7.4vh,62px);border-radius:8px;cursor:pointer;
+  background:#2E7D55;border:1px solid #3E9D6C;color:#fff;font-size:clamp(16px,2.4vh,19px);font-weight:700;
+  letter-spacing:.08em}
+.kds-bump:hover{background:#369564}
+.kds-bump:active{transform:scale(.98)}
+/* 打ち返しボタンは常に同色。このアプリでは赤＝中止なので、
+   急ぎの伝票でもボタンを赤くすると「取り消し」に見えてしまう。
+   緊急度は伝票の枠とタイマーの色だけで伝える。 */
+
+.kds-empty{margin:0;padding:56px 20px;text-align:center;font-size:19px;color:var(--dim);
+  background:var(--panel);border:1px dashed var(--line);border-radius:10px}
+
+.kds :focus-visible{outline:3px solid #F0B429;outline-offset:3px}
+
+@media (max-width:760px){
+  .kds-batch{grid-auto-flow:row}
+  .kds-sound{margin-left:0}
+}
+
+/* ============================================================
+   呼び出し表示。お客様側に向けて離れた位置から読ませる画面。
+   受付と同じ意匠のまま、番号だけを極端に大きくする。
+   ============================================================ */
+body[data-tab="call"] .masthead{display:none}
+body[data-tab="amount"] .masthead{display:none}
+.call{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;gap:clamp(10px,2vh,22px);min-height:0;flex:1}
+.call-brand{font-family:var(--serif);color:var(--gold-text);letter-spacing:.34em;
+  font-size:clamp(13px,1.9vh,18px);margin:0;text-indent:.34em}
+.call-head{font-family:var(--serif);color:var(--brown);font-weight:600;letter-spacing:.2em;
+  font-size:clamp(22px,4vh,38px);margin:0;text-indent:.2em}
+.call-head::after{content:"";display:block;width:80px;height:1px;background:var(--gold);margin:14px auto 0}
+
+.call-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(12px,2vw,26px);
+  max-width:100%;overflow-y:auto;min-height:0}
+.call-num{
+  font-family:var(--serif);font-weight:600;line-height:1;letter-spacing:.02em;
+  font-size:clamp(46px,11vh,104px);
+  color:var(--brown);background:var(--card);border:2px solid var(--gold-line);
+  border-radius:20px;padding:clamp(10px,1.8vh,22px) clamp(18px,2.4vw,34px);
+  transition:background .25s ease,color .25s ease,border-color .25s ease;
+}
+/* 呼ばれた番号だけ反転させる。動きではなく明暗で目立たせる（遠目でも効く）。 */
+.call-num[data-on="true"]{background:var(--brown);color:var(--lift);border-color:var(--brown)}
+
+.call-empty{font-size:clamp(15px,2.2vh,20px);color:var(--brown-soft);margin:0;
+  padding:clamp(24px,5vh,56px) 20px}
+.call-foot{font-size:clamp(13px,1.8vh,17px);color:var(--brown-soft);margin:0;letter-spacing:.08em}
+.call-foot b{font-family:var(--serif);color:var(--brown);font-size:1.5em;margin-right:2px}
+
+/* --- 接続状態の警告帯 --- */
+.net-state{
+  position:sticky;top:0;z-index:90;
+  background:var(--red);color:var(--lift);
+  padding:10px 20px;text-align:center;font-size:15px;font-weight:700;
+  letter-spacing:.04em;
+}
+
+/* --- トースト --- */
+.toast{
+  position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:70;display:none;
+  max-width:min(520px,92vw);padding:18px 26px;border-radius:var(--r-ctl);
+  background:var(--brown);color:var(--lift);font-size:16px;text-align:center;
+}
+.toast.show{display:block}
+.toast[data-kind="error"]{background:var(--red)}
+
+/* --- アクセシビリティ --- */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+:where(button,input,[href],summary):focus-visible{outline:3px solid var(--brown);outline-offset:3px;border-radius:8px}
+.cta:focus-visible,.tab:focus-visible,.btn:focus-visible,.mini:focus-visible,.step:focus-visible,.cta-ghost:focus-visible{outline:3px solid var(--brown);outline-offset:4px}
+.hidden{display:none !important}
+[hidden]{display:none !important}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+}
+@media (max-width:620px){
+  .wrap{padding:0 16px 48px}
+  .panel,.item{padding:20px}
+  .item-head{flex-direction:column}
+  .item-photo{width:100%;max-width:220px}
+  .cta{width:100%;justify-content:center;padding:0 24px}
+  .cta-ghost{width:100%;justify-content:center}
+  .recap-item{min-width:0;width:100%}
+}
+/* ============================================================
+   iPad 横向き（および低い横長画面）向けの収まり調整
+   受付はお客様に向ける画面なので、スクロールせず 1 画面に収める。
+   高さを vh 基準の clamp で可変にし、768〜1024 のどの高さでも破綻させない。
+   ============================================================ */
+@media (orientation:landscape) and (min-width:700px) and (max-height:1120px){
+  body{overflow:hidden}
+  /* 警告帯は浮かせる。流れに載せると 100dvh の 1 画面組みが崩れるため。 */
+  .net-state{position:fixed;left:0;right:0;top:0;padding:8px 20px;font-size:14px;z-index:95}
+  /* 警告帯が出ている間は表札の装飾行を畳み、帯のぶんの高さを相殺する */
+  body:has(.net-state:not([hidden])) .wrap{padding-top:38px}
+  body:has(.net-state:not([hidden])) .romaji,
+  body:has(.net-state:not([hidden])) .rule,
+  body:has(.net-state:not([hidden])) .tagline{display:none}
+  .wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+    padding-bottom:calc(env(safe-area-inset-bottom) + clamp(10px,1.7vh,22px))}
+  main{flex:1;min-height:0;display:flex;flex-direction:column}
+
+  /* 表札を高さに追従させる */
+  .masthead{padding:clamp(6px,2vh,26px) 0 clamp(4px,1.2vh,16px)}
+  .brand{font-size:clamp(24px,4.6vh,46px)}
+  .romaji{font-size:clamp(10px,1.3vh,15px);margin-top:clamp(3px,.7vh,10px)}
+  .rule{margin-top:clamp(5px,1.1vh,16px)}
+  .rule img{width:clamp(22px,3.2vh,40px)}
+  .tagline{font-size:clamp(12px,1.7vh,17px);margin-top:clamp(5px,1vh,14px)}
+
+  /* ---- 受付：1 画面に収める ---- */
+  #view-order{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;gap:clamp(8px,1.7vh,24px)}
+  .menu{gap:clamp(12px,1.6vw,24px);min-height:0}
+  .item{padding:clamp(12px,2.1vh,26px);gap:clamp(8px,1.5vh,20px);min-height:0}
+  .item-head{gap:clamp(12px,1.6vw,22px)}
+  .item-photo{width:clamp(92px,17.5vh,196px)}
+  .item-name{font-size:clamp(16px,3.2vh,28px)}
+  .item-name::after{margin:clamp(6px,1vh,12px) 0 clamp(7px,1.1vh,14px)}
+  .item-note{font-size:clamp(11px,1.7vh,15px);line-height:1.75}
+  .price-row{margin-top:clamp(8px,1.4vh,18px)}
+  .item-mark{width:clamp(42px,7vh,74px)}
+  .item-price{font-size:clamp(19px,3.6vh,34px)}
+  .stepper{padding:clamp(6px,1vh,10px) clamp(10px,1.2vw,14px)}
+  .step{width:clamp(44px,7.8vh,60px);height:clamp(44px,7.8vh,60px)}
+  .qty{font-size:clamp(20px,3.8vh,36px)}
+  .total-row{margin:0;gap:clamp(12px,1.6vw,22px)}
+  .total-yen{font-size:clamp(26px,5.8vh,58px)}
+  .cta-row{margin:0}
+  .cta{min-height:clamp(50px,7.8vh,70px);font-size:clamp(16px,2.7vh,25px);padding:0 clamp(28px,4vw,54px)}
+  .cta-ghost{min-height:clamp(50px,7.6vh,68px);font-size:clamp(15px,2.3vh,19px)}
+
+  /* 直前の注文は細い帯にして高さを食わない */
+
+  /* ---- 厨房・受渡：見出しは固定、一覧だけスクロール ---- */
+  #view-kitchen{flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(8px,1.4vh,18px)}
+  #view-kitchen .sec-title{margin:0}
+  /* 厨房だけは見出しを固定して伝票欄だけを送る。記録は画面ごと送ればよい。 */
+  #kitchen-list{overflow-y:auto;min-height:0;padding-bottom:6px}
+  #view-records{flex:1;min-height:0;overflow-y:auto}
+  #view-records .sec-title{margin:0 0 14px}
+  /* 支払い口も画面ごと送る。ここを書き忘れると .wrap の overflow:hidden に
+     閉じ込められ、未払いが増えたときに下の注文へ届かなくなる。 */
+  #view-pay{flex:1;min-height:0;overflow-y:auto}
+  #view-pay .sec-title{margin:0 0 14px}
+  .panel{padding:clamp(14px,2.2vh,30px)}
+  .queue-n{font-size:clamp(30px,5.6vh,52px)}
+}
+
+/* 画面が特に低いとき（Safari のツールバーが出た 1024x768 など）は説明文を省いて確実に収める */
+@media (orientation:landscape) and (min-width:700px) and (max-height:730px){
+  body[data-tab="order"] .romaji,
+  body[data-tab="order"] .tagline{display:none}
+  .item-note{display:none}
+}
+</style>
+
+<!-- 接続設定。module より先に評価される古典スクリプト。CI が生成する。 -->
+<script src="firebase-config.js"></script>
+
+<!-- file:// で開かれたことを検知する。
+     この状況ではブラウザが ES モジュールと WASM を遮断するため、
+     下の module スクリプトは一行も実行されない（＝画面は無言で壊れる）。
+     古典スクリプトは file:// でも動くので、ここで原因を出す。 -->
+<script>
+if (location.protocol === 'file:') {
+  document.addEventListener('DOMContentLoaded', function () {
+    document.body.innerHTML =
+      '<div role="alert" style="max-width:640px;margin:12vh auto;padding:32px;font-family:system-ui,sans-serif;line-height:1.9;color:#1f2937">' +
+      '<h1 style="font-size:22px;margin:0 0 16px">このページは file:// では動きません</h1>' +
+      '<p style="margin:0 0 16px">ブラウザが WebAssembly と ES モジュールの読み込みを遮断するため、' +
+      '注文・集計・CSV のすべてが動作しません。HTTP で開き直してください。</p>' +
+      '<pre style="background:#111827;color:#f9fafb;padding:16px;border-radius:8px;overflow-x:auto;font-size:14px">' +
+      'cd ' + '&quot;プロジェクトのフォルダ&quot;\n./build.sh serve</pre>' +
+      '<p style="margin:16px 0 0">起動したら <b>http://localhost:8080</b> を開いてください。</p>' +
+      '</div>';
+  });
+}
+</script>
+</head>
+<body data-tab="order">
+
+<div id="net-state" class="net-state" role="status" hidden></div>
+
+<img class="deco deco-tl" src="art/tl.png" alt="" aria-hidden="true">
+<img class="deco deco-tr" src="art/tr.png" alt="" aria-hidden="true">
+<img class="deco deco-bl" src="art/bl.png" alt="" aria-hidden="true">
+<img class="deco deco-br" src="art/br.png" alt="" aria-hidden="true">
+
+<div class="wrap">
+
+  <header class="masthead">
+    <h1 class="brand">ゆず香ステラ</h1>
+    <p class="romaji">YUZUKA STELLA</p>
+    <div class="rule"><img src="art/divider-yuzu.png" alt="" aria-hidden="true"></div>
+    <p class="tagline">やさしい甘さ、香るゆず</p>
+  </header>
+
+
+  <p id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+
+  <main id="main">
+
+    <!-- ===== 受付 ===== -->
+    <section id="view-order" role="tabpanel" aria-labelledby="tab-order">
+      <div class="order-top">
+        <button type="button" class="tagmode" id="tagmode-toggle" aria-pressed="true">番号札を使っています</button>
+        <p class="lane-note" id="lane-note"></p>
+      </div>
+      <div class="menu" id="menu"></div>
+
+      <div class="total-row">
+        <span class="total-label">合計</span>
+        <span class="total-yen" id="total">0<small>円</small></span>
+      </div>
+
+      <div class="cta-row cta-row--ruled">
+        <button type="button" class="cta" id="submit-btn" disabled>
+          <span class="cta-label">注文を確定する</span>
+          <svg width="30" height="12" viewBox="0 0 30 12" fill="none" aria-hidden="true">
+            <path d="M0 6h27M22 1l5 5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- ===== 厨房（キッチンディスプレイ） ===== -->
+    <section id="view-kitchen" class="kds hidden">
+      <header class="kds-bar">
+        <span class="kds-label">厨房</span>
+        <span class="kds-stat"><b id="kds-tickets">0</b> 件 未処理</span>
+        <span class="kds-stat">最長待ち <b id="kds-oldest">—</b></span>
+        <label class="kds-sound">
+          <input type="checkbox" id="sound" checked>
+          <span>通知音</span>
+        </label>
+      </header>
+
+      <div class="kds-batch" id="queue"></div>
+
+      <div class="kds-grid" id="kitchen-list"></div>
+      <p class="kds-empty hidden" id="kitchen-empty">未処理の注文はありません</p>
+    </section>
+
+    <!-- ===== 呼び出し表示（お客様側に向ける画面） ===== -->
+    <section id="view-call" class="call hidden">
+      <p class="call-brand">ゆず香ステラ</p>
+      <h2 class="call-head">お呼び出し</h2>
+      <div class="call-grid" id="call-grid"></div>
+      <p class="call-empty hidden" id="call-empty">ただいまお呼び出しはありません</p>
+      <p class="call-foot"><b id="call-pending">0</b> 件 ご用意中です</p>
+    </section>
+
+    <!-- ===== 金額表示（お客様に向ける端末） ===== -->
+    <section id="view-amount" class="call hidden">
+      <p class="call-brand">ゆず香ステラ</p>
+      <h2 class="call-head">お会計</h2>
+      <div id="amount-live" class="hidden" style="text-align:center">
+        <p id="amount-num" class="call-foot" style="margin:0 0 6px"></p>
+        <p id="amount-items" class="call-empty" style="margin:0 0 10px"></p>
+        <p class="collect-amount" id="amount-yen">0<small>円</small></p>
+      </div>
+      <p class="call-empty" id="amount-idle">ただいまお会計中のお客様はいらっしゃいません</p>
+    </section>
+
+    <!-- ===== 支払い口 ===== -->
+    <section id="view-pay" role="tabpanel" aria-labelledby="tab-pay" class="hidden">
+      <div class="panel" style="margin-bottom:28px">
+        <h2 class="sec-title" style="margin:0 0 16px">未収のお会計</h2>
+        <div class="figures" id="pay-figures"></div>
+      </div>
+
+      <h2 class="sec-title">未払いの注文</h2>
+      <div class="cards" id="pay-list"></div>
+      <p class="empty hidden" id="pay-empty">未払いの注文はありません。</p>
+
+      <div class="panel" style="margin-top:34px">
+        <h2 class="sec-title" style="margin:0 0 16px">支払い済み（打ち間違いはここから戻せます）</h2>
+        <div class="cards" id="paid-list"></div>
+        <p class="empty hidden" id="paid-empty">まだ支払い済みの注文はありません。</p>
+      </div>
+    </section>
+
+    <!-- ===== 受渡・記録 ===== -->
+    <section id="view-records" role="tabpanel" aria-labelledby="tab-records" class="hidden">
+      <h2 class="sec-title">お渡しする注文</h2>
+      <div class="cards" id="ready-list"></div>
+      <p class="empty hidden" id="ready-empty">お渡し待ちの注文はありません。厨房が焼き上げるとここに出ます。</p>
+
+      <div class="panel" style="margin-top:34px">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
+          <h2 class="sec-title" style="margin:0">売上</h2>
+          <button type="button" class="cta-ghost" id="price-btn" style="min-height:var(--tap);font-size:16px;padding:0 28px">単価・在庫の設定</button>
+        </div>
+        <div class="figures" id="figures" style="margin-top:20px"></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
+          <h2 class="sec-title" style="margin:0">番号札の状況</h2>
+          <p class="tags-count" id="tags-count"></p>
+        </div>
+        <div class="tags-grid" id="tags-grid"></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center;margin-bottom:20px">
+          <h2 class="sec-title" style="margin:0">注文の記録</h2>
+          <button type="button" class="cta-ghost" id="csv-btn" style="min-height:var(--tap);font-size:16px;padding:0 28px">CSVを保存</button>
+        </div>
+        <div class="tbl-scroll">
+          <table>
+            <caption class="sr-only">全注文の記録。受付時刻、番号、商品、個数、金額、状態、操作。</caption>
+            <thead><tr>
+              <th scope="col">受付</th><th scope="col">番号</th><th scope="col">商品</th>
+              <th scope="col">カップ数</th><th scope="col">金額</th><th scope="col">状態</th>
+              <th scope="col" style="text-align:right">操作</th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="nav-mini">
+  <button type="button" class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav-menu" aria-label="担当する画面を切り替える">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+      <path d="M4 7h16M4 12h16M4 17h16"/>
+    </svg>
+  </button>
+  <div class="nav-menu" id="nav-menu" hidden>
+    <button type="button" data-go="order" aria-current="page">受付</button>
+    <button type="button" data-go="kitchen">厨房</button>
+    <button type="button" data-go="pay">支払い口</button>
+    <button type="button" data-go="amount">金額表示</button>
+    <button type="button" data-go="records">受渡・記録</button>
+    <button type="button" data-go="call">呼び出し表示</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- 確認 -->
+<!-- 受付。テンキーの「決定」は押し間違えやすく、そのまま注文が立つ。最後に一度だけ確かめる。 -->
+<div class="modal" id="m-place" role="dialog" aria-modal="true" aria-labelledby="place-h">
+  <div class="sheet">
+    <h2 id="place-h">注文を確定しますか？</h2>
+    <p class="sheet-sub" id="place-sub" style="margin:10px 0 0"></p>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
+      <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">はい、確定する</button>
+      <button type="button" class="cta-ghost" id="place-no" style="width:100%;justify-content:center">いいえ</button>
+    </div>
+  </div>
+</div>
+
+<!-- 支払い口。お客様に金額を見せ、受け取れたらスタッフが確認を押す。 -->
+<div class="modal" id="m-collect" role="dialog" aria-modal="true" aria-labelledby="collect-h">
+  <div class="sheet">
+    <p class="sheet-sub" id="collect-num" style="margin:0 0 6px;font-size:clamp(16px,2vh,20px)"></p>
+    <h2 id="collect-h" style="margin:0 0 4px">お会計</h2>
+    <p class="sheet-sub" id="collect-items" style="margin:0 0 18px"></p>
+    <p class="collect-amount" id="collect-total">0<small>円</small></p>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
+      <button type="button" class="cta" id="collect-ok" style="width:100%;justify-content:center">確認した（支払いを確定）</button>
+      <button type="button" class="cta-ghost" id="collect-back" style="width:100%;justify-content:center">戻る</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="m-unpaid" role="dialog" aria-modal="true" aria-labelledby="unpaid-h">
+  <div class="sheet">
+    <h2 id="unpaid-h">この注文はまだ未払いです</h2>
+    <p class="sheet-sub" id="unpaid-sub"></p>
+    <div class="recap">
+      <div class="recap-total">
+        <span class="total-label">お預かりする金額</span>
+        <span class="total-yen" id="unpaid-total" style="font-size:clamp(34px,5vw,48px)">0<small>円</small></span>
+      </div>
+    </div>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+      <button type="button" class="cta" id="unpaid-take" style="width:100%;justify-content:center">受け取って渡す</button>
+      <button type="button" class="cta-ghost" id="unpaid-skip" style="width:100%;justify-content:center">未払いのまま渡す</button>
+      <button type="button" class="cta-ghost" id="unpaid-back" style="width:100%;justify-content:center">戻る</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="m-confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-h">
+  <div class="sheet">
+    <h2 id="confirm-h">この内容で注文しますか？</h2>
+    <p class="sheet-sub" id="confirm-sub">よろしければ、お渡しする番号札の番号を入力してください。</p>
+    <div class="recap">
+      <div class="recap-items" id="recap-items"></div>
+      <div class="recap-total">
+        <span class="total-label">合計</span>
+        <span class="total-yen" id="recap-total" style="font-size:clamp(34px,5vw,48px)">0<small>円</small></span>
+        <img src="art/yuzu-sm.png" alt="" aria-hidden="true" style="width:74px">
+      </div>
+    </div>
+    <div class="pad" id="pad">
+      <p class="pad-head">番号札の番号を入力</p>
+      <p class="pad-display" id="pad-display" data-empty="true" role="status" aria-live="polite" aria-label="入力中の番号">—</p>
+      <p class="pad-err" id="pad-err" role="alert"></p>
+      <div class="pad-keys" id="pad-keys">
+        <button type="button" data-k="1">1</button>
+        <button type="button" data-k="2">2</button>
+        <button type="button" data-k="3">3</button>
+        <button type="button" data-k="4">4</button>
+        <button type="button" data-k="5">5</button>
+        <button type="button" data-k="6">6</button>
+        <button type="button" data-k="7">7</button>
+        <button type="button" data-k="8">8</button>
+        <button type="button" data-k="9">9</button>
+        <button type="button" data-k="back" class="pad-fn" aria-label="1文字消す">消す</button>
+        <button type="button" data-k="0">0</button>
+        <button type="button" data-k="ok" class="pad-ok" id="pad-ok" disabled>決定</button>
+      </div>
+    </div>
+
+    <div class="cta-row">
+      <button type="button" class="cta-ghost" id="confirm-back">
+        <svg width="30" height="12" viewBox="0 0 30 12" fill="none" aria-hidden="true">
+          <path d="M30 6H3M8 1L3 6l5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        戻る
+      </button>
+      <button type="button" class="cta-ghost" id="confirm-now">
+        注文を確定する
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 完了 -->
+<div class="modal done" id="m-done" role="dialog" aria-modal="true" aria-labelledby="done-h">
+  <div class="sheet" id="done-sheet">
+    <p class="done-label" id="done-h">ご注文ありがとうございました</p>
+    <p class="done-num" id="done-num">#001</p>
+    <p class="done-meta" id="done-meta"></p>
+    <button type="button" class="cta">閉じる</button>
+  </div>
+</div>
+
+<!-- 単価 -->
+<div class="modal" id="m-price" role="dialog" aria-modal="true" aria-labelledby="price-h">
+  <div class="sheet" style="max-width:520px;text-align:left">
+    <h2 id="price-h" style="text-align:center">単価・在庫の設定</h2>
+    <div id="price-fields"></div>
+    <p class="err" id="price-err"></p>
+    <div class="cta-row">
+      <button type="button" class="cta-ghost" id="price-cancel">やめる</button>
+      <button type="button" class="cta" id="price-save">保存する</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { getDatabase, ref, onValue, set, update, remove, onDisconnect, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+/* DB 書き込みの失敗理由を切り分ける。
+   PERMISSION_DENIED を「通信を確かめて」と出すと、原因がルールや認証にあるのに
+   回線を疑わせることになり、原因探しが遠回りになる。 */
+function writeHint(err, what){
+  const code = String(err?.code || err?.message || '');
+  if(code.includes('PERMISSION_DENIED') || code.includes('permission_denied'))
+    return what + '：データベースに拒否されました。ルールの公開と「匿名ログイン」の有効化を確認してください。';
+  if(code.includes('network') || code.includes('unavailable'))
+    return what + '：通信を確かめて、もう一度お試しください。';
+  return what + '：' + (err?.message || code || '不明なエラー');
+}
+
+/* 接続設定は firebase-config.js に置く（環境ごとに異なり、CI が生成する）。
+   ここの値は秘密ではない。データの保護は database.rules.json が担う。 */
+const firebaseConfig = window.FIREBASE_CONFIG;
+/* 足りないものを名指しする。「設定がありません」とだけ出すと、
+   どの値が欠けているのか分からず原因探しが遠回りになる。 */
+const configProblem = (()=>{
+  if(!firebaseConfig) return 'firebase-config.js が読み込まれていません。firebase-config.sample.js をコピーして作ってください。';
+  if(String(firebaseConfig.apiKey||'').startsWith('YOUR_') || !firebaseConfig.apiKey)
+    return 'firebase-config.js の apiKey が未設定です。';
+  if(!firebaseConfig.databaseURL)
+    return 'Realtime Database の URL（databaseURL）が未設定です。Firebase コンソールで Realtime Database を作成し、表示された URL を firebase-config.js に貼ってください。';
+  return null;
+})();
+if(configProblem){
+  document.body.insertAdjacentHTML('afterbegin',
+    '<div role="alert" style="background:#b91c1c;color:#fff;padding:16px;text-align:center;font-weight:700;line-height:1.7">'+
+    configProblem+'</div>');
+  throw new Error('FIREBASE_CONFIG: '+configProblem);
+}
+const fbApp = initializeApp(firebaseConfig);
+const auth  = getAuth(fbApp);
+const db    = getDatabase(fbApp);
+
+/* 商品マスタは goLabels() が唯一の正。WASM が来るまでは写真どおりの既定値で描く。 */
+let FLAVORS = [
+  { key:'plain',    label:'ゆずカステラ',   unit:'カップ', pieces:6, defaultPrice:250, defaultStock:100,
+    note:'ゆずの爽やかな香りが広がる、しっとりとしたカステラです。' },
+  { key:'flavor_b', label:'チョコカステラ', unit:'カップ', pieces:6, defaultPrice:250, defaultStock:100,
+    note:'ほどよい甘さのチョコレートが香る、しっとりカステラです。' }
+];
+const PHOTO = { plain:'art/yuzu.jpg', flavor_b:'art/choco.jpg' };
+const MARK  = { plain:'art/mark-yuzu.png', flavor_b:'art/mark-cacao.png' };
+let MAX_QTY = 10;
+
+let prices = { plain:250, flavor_b:250 };
+/* 商品は作り置き。stock は「当日用意した総数」で、売れた分を引いた残りが売れる数。
+   maxPerOrder は 1 組のお客様が買い占めないための 1 注文あたりの合計上限。 */
+let limits = { maxPerOrder:10, stock:{ plain:100, flavor_b:100 }, tagCount:50 };
+/* 番号札を使うかどうかは時間帯で変わる（空いていれば札は不要）。
+   店全体の運用なので端末ごとではなく共有する。 */
+let useTags = true;
+let cart   = { plain:0,   flavor_b:0   };
+let orders = [];
+let lastPending = 0, firstSnap = true;
+const flashing = new Set();
+
+const $ = id => document.getElementById(id);
+const label = k => (FLAVORS.find(f=>f.key===k)||{}).label || k;
+const unit  = k => (FLAVORS.find(f=>f.key===k)||{}).unit  || '個';
+const yen   = n => n.toLocaleString('ja-JP');
+const pieces = k => (FLAVORS.find(f=>f.key===k)||{}).pieces || 0;
+
+/* 売れた数＝キャンセル以外の全注文。受付・未処理・受渡済みのすべてが在庫を消費する。 */
+function soldOf(key){
+  let n = 0;
+  for(const o of orders){
+    if(o.status === 'cancelled') continue;
+    for(const i of (o.items||[])) if(i.flavor === key) n += i.quantity || 0;
+  }
+  return n;
+}
+const stockOf     = k => Number.isFinite(limits.stock?.[k]) ? limits.stock[k] : 0;
+const tagCount    = () => limits.tagCount || 50;
+/* いま出ている札＝お客様が持っている札。未処理と受渡待ちが該当する。 */
+function tagsInUse(){
+  const out = [];
+  for(const o of orders){
+    if((o.status === 'pending' || o.status === 'ready') && o.tag > 0) out.push(o.tag);
+  }
+  return out;
+}
+const remainingOf = k => Math.max(0, stockOf(k) - soldOf(k));
+/* いまカートに入れられる上限＝残り在庫と、1注文の残り枠の小さいほう。 */
+function headroomOf(key){
+  const others = FLAVORS.reduce((s,f)=> s + (f.key===key ? 0 : (cart[f.key]||0)), 0);
+  return Math.max(0, Math.min(remainingOf(key), limits.maxPerOrder - others));
+}
+
+/* ---------- トースト ---------- */
+let toastT;
+function toast(msg, kind='error'){
+  const t = $('toast');
+  t.textContent = msg; t.dataset.kind = kind; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), 5200);
+}
+
+/* ---------- モーダル（フォーカストラップ・Esc・復帰） ---------- */
+const FOCUSABLE = 'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])';
+let openEl = null, lastFocus = null;
+function openModal(id){
+  // 前のモーダルを閉じずに重ねると、openEl が差し替わって前の 1 枚が
+  // .open のまま取り残され、閉じる手段が無くなる。必ず差し替えにする。
+  if(openEl){
+    if(openEl.id === id) return;
+    openEl.classList.remove('open');
+  }else{
+    lastFocus = document.activeElement;   // 戻り先は最初の 1 枚だけ覚える
+  }
+  openEl = $(id); openEl.classList.add('open');
+  $('main').setAttribute('aria-hidden','true');
+  // 札のグリッドは「押した瞬間に確定」なので、開いた直後に乗せない。
+  const first = [...openEl.querySelectorAll(FOCUSABLE)]
+    .find(el => !el.closest('.pad-keys') && !el.disabled);
+  (first || openEl.querySelector(FOCUSABLE))?.focus();
+}
+function closeModal(){
+  if(!openEl) return;
+  openEl.classList.remove('open'); openEl = null;
+  $('main').removeAttribute('aria-hidden');
+  if(lastFocus && document.contains(lastFocus)) lastFocus.focus();
+}
+document.addEventListener('keydown', e=>{
+  if(!openEl) return;
+  if(e.key==='Escape'){ closeModal(); return; }
+  if(e.key!=='Tab') return;
+  const items=[...openEl.querySelectorAll(FOCUSABLE)].filter(n=>n.offsetParent!==null);
+  if(!items.length) return;
+  const first=items[0], last=items[items.length-1];
+  if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+});
+
+/* ---------- WASM ---------- */
+window.wasmReady = false;
+window.onGoWasmReady = function(){
+  // この関数は Go の main ゴルーチン上で同期実行される。
+  // 例外を漏らすと Go が panic して終了し、以後 集計も CSV も使えなくなるため、
+  // 中で必ず受け止めて外に投げない。
+  window.wasmReady = true;
+  try{
+    const res = window.goLabels?.();
+    if(res?.ok){
+      if(Array.isArray(res.flavors) && res.flavors.length) FLAVORS = res.flavors;
+      if(res.limits?.maxQuantity) MAX_QTY = res.limits.maxQuantity;
+      if(res.defaultPrices) prices = { ...res.defaultPrices, ...prices };
+      if(res.defaultLimits) limits = {
+        maxPerOrder: limits.maxPerOrder || res.defaultLimits.maxPerOrder,
+        stock: { ...res.defaultLimits.stock, ...limits.stock },
+        tagCount: limits.tagCount || res.defaultLimits.tagCount
+      };
+      renderMenu();
+    }
+  }catch(e){ console.error('goLabels:', e); }
+  try{ renderFigures(); }catch(e){ console.error('renderFigures:', e); }
+};
+const go = new Go();
+(async ()=>{
+  try{
+    const res = await fetch("main.wasm");
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    let mod;
+    try{
+      mod = await WebAssembly.instantiateStreaming(res.clone(), go.importObject);
+    }catch(_){
+      // Content-Type が application/wasm でない配信環境向けのフォールバック
+      mod = await WebAssembly.instantiate(await res.arrayBuffer(), go.importObject);
+    }
+    go.run(mod.instance);
+  }catch(e){
+    console.error(e);
+    toast("集計モジュールを読み込めません。売上とCSVは使えませんが、受付と受渡は続けられます。");
+  }
+})();
+
+/* ---------- 受付：商品カード ---------- */
+function renderMenu(){
+  $('menu').innerHTML = FLAVORS.map(f=>`
+    <article class="item" data-key="${f.key}">
+      <div class="item-head">
+        <div class="item-photo"><img src="${PHOTO[f.key]||''}" alt="${f.label}"></div>
+        <div class="item-body">
+          <h3 class="item-name">${f.label}</h3>
+          <p class="item-note">${f.note||''}</p>
+          <div class="price-row">
+            <img class="item-mark" src="${MARK[f.key]||''}" alt="" aria-hidden="true">
+            <p class="item-price" data-price="${f.key}">${yen(prices[f.key]??f.defaultPrice)}<small>円</small>
+              <span class="item-per">1${f.unit}${f.pieces?`（${f.pieces}個入り）`:''}</span></p>
+          </div>
+          <p class="item-stock" data-stock="${f.key}"></p>
+        </div>
+      </div>
+      <div class="stepper">
+        <button type="button" class="step" data-step="-1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}減らす">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>
+        </button>
+        <span class="qty" data-qty="${f.key}" data-zero="true" role="status" aria-label="${f.label}の数量">0<small>${f.unit}</small></span>
+        <button type="button" class="step" data-step="1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}増やす">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+    </article>`).join('');
+  syncCart();
+}
+
+function syncCart(){
+  // 別の端末が売り切ったときのために、まずカートを残り在庫まで詰め直す。
+  FLAVORS.forEach(f=>{
+    const left = remainingOf(f.key);
+    if((cart[f.key]||0) > left) cart[f.key] = left;
+  });
+
+  let total = 0, count = 0;
+  FLAVORS.forEach(f=>{ count += cart[f.key] || 0; });
+
+  FLAVORS.forEach(f=>{
+    const n = cart[f.key] || 0;
+    const left = remainingOf(f.key);
+    const soldOut = left <= 0;
+    total += n * (prices[f.key] ?? f.defaultPrice);
+
+    const q = document.querySelector(`[data-qty="${f.key}"]`);
+    if(q){ q.innerHTML = `${n}<small>${f.unit}</small>`; q.dataset.zero = String(n===0); }
+    const p = document.querySelector(`[data-price="${f.key}"]`);
+    if(p) p.innerHTML = `${yen(prices[f.key] ?? f.defaultPrice)}<small>円</small>`
+      + `<span class="item-per">1${f.unit}${f.pieces?`（${f.pieces}個入り）`:''}</span>`;
+
+    const st = document.querySelector(`[data-stock="${f.key}"]`);
+    if(st){
+      st.textContent = soldOut ? '売り切れ' : `残り ${left}${f.unit}`;
+      st.dataset.state = soldOut ? 'out' : (left <= 10 ? 'low' : 'ok');
+    }
+    const card = document.getElementById('card-'+f.key) || document.querySelector(`.item[data-key="${f.key}"]`);
+    if(card) card.dataset.soldout = String(soldOut);
+
+    const minus = document.querySelector(`.step[data-step="-1"][data-key="${f.key}"]`);
+    const plus  = document.querySelector(`.step[data-step="1"][data-key="${f.key}"]`);
+    if(minus) minus.disabled = n <= 0;
+    if(plus)  plus.disabled  = soldOut || n >= left || count >= limits.maxPerOrder;
+  });
+
+  $('total').innerHTML = `${yen(total)}<small>円</small>`;
+  $('submit-btn').disabled = count === 0;
+  return { total, count };
+}
+
+document.addEventListener('click', e=>{
+  const s = e.target.closest('.step');
+  if(!s) return;
+  const k = s.dataset.key, d = Number(s.dataset.step);
+  cart[k] = Math.max(0, Math.min(headroomOf(k), (cart[k]||0) + d));
+  syncCart();
+});
+
+/* ---------- 番号札モード ---------- */
+function paintTagMode(){
+  document.body.dataset.tags = String(useTags);
+  const sub = $('confirm-sub');
+  if(sub) sub.textContent = useTags
+    ? 'よろしければ、お渡しする番号札の番号を入力してください。'
+    : 'よろしければ「注文を確定する」を押してください。';
+  if(useTags && openEl?.id === 'm-confirm') padReset();
+  const now = $('confirm-now');
+  if(now) now.textContent = '注文を確定する';
+  const t = $('tagmode-toggle');
+  if(t){
+    t.setAttribute('aria-pressed', String(useTags));
+    t.textContent = useTags ? '番号札を使っています' : '番号札なしで渡しています';
+  }
+  const note = $('lane-note');
+  if(note && !useTags){ note.textContent = '番号札は使いません。そのままお渡しします。'; note.dataset.warn = 'false'; }
+  else if(note && lane) paintLane(false);
+  syncCart();
+}
+
+async function setTagMode(on){
+  useTags = on; paintTagMode();
+  try{
+    await authReady;
+    await set(ref(db,'config/useTags'), on);
+  }catch(e){ toast('番号札の設定を共有できませんでした。この端末だけ切り替わっています。'); }
+}
+
+$('tagmode-toggle')?.addEventListener('click', ()=>setTagMode(!useTags));
+
+/* ---------- 確認 ---------- */
+function cartItems(){
+  return FLAVORS.filter(f=>(cart[f.key]||0) > 0)
+    .map(f=>({ key:f.key, label:f.label, unit:f.unit, qty:cart[f.key], unitPrice:prices[f.key] ?? f.defaultPrice }));
+}
+
+/* 番号入力パッド。
+   お客様に向く画面なので、残り枚数や「次の番号」といった内部の事情は出さない。
+   出すのは打った番号と、間違ったときの理由だけ。 */
+let padValue = '';
+const padErr = msg => { $('pad-err').textContent = msg || ''; };
+
+function padRender(){
+  const d = $('pad-display');
+  d.textContent = padValue || '—';
+  d.dataset.empty = String(padValue === '');
+  $('pad-ok').disabled = padValue === '';
+}
+function padReset(){ padValue = ''; padErr(''); padRender(); }
+
+function padSubmit(){
+  const n = tagCount();
+  const t = parseInt(padValue, 10);
+  if(!Number.isFinite(t) || t < 1 || t > n) return padErr(`1〜${n} の番号を入れてください`);
+  if(tagsInUse().includes(t))              return padErr(`${t}番はまだお渡し中です`);
+
+  // テンキーの「決定」は押し間違えやすいので、最後に一度だけ確かめる。
+  pendingPlace = t;
+  const total = cartItems().reduce((sum,i)=>sum+i.qty*i.unitPrice, 0);
+  $('place-sub').innerHTML = `番号札 <b>${t}</b> 番　合計 <b>${yen(total)}</b> 円`;
+  openModal('m-place');
+}
+
+/* 確定待ちの番号札。モーダルを閉じたら必ず捨てる。 */
+let pendingPlace = null;
+
+$('place-no').addEventListener('click', ()=>{
+  pendingPlace = null;
+  openModal('m-confirm');   // 番号を打ち直せるよう確定画面に戻す
+});
+
+$('place-yes').addEventListener('click', ()=>{
+  const t = pendingPlace; pendingPlace = null;
+  closeModal();
+  if(t !== null) placeOrder(false, t);
+});
+
+$('pad-keys')?.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-k]');
+  if(!b || b.disabled) return;
+  const k = b.dataset.k;
+  if(k === 'ok') return padSubmit();
+  if(k === 'back') padValue = padValue.slice(0, -1);
+  else if(padValue.length < String(tagCount()).length) padValue = (padValue + k).replace(/^0+/, '');
+  padErr('');
+  padRender();
+});
+
+$('submit-btn').addEventListener('click', ()=>{
+  const items = cartItems();
+  if(!items.length) return;
+  $('recap-items').innerHTML = items.map(i=>`
+    <div class="recap-item">
+      <img src="${PHOTO[i.key]||''}" alt="">
+      <div>
+        <div class="recap-name">${i.label}</div>
+        <div class="recap-price">${yen(i.unitPrice)}<small>円</small></div>
+        <span class="recap-qty">${i.qty}${i.unit}</span>
+      </div>
+    </div>`).join('');
+  $('recap-total').innerHTML = `${yen(items.reduce((s,i)=>s+i.qty*i.unitPrice,0))}<small>円</small>`;
+  if(useTags) padReset();
+  openModal('m-confirm');
+});
+$('confirm-back').addEventListener('click', closeModal);
+
+/* 列がないときは番号札を出す意味がないので、その場で受渡完了として記録する。
+   売上・在庫は通常の注文とまったく同じに扱う（記録から漏らさない）。 */
+async function placeOrder(immediate, pickedTag){
+  const btn = $('confirm-now');
+  const keep = btn.innerHTML;
+  const keys = $('pad-keys');
+  btn.disabled = true;
+  if(keys) keys.querySelectorAll('button').forEach(b=>b.disabled = true);
+  if(immediate) btn.textContent = '送信中…';
+  try{
+    await authReady;   // 描画は待たせないが、書き込みは認証の後でしか通らない
+    lane.fixed = true;              // 最初の注文が出た時点で割り当てを確定する
+    const seq = await nextSeq();
+    const nowMs = Date.now();
+
+    // 番号札は使い回すので、前回の次から昇順・出ている札は飛ばす・端で折り返す。
+    const noTag = immediate || !useTags;
+    // 札は受付係が実物を見てタップしたものを使う。山の並び順に依存させない。
+    const tag = noTag ? 0 : (pickedTag || 0);
+    if(!noTag && !tag){
+      closeModal(); toast('番号札を選んでください。'); return;
+    }
+    const items = cartItems().map(i=>({ flavor:i.key, quantity:i.qty }));
+    // 在庫と上限の判定は Go を唯一の正にする（画面側の計算ずれで売り過ぎないため）。
+    const remaining = {};
+    FLAVORS.forEach(f=>{ remaining[f.key] = remainingOf(f.key); });
+
+    const built = window.goBuildOrder
+      ? window.goBuildOrder({ seq, items, prices, nowMs, maxPerOrder: limits.maxPerOrder, remaining,
+                              immediate: noTag, tag, tagCount: tagCount(), inUseTags: tagsInUse() })
+      : fallbackBuild(seq, nowMs, items, remaining, noTag, tag);
+
+    if(!built.ok){ closeModal(); toast(built.error || '注文を作成できませんでした。'); return; }
+
+    await set(ref(db, built.path), built.order);
+    closeModal();
+
+    showThanks(built.order);
+    cart = {}; syncCart();
+  }catch(err){
+    closeModal();
+    toast(writeHint(err, '注文を保存できませんでした'));
+    console.error(err);
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = keep;
+    if(keys){ keys.querySelectorAll('button').forEach(b=>b.disabled = false); padReset(); }
+  }
+}
+
+$('confirm-now').addEventListener('click', ()=>placeOrder(true));
+
+/* WASM が落ちていても受付は止めない。ID 体系は Go の FormatID と同じ。 */
+function fallbackBuild(seq, nowMs, items, remaining, immediate, tag){
+  const built = [];
+  let total = 0, qty = 0;
+  for(const it of items){
+    const up = prices[it.flavor];
+    if(!Number.isFinite(up) || up < 1) return { ok:false, error:`${label(it.flavor)}の単価が設定されていません。` };
+    if(remaining){
+      const left = remaining[it.flavor] ?? 0;
+      if(left <= 0)        return { ok:false, error:`${label(it.flavor)}は売り切れです。` };
+      if(it.quantity>left) return { ok:false, error:`${label(it.flavor)}は残り ${left}${unit(it.flavor)}です。` };
+    }
+    const price = up * it.quantity;
+    built.push({ flavor:it.flavor, quantity:it.quantity, unitPrice:up, price });
+    total += price; qty += it.quantity;
+  }
+  if(!built.length) return { ok:false, error:'商品が1つも選ばれていません。' };
+  if(qty > limits.maxPerOrder) return { ok:false, error:`1回のご注文は合計 ${limits.maxPerOrder} カップまでです。` };
+  const id = `order_${String(seq).padStart(6,'0')}_${nowMs}`;
+  const d = new Date(nowMs);
+  const o = {
+    id, seq, tag: immediate ? 0 : (tag||0),
+    number: immediate ? '' : '#'+String(tag||seq).padStart(3,'0'), items:built,
+    quantity:qty, price:total, status: immediate ? 'completed' : 'pending',
+    createdAt:d.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),
+    createdMs:nowMs, updatedMs:nowMs
+  };
+  if(built.length===1){ o.flavor = built[0].flavor; o.unitPrice = built[0].unitPrice; }
+  return { ok:true, path:'orders/'+id, order:o };
+}
+
+/* ---------- 番号の提示と呼び戻し ---------- */
+function itemsText(o){
+  return (o.items||[]).map(i=>`${label(i.flavor)} ${i.quantity}${unit(i.flavor)}`).join(' ／ ');
+}
+/* 受け付け終わりの画面。番号札を出した注文だけ番号を添える。
+   すぐ閉じて受付に戻し、次のお客様へ回せるようにする。 */
+function showThanks(o){
+  const num = $('done-num');
+  num.textContent = o.number || '';
+  num.hidden = !o.number;
+  $('done-meta').textContent = `${itemsText(o)}　合計 ${yen(o.price)}円`;
+  openModal('m-done');
+  setTimeout(()=>{ if(openEl && openEl.id === 'm-done') closeModal(); }, 3500);
+}
+$('m-done').addEventListener('click', closeModal);
+
+/* ---------- 通知音 ---------- */
+function ping(){
+  if(!$('sound')?.checked) return;
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const osc = ctx.createOscillator(), g = ctx.createGain();
+    osc.type='sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.setValueAtTime(1320, ctx.currentTime+0.12);
+    g.gain.setValueAtTime(0.25, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime+0.35);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime+0.35);
+  }catch(e){}
+}
+
+/* ---------- Firebase ---------- */
+/* サインイン失敗の原因はコードで切り分かる。まとめて「匿名を有効に」と出すと、
+   接続設定がダミーのときに的外れな案内になり、原因探しが遠回りになる。 */
+const PREVIEW_PROJECT = 'ui-preview-placeholder';
+function authHint(code){
+  if(firebaseConfig.projectId === PREVIEW_PROJECT)
+    return 'firebase-config.js がプレビュー用のダミーのままです。実在するプロジェクトの値に差し替えてください。';
+  switch(code){
+    case 'auth/api-key-not-valid':
+    case 'auth/invalid-api-key':
+      return 'firebase-config.js の apiKey が正しくありません。';
+    case 'auth/configuration-not-found':
+    case 'auth/operation-not-allowed':
+      return 'Firebase の Authentication →「ログイン方法」で「匿名」を有効にしてください。';
+    case 'auth/network-request-failed':
+      return 'ネットワークに繋がりません。通信を確かめてください。';
+    case 'auth/unauthorized-domain':
+      return 'このドメインが Authentication の承認済みドメインに入っていません。';
+    default:
+      return 'ログインできません（'+code+'）。';
+  }
+}
+
+/* ルールが auth != null を要求するため、購読を張る前にサインインを済ませる。
+   匿名セッションは localStorage に残るので 2 回目以降はオフラインでも即通る。 */
+const authReady = new Promise(resolve=>{
+  const unsub = onAuthStateChanged(auth, user=>{
+    if(user){ unsub(); resolve(); return; }
+    signInAnonymously(auth).catch(e=>{
+      unsub();
+      toast(authHint(e.code));
+      resolve();   // 購読は張る。復帰時に Firebase が読み直す。
+    });
+  });
+});
+
+/* オフラインでも Firebase は書き込みを端末内に溜めるだけなので、画面上は成功に見える。
+   しかも RTDB のキューはメモリ上にあり、この状態でリロードすると注文は消える。
+   気づけるよう接続状態を常時出す。 */
+let online = true;
+/* .info/connected は認証不要。authReady の内側に置くと、
+   オフラインでサインインが返らない間オフライン表示まで出なくなる。 */
+onValue(ref(db,'.info/connected'), snap=>{
+  online = snap.val() === true;
+  const el = $('net-state');
+  if(!el) return;
+  el.hidden = online;
+  el.textContent = 'オフライン：この端末の注文はまだ送信されていません。ページを閉じないでください。';
+});
+
+authReady.then(()=>{
+onValue(ref(db,'orders'), snap=>{
+  const v = snap.val();
+  orders = v ? Object.entries(v).map(([k,o])=>normalize(o,k)) : [];
+  const pending = orders.filter(o=>o.status==='pending').length;
+  if(!firstSnap && pending > lastPending) ping();
+  firstSnap = false; lastPending = pending;
+  renderKitchen(); renderReady(); renderPay(); renderRows(); renderFigures(); renderCall(); renderTags();
+}, ()=>toast('注文データに接続できません。通信を確かめてください。'));
+
+/* 新しいデータベースは空で、config/prices が存在しない。
+   ルールは注文の flavor が config/prices に載っていることを要求するため、
+   ここを初期化しないと注文が 1 件も通らない。
+   トランザクションにして、既に値があるときは絶対に上書きしない。 */
+async function seedDefaults(){
+  const defaults = (window.goLabels?.().defaultPrices) || prices;
+  try{
+    await runTransaction(ref(db,'config/prices'), cur => cur === null ? defaults : cur);
+  }catch(e){
+    console.error('config/prices の初期化に失敗:', e);
+    toast(writeHint(e, '初期設定を書き込めませんでした'));
+  }
+}
+seedDefaults();
+
+/* 金額表示。配信が古いまま残っていてもお客様の前に出し続けないよう、
+   一定時間で自動的に引っ込める（端末が落ちて消去が届かなかった場合の保険）。 */
+const AMOUNT_HOLD_MS = 10 * 60 * 1000;
+let amountShown = null;
+
+onValue(ref(db,'display/payment'), snap=>{
+  amountShown = snap.val();
+  renderAmount();
+}, ()=>{ /* 読めないときは何も出さない */ });
+
+function renderAmount(){
+  const live = $('amount-live'), idle = $('amount-idle');
+  if(!live || !idle) return;
+  const d = amountShown;
+  const fresh = d && d.amount > 0 && d.at && (Date.now() - d.at) < AMOUNT_HOLD_MS;
+  live.classList.toggle('hidden', !fresh);
+  idle.classList.toggle('hidden', !!fresh);
+  if(!fresh) return;
+  $('amount-num').textContent = d.number || '';
+  $('amount-items').textContent = d.items || '';
+  $('amount-yen').innerHTML = `${yen(d.amount)}<small>円</small>`;
+}
+// 期限切れを自前で引っ込める（DB の更新は来ないため）
+setInterval(renderAmount, 15000);
+
+onValue(ref(db,'config/prices'), snap=>{
+  const v = snap.val();
+  if(v){ prices = v; syncCart(); }
+}, ()=>toast('単価を読み込めません。通信を確かめてください。'));
+
+onValue(ref(db,'config/useTags'), snap=>{
+  const v = snap.val();
+  useTags = (v === null || v === undefined) ? true : v === true;
+  paintTagMode();
+}, ()=>paintTagMode());
+
+onValue(ref(db,'config/limits'), snap=>{
+  const v = snap.val();
+  if(v){
+    limits = { maxPerOrder: v.maxPerOrder || limits.maxPerOrder,
+               stock: v.stock || limits.stock,
+               tagCount: v.tagCount || limits.tagCount };
+    renderMenu(); renderKitchen(); renderFigures();
+  }
+}, ()=>toast('上限の設定を読み込めません。通信を確かめてください。'));
+});   // authReady.then
+
+/* 旧データ（items 無し）も 1 明細に寄せて、描画側を分岐させない。 */
+function normalize(o, key){
+  const r = { ...o, id:o.id||key };
+  if(!Array.isArray(r.items) || !r.items.length){
+    r.items = r.flavor ? [{ flavor:r.flavor, quantity:r.quantity||0, unitPrice:r.unitPrice||0, price:r.price||0 }] : [];
+  }
+  r.price = r.price ?? r.items.reduce((s,i)=>s+(i.price||0),0);
+  r.quantity = r.quantity ?? r.items.reduce((s,i)=>s+(i.quantity||0),0);
+  return r;
+}
+
+const seqOf = o => (o.seq||0)*1e14 + (o.createdMs||0);
+const byOrder = (a,b)=> seqOf(a)-seqOf(b);
+
+function waitText(ms){
+  if(!ms) return '';
+  const m = Math.floor((Date.now()-ms)/60000);
+  return m < 1 ? 'たった今' : `${m}分経過`;
+}
+function waitClass(ms){
+  if(!ms) return '';
+  const m = (Date.now()-ms)/60000;
+  return m>=10 ? 't-late' : m>=5 ? 't-warn' : '';
+}
+setInterval(renderReady, 15000);   // 厨房は tickKitchen が毎秒更新するので対象外
+
+function linesHTML(o){
+  return `<ul class="ocard-lines">${(o.items||[]).map(i=>
+    `<li><span>${label(i.flavor)}</span><b>${i.quantity}${unit(i.flavor)}</b></li>`).join('')}</ul>`;
+}
+
+/* ---------- 厨房（キッチンディスプレイ） ----------
+   伝票は受付順に左から並べ、経過時間で色を変える。
+   しきい値はファストフードの KDS に合わせて 3 分・6 分。
+   「困ってから」ではなく「困る前」に気づける位置に置いている。 */
+const KDS_WARN_SEC = 180;
+const KDS_LATE_SEC = 360;
+
+const elapsedSec = ms => ms ? Math.max(0, Math.floor((Date.now()-ms)/1000)) : 0;
+const mmss = sec => Math.floor(sec/60) + ':' + String(sec%60).padStart(2,'0');
+const ageOf = sec => sec>=KDS_LATE_SEC ? 'late' : sec>=KDS_WARN_SEC ? 'warn' : 'ok';
+
+function renderKitchen(){
+  const list = orders.filter(o=>o.status==='pending').sort(byOrder);
+
+  $('kitchen-list').innerHTML = list.map(o=>{
+    const sec = elapsedSec(o.createdMs);
+    return `
+    <article class="kds-ticket" data-ms="${o.createdMs||0}" data-age="${ageOf(sec)}">
+      <div class="kds-head">
+        <span class="kds-num">${o.number}</span>
+        <span class="kds-timer">${o.createdMs ? mmss(sec) : '—'}</span>
+      </div>
+      <ul class="kds-lines">
+        ${(o.items||[]).map(i=>`<li><span class="kds-qty">${i.quantity}</span><span class="kds-name">${label(i.flavor)}</span></li>`).join('')}
+      </ul>
+      <button type="button" class="kds-bump" data-act="ready" data-id="${o.id}"
+        aria-label="${o.number} を受渡待ちにする">用意した</button>
+    </article>`;
+  }).join('');
+
+  $('kitchen-list').classList.toggle('hidden', list.length === 0);
+  $('kitchen-empty').classList.toggle('hidden', list.length > 0);
+
+  // 作り置きなので、見たいのは「あと何カップ出せるか」。
+  $('queue').innerHTML = FLAVORS.map(f=>{
+    const left = remainingOf(f.key);
+    return `
+    <div class="kds-batch-cell" data-zero="${left === 0}" data-low="${left > 0 && left <= 10}">
+      <span class="kds-batch-n">${left}</span>
+      <span class="kds-batch-unit">${f.unit}</span>
+      <span class="kds-batch-name">${f.label}${left === 0 ? '（売り切れ）' : ''}</span>
+    </div>`;
+  }).join('');
+
+  $('kds-tickets').textContent = list.length;
+  tickKitchen();
+  $('live').textContent = `未処理 ${list.length}件。残り `
+    + FLAVORS.map(f=>`${f.label} ${remainingOf(f.key)}${f.unit}`).join('、');
+}
+
+/* 毎秒ここだけを書き換える。1 秒ごとに全体を描き直すと
+   スクロール位置とボタンの押下状態が飛んで、かえって使えなくなる。 */
+function tickKitchen(){
+  let oldest = -1;
+  document.querySelectorAll('.kds-ticket[data-ms]').forEach(el=>{
+    const ms = Number(el.dataset.ms);
+    if(!ms) return;
+    const sec = elapsedSec(ms);
+    if(sec > oldest) oldest = sec;
+    const t = el.querySelector('.kds-timer');
+    if(t) t.textContent = mmss(sec);
+    const age = ageOf(sec);
+    if(el.dataset.age !== age) el.dataset.age = age;
+  });
+  const el = $('kds-oldest');
+  if(el) el.textContent = oldest >= 0 ? mmss(oldest) : '—';
+}
+setInterval(()=>{ tickKitchen(); tickCall(); }, 1000);
+
+/* ---------- 受渡 ---------- */
+function renderReady(){
+  const list = orders.filter(o=>o.status==='ready').sort(byOrder);
+  $('ready-list').innerHTML = list.map(o=>`
+    <article class="ocard is-ready" id="rc-${o.id}">
+      <div class="ocard-top">
+        <span class="ocard-num">${o.number}</span>
+        <span class="ocard-time ${waitClass(o.createdMs)}">${o.createdAt||''}<b>${waitText(o.createdMs)}</b></span>
+      </div>
+      ${linesHTML(o)}
+      <div class="ocard-actions">
+        <button type="button" class="btn btn-soft" data-act="flash" data-id="${o.id}">呼ぶ</button>
+        <button type="button" class="btn" data-act="done" data-id="${o.id}">渡した</button>
+      </div>
+    </article>`).join('');
+  $('ready-empty').classList.toggle('hidden', list.length>0);
+  flashing.forEach(id=>$('rc-'+id)?.style.setProperty('outline','4px solid var(--yellow)'));
+}
+
+/* ---------- 呼び出し表示 ---------- */
+function renderCall(){
+  const ready = orders.filter(o=>o.status === 'ready').sort(byOrder);
+  $('call-grid').innerHTML = ready.map(o=>
+    `<span class="call-num" data-called-at="${o.calledAt||0}">${o.number}</span>`).join('');
+  $('call-grid').classList.toggle('hidden', ready.length === 0);
+  $('call-empty').classList.toggle('hidden', ready.length > 0);
+  $('call-pending').textContent = orders.filter(o=>o.status === 'pending').length;
+  tickCall();
+}
+
+/* 強調は時間で消える。消すためだけに全体を描き直さない。 */
+function tickCall(){
+  const now = Date.now();
+  document.querySelectorAll('.call-num[data-called-at]').forEach(el=>{
+    const at = Number(el.dataset.calledAt) || 0;
+    const on = at > 0 && now - at < CALL_HOLD_MS;
+    if((el.dataset.on === 'true') !== on) el.dataset.on = String(on);
+  });
+}
+
+/* ---------- 番号札の状況 ---------- */
+function renderTags(){
+  const grid = $('tags-grid');
+  if(!grid) return;
+  const n = tagCount();
+  const out = new Set(tagsInUse());
+  let html = '';
+  for(let t=1; t<=n; t++) html += `<span class="tag-chip" data-out="${out.has(t)}">${t}</span>`;
+  grid.innerHTML = html;
+  $('tags-count').textContent = `出ている ${out.size}枚 ／ 手元 ${n - out.size}枚（全${n}枚）`;
+}
+
+/* ---------- 記録表 ---------- */
+const TAG = { pending:['未処理','tag-pending'], ready:['受渡待ち','tag-ready'], completed:['完了','tag-completed'], cancelled:['中止','tag-cancelled'] };
+/* 支払い口。未払い＝回収すべきお会計を並べる。
+   受渡が済んでいるのに未払いの注文は取りはぐれなので先頭に出す。 */
+function renderPay(){
+  const live = orders.filter(o=>o.status!=='cancelled');
+  const unpaid = live.filter(o=>!o.paid).sort((a,b)=>{
+    const ad = a.status==='completed' ? 0 : 1, bd = b.status==='completed' ? 0 : 1;
+    return ad - bd || byOrder(a,b);
+  });
+  const paid = live.filter(o=>o.paid).sort((a,b)=>byOrder(b,a)).slice(0,20);
+
+  $('pay-list').innerHTML = unpaid.map(o=>{
+    const handed = o.status==='completed';
+    return `
+    <article class="ocard${handed ? ' is-ready' : ''}">
+      <div class="ocard-top">
+        <span class="ocard-num">${o.number}</span>
+        <span class="ocard-time">${o.createdAt||''}${handed ? '<b>お渡し済み・未払い</b>' : ''}</span>
+      </div>
+      ${linesHTML(o)}
+      <div class="ocard-actions">
+        <button type="button" class="btn" data-act="pay" data-id="${o.id}">${yen(o.price||0)}円を受け取った</button>
+        ${o.status==='ready' ? `<button type="button" class="btn btn-soft" data-act="paydone" data-id="${o.id}">受け取って渡した</button>` : ''}
+      </div>
+    </article>`;
+  }).join('');
+  $('pay-empty').classList.toggle('hidden', unpaid.length>0);
+
+  $('paid-list').innerHTML = paid.map(o=>`
+    <article class="ocard">
+      <div class="ocard-top">
+        <span class="ocard-num">${o.number}</span>
+        <span class="ocard-time">${yen(o.price||0)}円</span>
+      </div>
+      <div class="ocard-actions">
+        <button type="button" class="mini mini-stop" data-act="unpay" data-id="${o.id}" data-num="${o.number}">未払いに戻す</button>
+      </div>
+    </article>`).join('');
+  $('paid-empty').classList.toggle('hidden', paid.length>0);
+}
+
+function renderRows(){
+  if(!orders.length){
+    $('rows').innerHTML = `<tr><td colspan="7" style="text-align:center;padding:38px 14px">まだ注文がありません。受付で注文を確定するとここに記録されます。</td></tr>`;
+    return;
+  }
+  $('rows').innerHTML = [...orders].sort((a,b)=>byOrder(b,a)).map(o=>{
+    const [txt,cls] = TAG[o.status] || [o.status,''];
+    return `<tr>
+      <td>${o.createdAt||''}</td>
+      <td class="num-cell">${o.number}</td>
+      <td>${itemsText(o)}</td>
+      <td>${o.quantity}</td>
+      <td>${yen(o.price||0)}円</td>
+      <td><span class="tag ${cls}">${txt}</span>${o.status!=='cancelled' && !o.paid ? ' <span class="tag tag-unpaid">未払い</span>' : ''}</td>
+      <td><div class="row-actions">
+        ${o.status!=='cancelled' && !o.paid ? `<button type="button" class="mini" data-act="pay" data-id="${o.id}" aria-label="${o.number} の支払いを受け取った">支払い受取</button>`:''}
+        ${o.status!=='cancelled' && o.paid ? `<button type="button" class="mini" data-act="unpay" data-id="${o.id}" data-num="${o.number}" aria-label="${o.number} を未払いに戻す">未払いに戻す</button>`:''}
+        ${o.status==='completed' ? `<button type="button" class="mini" data-act="undo" data-id="${o.id}" aria-label="${o.number} をお渡し待ちに戻す">戻す</button>`:''}
+        ${o.status!=='cancelled' ? `<button type="button" class="mini mini-stop" data-act="cancel" data-id="${o.id}" data-status="${o.status}" data-num="${o.number}" aria-label="${o.number} を中止する">中止</button>`:''}
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+/* ---------- 売上 ---------- */
+function renderFigures(){
+  if(!window.wasmReady || !window.goCalculateStats){
+    $('figures').innerHTML = `<p class="fig-wait">集計を準備しています。表示されない場合は画面を読み込み直してください。</p>`;
+    return;
+  }
+  const s = window.goCalculateStats(JSON.stringify(orders));
+  if(!s || s.ok === false){ $('figures').innerHTML = `<p class="fig-wait">集計に失敗しました: ${s?.error||'不明なエラー'}</p>`; return; }
+  const cells = [
+    ...FLAVORS.map(f=>[`${f.label} 残り`, `${remainingOf(f.key)}<small>${f.unit}</small>`]),
+    // 受注額と手元の現金は一致しない。締めで照合できるよう必ず分けて出す。
+    ['受注額',      `${yen(s.totalSales||0)}<small>円</small>`],
+    ['受取済み',    `${yen(s.paidSales||0)}<small>円</small>`],
+    ['未収',        `${yen(s.unpaidSales||0)}<small>円</small>`],
+    ['お渡し済み',  `${s.completedPacks||0}<small>カップ</small>`],
+    ['未お渡し',    `${s.pendingPacks||0}<small>カップ</small>`],
+    ['注文数',      `${s.totalOrders||0}<small>件</small>`],
+    ['平均客単価',  `${yen(s.avgOrderYen||0)}<small>円</small>`]
+  ];
+  $('figures').innerHTML = cells.map(([k,v])=>`<div><span class="fig-k">${k}</span><span class="fig-v">${v}</span></div>`).join('');
+
+  // 支払い口の見出し。取りはぐれは締めで真っ先に見る数字なので独立して出す。
+  const pf = $('pay-figures');
+  if(pf){
+    const lost = s.unpaidDeliveredSales||0;
+    pf.innerHTML = [
+      ['未収金額',   `${yen(s.unpaidSales||0)}<small>円</small>`],
+      ['未払い件数', `${s.unpaidOrders||0}<small>件</small>`],
+      ['受取済み',   `${yen(s.paidSales||0)}<small>円</small>`],
+      ['渡したのに未払い', `${yen(lost)}<small>円 / ${s.unpaidDeliveredOrders||0}件</small>`]
+    ].map(([k,v])=>`<div><span class="fig-k">${k}</span><span class="fig-v"${k==='渡したのに未払い'&&lost>0?' style="color:var(--rose,#b91c1c)"':''}>${v}</span></div>`).join('');
+  }
+}
+
+/* ---------- 状態変更 ---------- */
+/* 遷移の可否はサーバー上の最新値に対して判定する。
+   ボタンに焼いた from で判定して update() すると、別端末が先に進めていた場合に
+   古い前提のまま上書きしてしまう（厨房と受渡が同時に触るので実際に起きる）。 */
+/* 未払いのまま渡してしまう事故を防ぐ。
+   ただし完全に止めると、現金を受け取ったのに打ち忘れていた場合に行列が止まる。
+   受領を促しつつ、承知のうえで渡す道も残す。 */
+function handOver(id){
+  const o = orders.find(x=>x.id===id);
+  if(!o || o.paid){ changeStatus(id,'ready','completed'); return; }
+
+  $('unpaid-sub').textContent = `${o.number}　${itemsText(o)}`;
+  $('unpaid-total').innerHTML = `${yen(o.price||0)}<small>円</small>`;
+  pendingHandOver = id;
+  openModal('m-unpaid');
+}
+
+/* 支払い口。お客様に金額を見せてから、受け取れたことをスタッフが確認して確定する。
+   対象と「渡すところまで続けるか」を保持する。閉じたら必ず捨てる。 */
+let collecting = null;
+
+function openCollect(id, alsoHandOver){
+  const o = orders.find(x=>x.id===id);
+  if(!o){ toast('注文が見つかりません'); return; }
+  collecting = { id, alsoHandOver };
+  $('collect-num').textContent = o.number || '';
+  $('collect-items').textContent = itemsText(o);
+  $('collect-total').innerHTML = `${yen(o.price||0)}<small>円</small>`;
+  $('collect-ok').textContent = alsoHandOver ? '確認した（支払いを確定して渡す）' : '確認した（支払いを確定）';
+  showAmount(o);          // お客様側の端末に金額を出す
+  openModal('m-collect');
+}
+
+/* 金額表示は別端末に出すので、DB 経由で渡す。
+   お客様の前に出しっぱなしにしないよう、閉じたら必ず消す。 */
+async function showAmount(o){
+  try{
+    await authReady;
+    await set(ref(db,'display/payment'), {
+      orderId: o.id,
+      number: o.number || '',
+      items: itemsText(o),
+      amount: o.price || 0,
+      at: Date.now()
+    });
+  }catch(e){ console.error('金額表示の配信に失敗:', e); }
+}
+
+async function clearAmount(){
+  try{
+    await authReady;
+    await set(ref(db,'display/payment'), { orderId:'', number:'', items:'', amount:0, at: Date.now() });
+  }catch(e){ console.error('金額表示の消去に失敗:', e); }
+}
+
+$('collect-back').addEventListener('click', ()=>{ collecting = null; clearAmount(); closeModal(); });
+
+$('collect-ok').addEventListener('click', async ()=>{
+  const c = collecting; collecting = null; closeModal();
+  clearAmount();
+  if(!c) return;
+  if(await setPaid(c.id, true) && c.alsoHandOver) changeStatus(c.id,'ready','completed');
+});
+
+/* 未払い確認ダイアログの対象。モーダルを閉じたら必ず捨てる。 */
+let pendingHandOver = null;
+
+$('unpaid-back').addEventListener('click', ()=>{ pendingHandOver = null; closeModal(); });
+
+$('unpaid-take').addEventListener('click', async ()=>{
+  const id = pendingHandOver; pendingHandOver = null; closeModal();
+  if(!id) return;
+  if(await setPaid(id, true)) changeStatus(id,'ready','completed');
+});
+
+$('unpaid-skip').addEventListener('click', ()=>{
+  const id = pendingHandOver; pendingHandOver = null; closeModal();
+  if(id) changeStatus(id,'ready','completed');
+});
+
+/* 支払いは受渡ステータスとは独立した軸。
+   受付・支払い口・受渡口のどこで受け取るか決まっていないため、
+   どの画面からでも打てる。打ち間違いの取り消しも認める（現金と合わなくなるため）。 */
+async function setPaid(id, next){
+  let ng = null;
+  try{
+    await authReady;
+    const tx = await runTransaction(ref(db,'orders/'+id), cur=>{
+      ng = null;
+      if(cur === null){ ng = '注文が見つかりません'; return; }
+      const now = !!cur.paid;
+      if(window.wasmReady && window.goSetPaid){
+        const r = window.goSetPaid(now, next, cur.status || 'pending');
+        if(!r.valid){ ng = r.reason; return; }
+      }else if(now === next){
+        ng = next ? 'すでに支払い済みです' : 'すでに未払いです'; return;
+      }
+      cur.paid = next;
+      if(next) cur.paidMs = Date.now();
+      else delete cur.paidMs;
+      cur.updatedMs = Date.now();
+      return cur;
+    });
+    if(ng){ toast(ng); return false; }
+    if(!tx.committed){ toast('支払いを記録できませんでした。もう一度お試しください。'); return false; }
+    return true;
+  }catch(e){
+    console.error(e);
+    toast(writeHint(e, '支払いを記録できませんでした'));
+    return false;
+  }
+}
+
+/* 呼び出し表示で目立たせる。CALL_HOLD_MS の間だけ強調される。 */
+const CALL_HOLD_MS = 40000;
+async function callOrder(id){
+  try{
+    await authReady;
+    await update(ref(db,'orders/'+id), { calledAt: Date.now() });
+  }catch(e){
+    toast('呼び出しを送れませんでした。通信を確かめてください。');
+  }
+}
+
+async function changeStatus(id, from, to){
+  let ng = null;
+  try{
+    await authReady;
+    const tx = await runTransaction(ref(db,'orders/'+id), cur=>{
+      ng = null;                                  // 投機実行と本実行で最後の判定だけ採る
+      if(cur === null){ ng = '注文が見つかりません'; return; }
+      if(window.wasmReady && window.goUpdateOrderStatus){
+        const r = window.goUpdateOrderStatus(cur.status || 'pending', to);
+        if(!r.valid){ ng = r.reason; return; }    // undefined を返すと中止
+      }
+      cur.status = to;
+      cur.updatedMs = Date.now();
+      return cur;
+    });
+    if(ng){ toast('状態を変えられません: ' + ng); return; }
+    if(!tx.committed) toast('更新できませんでした。もう一度お試しください。');
+  }catch(e){
+    console.error(e);
+    toast(writeHint(e, '更新できませんでした'));
+  }
+}
+
+document.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-act]');
+  if(!b) return;
+  const id = b.dataset.id;
+  switch(b.dataset.act){
+    case 'ready':  changeStatus(id,'pending','ready'); break;
+    case 'done':   handOver(id); break;
+    case 'pay':    openCollect(id, false); break;
+    case 'paydone': openCollect(id, true); break;
+    case 'unpay':
+      if(confirm(`${b.dataset.num||''} の支払いを「未払い」に戻します。よろしいですか？`)) setPaid(id, false);
+      break;
+
+    case 'undo':   changeStatus(id,'completed','ready'); break;
+    case 'cancel':
+      if(confirm(`${b.dataset.num} を中止します。よろしいですか？`)) changeStatus(id, b.dataset.status, 'cancelled');
+      break;
+    case 'flash':
+      // 以前は自分の画面のカードを光らせるだけで、お客様には何も届いていなかった。
+      // 呼び出し表示を別端末で出す運用なので、時刻を注文に書いて全端末で共有する。
+      callOrder(id);
+      break;
+  }
+});
+
+/* ---------- 単価 ---------- */
+$('price-btn').addEventListener('click', ()=>{
+  $('price-fields').innerHTML =
+    `<h3 class="field-group">単価</h3>` +
+    FLAVORS.map(f=>`
+      <div class="field">
+        <label for="p-${f.key}">${f.label}（1${f.unit}${f.pieces?` ${f.pieces}個入り`:''}）</label>
+        <input type="number" id="p-${f.key}" data-pkey="${f.key}" min="1" step="10" inputmode="numeric"
+               value="${prices[f.key] ?? f.defaultPrice}" aria-describedby="price-err">
+      </div>`).join('') +
+    `<h3 class="field-group">番号札</h3>
+     <div class="field">
+       <label for="p-tags">手元にある札の枚数</label>
+       <input type="number" id="p-tags" min="1" max="999" step="1" inputmode="numeric"
+              value="${tagCount()}" aria-describedby="price-err">
+       <p class="field-hint">札は使い回します。番号はこの枚数で循環し、出ている札は飛ばします。</p>
+     </div>
+     <h3 class="field-group">1回の注文で頼める上限</h3>
+     <div class="field">
+       <label for="p-max">合計カップ数の上限</label>
+       <input type="number" id="p-max" min="1" step="1" inputmode="numeric"
+              value="${limits.maxPerOrder}" aria-describedby="price-err">
+     </div>
+     <h3 class="field-group">用意した数（作り置き）</h3>` +
+    FLAVORS.map(f=>`
+      <div class="field">
+        <label for="s-${f.key}">${f.label}</label>
+        <input type="number" id="s-${f.key}" data-skey="${f.key}" min="0" step="1" inputmode="numeric"
+               value="${stockOf(f.key)}" aria-describedby="price-err">
+        <p class="field-hint">売れた ${soldOf(f.key)}${f.unit} ／ 残り ${remainingOf(f.key)}${f.unit}</p>
+      </div>`).join('');
+  $('price-err').classList.remove('show');
+  openModal('m-price');
+});
+$('price-cancel').addEventListener('click', closeModal);
+
+$('price-save').addEventListener('click', async ()=>{
+  const err = $('price-err');
+  const fail = (msg, sel)=>{
+    err.textContent = msg; err.classList.add('show');
+    document.querySelector(sel)?.focus();
+  };
+
+  const nextPrices = {}, nextStock = {};
+  document.querySelectorAll('[data-pkey]').forEach(el=>{ nextPrices[el.dataset.pkey] = parseInt(el.value,10); });
+  document.querySelectorAll('[data-skey]').forEach(el=>{ nextStock[el.dataset.skey] = parseInt(el.value,10); });
+  const maxPerOrder = parseInt($('p-max').value, 10);
+  const tags = parseInt($('p-tags').value, 10);
+
+  // 検証は Go を唯一の正にする。画面側は入力を集めるだけ。
+  const priceCheck = window.goValidatePrices
+    ? window.goValidatePrices(nextPrices)
+    : (Object.values(nextPrices).every(v=>Number.isInteger(v) && v>=1)
+        ? { ok:true, prices:nextPrices }
+        : { ok:false, error:'単価は1円以上の整数で入力してください。' });
+  if(!priceCheck.ok) return fail(priceCheck.error, '[data-pkey]');
+
+  const limitCheck = window.goValidateLimits
+    ? window.goValidateLimits({ maxPerOrder, stock: nextStock, tagCount: tags })
+    : ((Number.isInteger(maxPerOrder) && maxPerOrder >= 1 &&
+        Number.isInteger(tags) && tags >= 1 && tags <= 999 &&
+        Object.values(nextStock).every(v=>Number.isInteger(v) && v >= 0))
+        ? { ok:true, limits:{ maxPerOrder, stock:nextStock, tagCount:tags } }
+        : { ok:false, error:'枚数・上限・用意した数は正しい整数で入力してください。' });
+  if(!limitCheck.ok) return fail(limitCheck.error, '#p-max');
+
+  // すでに売れた数より少ない在庫は設定させない（残りが負になり、売り切れ判定が壊れる）。
+  for(const f of FLAVORS){
+    const sold = soldOf(f.key);
+    if(limitCheck.limits.stock[f.key] < sold){
+      return fail(`${f.label}はすでに ${sold}${f.unit} 出ています。用意した数はそれ以上にしてください。`, `#s-${f.key}`);
+    }
+  }
+
+  err.classList.remove('show');
+  try{
+    await authReady;   // 書き込みは認証の後でしか通らない
+    // 単価と上限は 1 回の更新でまとめて書く（片方だけ反映された状態を作らない）。
+    await update(ref(db,'config'), { prices: priceCheck.prices, limits: limitCheck.limits });
+    closeModal(); toast('設定を更新しました。','info');
+  }catch(e){
+    fail('保存できませんでした。通信を確かめてください。', '[data-pkey]');
+  }
+});
+
+/* ---------- CSV ---------- */
+$('csv-btn').addEventListener('click', ()=>{
+  if(!window.wasmReady || !window.goGenerateOrdersCSV){
+    toast('集計モジュールの準備ができていません。少し待ってからもう一度押してください。'); return;
+  }
+  const bytes = window.goGenerateOrdersCSV(JSON.stringify(orders));
+  if(!bytes){ toast('CSVを作れませんでした。'); return; }
+  const url = URL.createObjectURL(new Blob([bytes],{type:'text/csv;charset=utf-8;'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = `orders_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+});
+
+/* ============================================================
+   受付機の在席検知と番号の割り当て
+
+   番号札は物理的な山なので、2 台が 1 つの山から引くと必ず入れ替わる
+   （札を取るのが先、番号が決まるのが後のため）。そこで山を奇数・偶数に
+   分け、端末ごとに自分の系列だけを出す。
+
+   割り当ては起動時に決めて固定する。営業中に台数が変わっても自動では
+   切り替えない。切り替えると既に出した番号と衝突し、札ともずれるため、
+   画面で知らせて人が判断する。
+   ============================================================ */
+const LANE_SETTLE_MS = 2500;
+let lane = { slot:0, stride:1, fixed:false };
+
+function clientId(){
+  let id = null;
+  try{ id = localStorage.getItem('receptionClientId'); }catch(e){}
+  if(!id){
+    id = Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+    try{ localStorage.setItem('receptionClientId', id); }catch(e){}
+  }
+  return id;
+}
+
+function laneText(){
+  if(lane.stride <= 1) return 'すべての番号（1・2・3…）';
+  const head = [lane.slot+1, lane.slot+1+lane.stride, lane.slot+1+lane.stride*2];
+  return `${lane.slot === 0 ? '奇数' : '偶数'}の札（${head.join('・')}…）`;
+}
+
+function paintLane(warn){
+  const el = $('lane-note');
+  if(!el) return;
+  el.textContent = warn ? '受付機の台数が変わりました。番号の割り当ては変えていません。札の山を確かめてください。'
+                        : `この端末が出す番号：${laneText()}`;
+  el.dataset.warn = String(!!warn);
+}
+
+async function startLanePresence(){
+  paintLane(false);   // 認証や通信を待たずに、まず既定（1台＝連番）を出しておく
+  const me = clientId();
+  const meRef = ref(db, 'presence/reception/' + me);
+  try{
+    await authReady;
+    await onDisconnect(meRef).remove();
+    await set(meRef, { at: Date.now() });
+  }catch(e){ console.error('presence:', e); paintLane(false); return; }
+
+  onValue(ref(db, 'presence/reception'), snap=>{
+    const ids = Object.keys(snap.val() || {}).sort();
+    const idx = ids.indexOf(me);
+    const stride = Math.min(Math.max(ids.length, 1), 2);
+    const slot   = idx < 0 ? 0 : Math.min(idx, 1);
+
+    if(!lane.fixed){
+      lane.slot = slot; lane.stride = stride;
+      paintLane(false);
+      return;
+    }
+    // 固定後に台数が変わった場合は、黙って変えず知らせるだけ。
+    if(slot !== lane.slot || stride !== lane.stride) paintLane(true);
+  }, ()=>paintLane(false));
+
+  setTimeout(()=>{ lane.fixed = true; paintLane(false); }, LANE_SETTLE_MS);
+}
+startLanePresence();
+
+/* この端末の系列で次の番号を取る。端末ごとにカウンタを分けることで、
+   自分の札の山が飛ばずに順番どおり進む。 */
+async function nextSeq(){
+  const tx = await runTransaction(ref(db, 'config/orderCounter/lane' + lane.slot), c => (c||0) + 1);
+  if(!tx.committed) throw new Error('注文番号を採番できませんでした');
+  const k = tx.snapshot.val();
+  return lane.slot + 1 + lane.stride * (k - 1);
+}
+
+/* ---------- 画面切替 ----------
+   端末ごとに URL を決めて使う想定: そのまま=受付 / #kitchen=厨房 / #records=受渡・記録。
+   受付の画面はお客様に向くため、ナビゲーションは画面上に常設しない。 */
+const VIEWS = ['order','kitchen','pay','amount','records','call'];
+function switchTab(t){
+  if(!VIEWS.includes(t)) t = 'order';
+  VIEWS.forEach(n=>{
+    $('view-'+n).classList.toggle('hidden', n!==t);
+    const b = document.querySelector(`.nav-menu [data-go="${n}"]`);
+    if(b){ if(n===t) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); }
+  });
+  document.body.dataset.tab = t;
+  closeNav();
+}
+function viewFromHash(){
+  return (location.hash || '').replace('#','') || 'order';
+}
+window.addEventListener('hashchange', ()=>switchTab(viewFromHash()));
+
+const navToggle = $('nav-toggle'), navMenu = $('nav-menu');
+function closeNav(){ const m=$('nav-menu'), t=$('nav-toggle');
+  if(m) m.hidden = true;
+  if(t) t.setAttribute('aria-expanded','false'); }
+navToggle.addEventListener('click', ()=>{
+  const open = navMenu.hidden;
+  navMenu.hidden = !open;
+  navToggle.setAttribute('aria-expanded', String(open));
+  if(open) navMenu.querySelector('button')?.focus();
+});
+navMenu.addEventListener('click', e=>{
+  const b = e.target.closest('[data-go]');
+  if(!b) return;
+  location.hash = b.dataset.go === 'order' ? '' : b.dataset.go;
+  switchTab(b.dataset.go);
+});
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && !navMenu.hidden){ closeNav(); navToggle.focus(); }
+});
+document.addEventListener('click', e=>{
+  if(!navMenu.hidden && !e.target.closest('.nav-mini')) closeNav();
+});
+
+switchTab(viewFromHash());
+
+paintTagMode();   // 通信を待たずに既定（番号札を使う）を先に反映する
+renderMenu();
+renderCall();
+renderTags();
+renderKitchen();
+renderReady();
+renderRows();
+renderFigures();
+</script>
+</body>
+</html>

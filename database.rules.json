@@ -1,0 +1,155 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "config": {
+      "orderCounter": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "$lane": {
+          ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() > 0 && newData.val() <= 999999 && (!data.exists() || newData.val() > data.val())"
+        }
+      },
+      "prices": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "$flavor": {
+          ".validate": "$flavor.matches(/^[a-z][a-z0-9_]{0,31}$/) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 100000"
+        }
+      },
+      "session": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "newData.isString() && newData.val().length <= 32 && newData.val().matches(/^[A-Za-z0-9_-]+$/)"
+      },
+      "limits": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "maxPerOrder": {
+          ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 99"
+        },
+        "stock": {
+          "$flavor": {
+            ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 99999"
+          }
+        },
+        "$other": {
+          ".validate": "false"
+        },
+        "tagCount": {
+          ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 999"
+        }
+      },
+      "useTags": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "newData.isBoolean()"
+      },
+      "$other": {
+        ".validate": false
+      }
+    },
+    "rulesVersion": {
+      "v5": {
+        ".read": "auth != null"
+      }
+    },
+    "orders": {
+      ".read": "auth != null",
+      "$orderId": {
+        ".write": "auth != null && newData.exists()",
+        ".validate": "newData.hasChildren(['id', 'number', 'items', 'quantity', 'price', 'status', 'createdAt'])",
+        "id": {
+          ".validate": "newData.isString() && newData.val() === $orderId"
+        },
+        "number": {
+          ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^#[0-9]{3,6}$/)) && (!data.exists() || newData.val() === data.val())"
+        },
+        "seq": {
+          ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 999999 && (!data.exists() || newData.val() === data.val())"
+        },
+        "items": {
+          ".validate": "newData.hasChildren()",
+          "$index": {
+            ".validate": "newData.hasChildren(['flavor', 'quantity', 'unitPrice', 'price']) && newData.child('price').val() === newData.child('unitPrice').val() * newData.child('quantity').val() && (!root.child('orders').child($orderId).child('status').exists() || data.exists())",
+            "flavor": {
+              ".validate": "newData.isString() && newData.val().length <= 32 && (!root.child('config/prices').exists() || root.child('config/prices').hasChild(newData.val())) && (!data.exists() || newData.val() === data.val())"
+            },
+            "quantity": {
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 99 && (!root.child('config/limits/maxPerOrder').exists() || newData.val() <= root.child('config/limits/maxPerOrder').val()) && (!data.exists() || newData.val() === data.val())"
+            },
+            "unitPrice": {
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 100000 && (!data.exists() || newData.val() === data.val())"
+            },
+            "price": {
+              ".validate": "newData.isNumber() && newData.val() >= 1 && (!data.exists() || newData.val() === data.val())"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "quantity": {
+          ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 999 && (!data.exists() || newData.val() === data.val())"
+        },
+        "price": {
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 10000000 && (!data.exists() || newData.val() === data.val())"
+        },
+        "flavor": {
+          ".validate": "newData.isString() && newData.val().length <= 32 && (!root.child('config/prices').exists() || root.child('config/prices').hasChild(newData.val())) && (!data.exists() || newData.val() === data.val())"
+        },
+        "unitPrice": {
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 100000 && (!data.exists() || newData.val() === data.val())"
+        },
+        "status": {
+          ".validate": "newData.isString() && ( !data.exists() ? newData.val().matches(/^(pending|completed)$/) : ( newData.val() === data.val() || (data.val() === 'pending' && newData.val().matches(/^(ready|cancelled)$/)) || (data.val() === 'ready' && newData.val().matches(/^(completed|pending|cancelled)$/)) || (data.val() === 'completed' && newData.val().matches(/^(ready|cancelled)$/)) || (data.val() === 'cancelled' && newData.val() === 'pending') ) )"
+        },
+        "session": {
+          ".validate": "newData.isString() && newData.val().length <= 32 && newData.val().matches(/^[A-Za-z0-9_-]+$/) && (!data.exists() || newData.val() === data.val())"
+        },
+        "createdAt": {
+          ".validate": "newData.isString() && newData.val().length <= 32 && (!data.exists() || newData.val() === data.val())"
+        },
+        "createdISO": {
+          ".validate": "newData.isString() && newData.val().length <= 40 && (!data.exists() || newData.val() === data.val())"
+        },
+        "createdMs": {
+          ".validate": "newData.isNumber() && newData.val() > 0 && (!data.exists() || newData.val() === data.val())"
+        },
+        "updatedMs": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "paid": {
+          ".validate": "newData.isBoolean() && (newData.val() === false || !root.child('orders').child($orderId).child('status').exists() || root.child('orders').child($orderId).child('status').val() !== 'cancelled')"
+        },
+        "paidMs": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "calledAt": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "tag": {
+          ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 999 && (!data.exists() || newData.val() === data.val())"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "display": {
+      ".read": "auth != null",
+      "payment": {
+        "$station": {
+          ".write": "auth != null",
+          ".validate": "newData.hasChildren(['amount', 'at'])",
+          "orderId": { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "number":  { ".validate": "newData.isString() && newData.val().length <= 16" },
+          "items":   { ".validate": "newData.isString() && newData.val().length <= 200" },
+          "amount":  { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000" },
+          "at":      { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "$other":  { ".validate": false }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>受付チャイム候補 第8弾 — 実装用・イベント別</title>
+<style>
+  body{margin:0;background:#0b1420;color:#e8f1fa;font-family:-apple-system,'Hiragino Sans',sans-serif;padding:26px 18px 90px}
+  .wrap{max-width:760px;margin:0 auto}
+  .cap{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.24em;color:#7fa6c8;text-transform:uppercase}
+  h1{font-size:18px;margin:8px 0 6px}
+  p.lead{font-size:12.5px;color:#9db4c8;line-height:1.8;margin:0 0 4px}
+  p.lead b{color:#cfe2f2}
+  .vol{display:flex;align-items:center;gap:12px;margin:18px 0 6px;padding:12px 14px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(255,255,255,.04)}
+  input[type=range]{flex:1;accent-color:#33b4e8}
+  section{margin-top:30px}
+  h2{font-size:14px;border-bottom:1px solid rgba(255,255,255,.12);padding-bottom:9px;margin:0 0 2px}
+  h2 span{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#7fa6c8;letter-spacing:.12em;margin-left:10px;font-weight:400}
+  .why{font-size:11.5px;color:#8ea6bd;line-height:1.75;margin:9px 0 2px;padding:9px 12px;border-left:2px solid #33b4e8;background:rgba(51,180,232,.06)}
+  .row{display:flex;align-items:center;gap:9px;padding:11px 2px;border-bottom:1px solid rgba(255,255,255,.07)}
+  .row[data-picked="true"]{background:rgba(51,180,232,.10)}
+  .id{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#33b4e8;font-weight:700;width:36px;flex:0 0 36px}
+  .nm{flex:1;min-width:0}
+  .nm b{font-size:13.5px;display:block}
+  .nm small{color:#8ea6bd;font-size:11px;line-height:1.5}
+  button{border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;border-radius:10px;height:40px;padding:0 13px;font-weight:700;font-size:13px;cursor:pointer;flex:0 0 auto}
+  button.play{background:linear-gradient(135deg,#2f7fd4,#33b4e8);border:none;min-width:62px}
+  button.pick{min-width:44px}
+  .row[data-picked="true"] .pick{background:#33b4e8;border-color:#33b4e8;color:#06121d}
+  button:active{transform:scale(.97)}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:#0f1b2a;border-top:1px solid rgba(255,255,255,.14);
+    padding:12px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .bar .cap{flex:1;min-width:150px;color:#9db4c8;letter-spacing:.06em;text-transform:none;font-size:11.5px}
+  #out{width:100%;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#cfe2f2;
+    background:#06121d;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:9px 11px;display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="cap">Reception Chime Candidates — Round 8 / Per-Event, For Implementation</div>
+  <h1>チャイム候補 第8弾 — アプリのイベント別</h1>
+  <p class="lead">第7弾のエンジン（畳み込み残響・ハープ・きらめき・maj9パッド）をそのまま使っています。違うのは並べ方で、<b>アプリで実際に鳴る場面ごと</b>に候補を分けました。<br>
+  各行の <b>選ぶ</b> を押すと下のバーに溜まります。全部決めたら <b>通しで聴く</b> で、1件の注文が流れる順に鳴らせます（連打 → 確定 → 厨房 → 呼び出し）。最後に <b>書き出す</b> を押して、出た文字列をそのまま伝えてください。</p>
+  <div class="vol"><span class="cap">Volume</span><input type="range" id="vol" min="0" max="100" value="65"></div>
+
+  <section>
+    <h2>① ステッパー<span>T1–T8 · 1注文で最大10回鳴る</span></h2>
+    <p class="why">ここだけは設計条件が違います。他が1.5〜2秒なのに対し、<b>0.6秒以内・パッドなし・低音なし</b>。
+    厚みのある音を連打すると余韻が積み重なって濁り、5回目には泥になります。素材は同じハープ／チェレスタのまま、
+    長さと層だけを削ってあります。押すたびに音階が1段ずつ上がります。</p>
+    <div id="sec-t"></div>
+  </section>
+
+  <section>
+    <h2>② これ以上押せない<span>L1–L4 · 上限・売り切れ</span></h2>
+    <p class="why">無反応だと「壊れている」と受け取られるので必ず返します。ただし叱る音にはしません。第7弾のF系より更に短く。</p>
+    <div id="sec-l"></div>
+  </section>
+
+  <section>
+    <h2>③ 注文確定<span>S1–S8 · お客様の前で鳴る一番の音</span></h2>
+    <p class="why">第7弾のS系がそのまま使えます。ここは尺を取ってよい唯一の場面です（次のお客様まで数秒ある）。</p>
+    <div id="sec-s"></div>
+  </section>
+
+  <section>
+    <h2>④ 支払いを受け取った<span>P1–P5 · 支払い口</span></h2>
+    <p class="why">確定より短く、低めに。同じ注文で確定音の後に鳴るので、<b>確定と紛れない音色</b>である必要があります。</p>
+    <div id="sec-p"></div>
+  </section>
+
+  <section>
+    <h2>⑤ 厨房・新規着信<span>K1–K6 · 焼き場は手が離せない</span></h2>
+    <p class="why">唯一「美しさより通ること」が優先される場面です。鉄板の音と換気扇の中で、<b>背中で気づける</b>必要があります。
+    高い帯域に芯を置き、パッドは薄く。</p>
+    <div id="sec-k"></div>
+  </section>
+
+  <section>
+    <h2>⑥ お呼び出し<span>C1–C6 · お客様に向けて</span></h2>
+    <p class="why">第7弾のH系（呼びかけ）がここです。この直後に音声合成が「12番でお待ちのお客様」と読み上げるので、
+    <b>声にかぶらないよう余韻が切れる</b>ものを選んでください。</p>
+    <div id="sec-c"></div>
+  </section>
+
+  <section>
+    <h2>⑦ エラー<span>E1–E5 · 保存できなかった・拒否された</span></h2>
+    <p class="why">お客様に聞こえる場所で鳴ります。事故を悟らせない程度に控えめに。</p>
+    <div id="sec-e"></div>
+  </section>
+</div>
+
+<div class="bar">
+  <span class="cap" id="status">まだ選ばれていません</span>
+  <button id="flow">通しで聴く</button>
+  <button id="dump">書き出す</button>
+  <button id="clear">消す</button>
+  <textarea id="out" rows="3" readonly></textarea>
+</div>
+
+<script>
+/* ===== 第7弾のエンジンをそのまま移植 ===== */
+var ctx=null,comp=null,verb=null;
+function mkIR(sec,decay){
+  var len=Math.floor(ctx.sampleRate*sec),b=ctx.createBuffer(2,len,ctx.sampleRate);
+  for(var ch=0;ch<2;ch++){var d=b.getChannelData(ch);for(var i=0;i<len;i++){d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay);}}
+  return b;
+}
+function ac(){
+  var C=window.AudioContext||window.webkitAudioContext;
+  if(!ctx){
+    ctx=new C();
+    comp=ctx.createDynamicsCompressor();
+    comp.threshold.value=-20;comp.knee.value=24;comp.ratio.value=4;comp.attack.value=.003;comp.release.value=.25;
+    comp.connect(ctx.destination);
+    verb=ctx.createConvolver();verb.buffer=mkIR(2.6,2.2);
+    verb.connect(comp);
+  }
+  if(ctx.state==='suspended')ctx.resume();
+  return ctx;
+}
+function vol(){return (document.getElementById('vol').value/100)*0.7;}
+function bus(node,wet,pan){
+  var end=node;
+  if(pan&&ctx.createStereoPanner){var pn=ctx.createStereoPanner();pn.pan.value=pan;node.connect(pn);end=pn;}
+  end.connect(comp);
+  if(wet){var s=ctx.createGain();s.gain.value=wet;end.connect(s);s.connect(verb);}
+}
+function toneX(o){
+  var c=ac(),t0=c.currentTime+(o.t||0),d=o.d||.5,peak=Math.max((o.p||1)*vol(),.0001);
+  var g=c.createGain(),dest=g;
+  if(o.filter){var flt=c.createBiquadFilter();flt.type='lowpass';flt.frequency.setValueAtTime(o.filter,t0);if(o.fend)flt.frequency.exponentialRampToValueAtTime(o.fend,t0+d);flt.Q.value=o.fq||.7;flt.connect(g);dest=flt;}
+  var n=o.voices||1;
+  for(var i=0;i<n;i++){
+    var os=c.createOscillator();os.type=o.type||'sine';
+    os.frequency.setValueAtTime(o.f,t0);
+    if(o.glide)os.frequency.exponentialRampToValueAtTime(o.glide,t0+(o.gd||d));
+    if(n>1)os.detune.value=(i-(n-1)/2)*(o.det||6);
+    os.connect(dest);os.start(t0);os.stop(t0+d+.12);
+  }
+  g.gain.setValueAtTime(.0001,t0);
+  g.gain.exponentialRampToValueAtTime(peak/Math.sqrt(n),t0+(o.a||.005));
+  g.gain.exponentialRampToValueAtTime(.0001,t0+d);
+  if(o.trem){var lo=c.createOscillator(),lg=c.createGain();lo.frequency.value=o.trem.f;lg.gain.value=peak*(o.trem.depth||.35);lo.connect(lg);lg.connect(g.gain);lo.start(t0);lo.stop(t0+d+.12);}
+  bus(g,o.wet||0,o.pan||0);
+}
+function partialsX(o){
+  var base=o.d||1;
+  o.parts.forEach(function(pt){
+    toneX({f:o.f*pt[0],t:o.t||0,d:base*(pt[2]||1),p:(o.p||1)*pt[1],a:o.a||.004,type:o.type||'sine',wet:o.wet||0,pan:o.pan||0,trem:o.trem});
+  });
+}
+function noiseX(o){
+  var c=ac(),t0=c.currentTime+(o.t||0),d=o.d||.3,peak=Math.max((o.p||1)*vol(),.0001);
+  var len=Math.max(1,Math.floor(c.sampleRate*d)),b=c.createBuffer(1,len,c.sampleRate),dd=b.getChannelData(0);
+  for(var i=0;i<len;i++)dd[i]=(Math.random()*2-1);
+  var s=c.createBufferSource();s.buffer=b;
+  var g=c.createGain(),dest=g;
+  if(o.f){var f=c.createBiquadFilter();f.type=o.ftype||'lowpass';f.frequency.value=o.f;f.connect(g);dest=f;}
+  g.gain.setValueAtTime(peak,t0);g.gain.exponentialRampToValueAtTime(.0001,t0+d);
+  s.connect(dest);bus(g,o.wet||0,0);s.start(t0);
+}
+var HARP=[[1,1,1],[2,.3,.7]];
+var GLA =[[1,1,1],[2.76,.35,.6],[5.4,.15,.4]];
+var CEL =[[1,1,1],[4,.22,.55],[9.2,.07,.3]];
+var WBEL=[[1,1,1],[2,.32,.8],[2.92,.12,.5]];
+var DSK =[[1,1,1],[2.71,.55,.7],[5.15,.3,.5],[8.2,.12,.3]];
+function harp(f,t,p,pan){partialsX({f:f,parts:HARP,t:t,d:.9,p:p,wet:.55,pan:pan||0});}
+function gliss(notes,step,p,pan,t0){notes.forEach(function(f,i){harp(f,(t0||0)+i*step,p,(pan?(i%2?pan:-pan):0));});}
+function pad(fs,o){fs.forEach(function(f){toneX(Object.assign({type:'sawtooth',voices:2,det:6,a:.09},o,{f:f}));});}
+function sub(f,o){toneX(Object.assign({a:.04},o,{f:f}));}
+function felt(f,t,p){
+  toneX({f:f,t:t,d:1.2,p:p*.7,type:'triangle',filter:1500,a:.01,wet:.5});
+  toneX({f:f/2,t:t,d:1.3,p:p*.4,a:.012,wet:.5});
+}
+
+/* ===== ステッパー用の短い素材 =====
+   残響量を落とすのが肝。wet を .55 のままにすると連打で尾が積み上がる。 */
+function tap(parts,f,p,d,wet){partialsX({f:f,parts:parts,d:d||.42,p:p||.34,wet:wet===undefined?.26:wet});}
+var CMAJ=[523.25,587.33,659.26,698.46,783.99,880,987.77,1046.5,1174.66,1318.5]; // C5から10段
+var CPEN=[523.25,587.33,659.26,783.99,880,1046.5,1174.66,1318.5,1568,1760];
+function degUp(i){return CMAJ[Math.min(i,CMAJ.length-1)];}
+function degPen(i){return CPEN[Math.min(i,CPEN.length-1)];}
+
+/* ===== 候補 ===== */
+var T=[
+ ['T1','ハープ一粒','第7弾のハープをそのまま1音だけ。残響を薄くして連打に耐えさせた',function(i){tap(HARP,degUp(i),.34,.42);}],
+ ['T2','チェレスタ一粒','4倍音の艶。ハープより硝子質で、粒立ちがはっきりする',function(i){tap(CEL,degUp(i),.30,.46);}],
+ ['T3','きらめき','グロッケン。最も明るく、遠くでも粒が分かれて聞こえる',function(i){tap(GLA,degUp(i),.26,.40);}],
+ ['T4','温かい鐘','WBEL。丸くて主張が少ない。長時間聞いても疲れにくい',function(i){tap(WBEL,degUp(i),.32,.48);}],
+ ['T5','ハープ+きらめき','主音はハープ、上にきらめきを薄く重ねて艶を足す',function(i){
+   tap(HARP,degUp(i),.32,.42);partialsX({f:degUp(i)*2,parts:GLA,d:.3,p:.06,wet:.3});}],
+ ['T6','フェルト','柔らかいピアノ。打鍵感があり、押した手応えが最も強い',function(i){
+   toneX({f:degUp(i),d:.5,p:.26,type:'triangle',filter:1800,a:.006,wet:.24});
+   toneX({f:degUp(i)/2,d:.5,p:.14,a:.008,wet:.24});}],
+ ['T7','ハープ（ペンタ）','同じハープで音階だけ5音階に。段差が大きく、増減が分かりやすい',function(i){tap(HARP,degPen(i),.34,.42);}],
+ ['T8','二粒','主音と五度を極短で重ねる。1押しが「置かれた」感じになる',function(i){
+   tap(HARP,degUp(i),.28,.40);tap(HARP,degUp(i)*1.5,.16,.30);}],
+];
+var L=[
+ ['L1','低く短く','低い一音を置くだけ。叱らない',function(){partialsX({f:196,parts:HARP,d:.34,p:.34,wet:.2});}],
+ ['L2','半音下','鳴るはずの音から半音下がる。「そこではない」',function(){tap(HARP,493.88,.3,.34,.2);}],
+ ['L3','消音の爪弾き','第7弾F5。ミュートした低弦。乾いた「いいえ」',function(){
+   partialsX({f:196,parts:[[1,1,.5],[2,.15,.3]],d:.32,p:.4,wet:.2});}],
+ ['L4','空気だけ','音程を持たない息。最も主張が少ない',function(){noiseX({d:.22,p:.05,f:900,wet:.3});}],
+];
+var S=[
+ ['S1','原型（第7弾S1）','6音の上昇+きらめき+maj9パッド',function(){
+   gliss([523.25,587.33,659.26,783.99,880,1046.5],.055,.4);
+   partialsX({f:2093,parts:GLA,t:.4,d:1,p:.15,wet:.7});
+   pad([261.63,329.63,392,493.88],{d:1.6,p:.13,filter:1000,a:.12,wet:.6});}],
+ ['S2','低音の風格（第7弾S2）','原型＋温かい低音の下支え',function(){
+   gliss([523.25,587.33,659.26,783.99,880,1046.5],.055,.42);
+   partialsX({f:2093,parts:GLA,t:.4,d:1,p:.15,wet:.7});
+   pad([261.63,329.63,392,493.88],{d:1.6,p:.13,filter:1000,a:.12,wet:.6});
+   felt(130.81,0,.5);sub(65.41,{d:1.6,p:.24,wet:.3});}],
+ ['S3','ゆったりと（第7弾S4）','間隔を広げ余韻を長く',function(){
+   gliss([523.25,587.33,659.26,783.99,880,1046.5],.085,.4,.15);
+   partialsX({f:2093,parts:GLA,t:.6,d:1.2,p:.14,wet:.72});
+   pad([261.63,329.63,392,493.88],{d:2.2,p:.12,filter:950,a:.16,wet:.62});
+   sub(65.41,{d:1.8,p:.18,a:.06,wet:.3});}],
+ ['S4','鐘の着地（第7弾S10）','グリスの頂点で温かい鐘がひとつ。到着の合図',function(){
+   gliss([523.25,587.33,659.26,783.99,880],.055,.4);
+   partialsX({f:1046.5,parts:WBEL,t:.3,d:1.5,p:.5,wet:.62});
+   pad([261.63,329.63,392,493.88],{d:1.8,p:.12,filter:1000,a:.12,wet:.6});
+   sub(130.81,{t:.3,d:1.2,p:.18,wet:.3});}],
+ ['S5','短い原型','原型を2/3の尺に。行列が長い日はこちら',function(){
+   gliss([523.25,659.26,783.99,1046.5],.05,.4);
+   partialsX({f:2093,parts:GLA,t:.26,d:.7,p:.13,wet:.66});
+   pad([261.63,329.63,392,493.88],{d:1.0,p:.11,filter:1000,a:.08,wet:.55});}],
+ ['S6','ステッパーからの続き','ステッパーで昇ってきた音階の続きとして駆け上がる。操作と地続きになる',function(){
+   gliss([1174.66,1318.5,1568,1760,2093],.05,.3);
+   partialsX({f:2093,parts:GLA,t:.24,d:.9,p:.12,wet:.7});
+   pad([261.63,329.63,392,493.88],{d:1.5,p:.12,filter:1000,a:.1,wet:.6});
+   sub(130.81,{d:1.2,p:.16,wet:.3});}],
+ ['S7','チェレスタ重奏（第7弾S8）','グリスの要所にチェレスタを重ねて艶を出す',function(){
+   gliss([523.25,587.33,659.26,783.99,880,1046.5],.055,.38);
+   partialsX({f:659.26,parts:CEL,t:.11,d:1,p:.25,wet:.6});
+   partialsX({f:1046.5,parts:CEL,t:.28,d:1.3,p:.3,wet:.62});
+   pad([261.63,329.63,392,493.88],{d:1.7,p:.12,filter:1000,a:.12,wet:.6});}],
+ ['S8','大きなうねり（第7弾S9）','低い音から8音で壮大に駆け上がる',function(){
+   gliss([392,440,493.88,523.25,587.33,659.26,783.99,1046.5],.06,.42,.18);
+   partialsX({f:2093,parts:GLA,t:.55,d:1.1,p:.15,wet:.72});
+   pad([196,261.63,293.66,392],{d:2,p:.13,filter:900,a:.14,wet:.6});
+   sub(98,{d:1.8,p:.24,wet:.32});}],
+];
+var P=[
+ ['P1','レジの艶（第7弾H2）','フロントベル＋ハープのきらめき＋低音',function(){
+   partialsX({f:1318.5,parts:DSK,d:1,p:.55,wet:.55});
+   harp(880,.18,.3);harp(1046.5,.28,.26);
+   felt(174.61,.02,.42);sub(87.31,{d:1.2,p:.16,wet:.3});}],
+ ['P2','小さなレジ','同じフロントベルを短く一打だけ。何度も鳴るので軽く',function(){
+   partialsX({f:1318.5,parts:DSK,d:.7,p:.42,wet:.4});
+   sub(110,{d:.7,p:.12,wet:.24});}],
+ ['P3','受け取りの二音','低→高の二音。「確かに」',function(){
+   harp(523.25,0,.36);harp(783.99,.11,.38);
+   felt(130.81,0,.3);}],
+ ['P4','フェルトの一打','柔らかい低音を一つ置くだけ。最も控えめ',function(){felt(196,0,.55);sub(98,{d:1,p:.16,wet:.26});}],
+ ['P5','温かい鐘一打','WBEL を中音域で。確定（高音グリス）と帯域が分かれる',function(){
+   partialsX({f:659.26,parts:WBEL,d:1.3,p:.45,wet:.5});
+   sub(164.81,{d:1,p:.14,wet:.26});}],
+];
+var K=[
+ ['K1','二音の呼び（高め）','高音二音。換気扇の帯域を避けて抜ける',function(){
+   partialsX({f:1046.5,parts:GLA,d:1.1,p:.34,wet:.5});
+   partialsX({f:1568,parts:GLA,t:.13,d:1.2,p:.30,wet:.52});}],
+ ['K2','フロントベル二打','DSK を2回。厨房で最も通る',function(){
+   partialsX({f:1318.5,parts:DSK,d:.9,p:.44,wet:.42});
+   partialsX({f:1318.5,parts:DSK,t:.22,d:1.1,p:.40,wet:.45});}],
+ ['K3','きらめき三粒','高音が3つ降りてくる。うるさくないが気づく',function(){
+   partialsX({f:2093,parts:GLA,d:.8,p:.26,wet:.55,pan:-.2});
+   partialsX({f:1760,parts:GLA,t:.12,d:.8,p:.24,wet:.55});
+   partialsX({f:1568,parts:GLA,t:.24,d:1,p:.24,wet:.58,pan:.2});}],
+ ['K4','上昇三音','短いグリス。他の音と同じ言語のまま通す',function(){
+   gliss([880,1046.5,1318.5],.06,.36);
+   partialsX({f:2093,parts:GLA,t:.16,d:.7,p:.12,wet:.6});}],
+ ['K5','ビブラフォン・コール（第7弾H7）','揺れる一声。厨房の定常音と質が違うので埋もれない',function(){
+   toneX({f:698.46,d:1.3,p:.5,trem:{f:4.3,depth:.35},wet:.62});
+   harp(932.33,.3,.4);harp(1046.5,.42,.36);}],
+ ['K6','二度繰り返す','K1 を 0.6 秒あけて 2 回。手が塞がっていても拾える',function(){
+   [0,.6].forEach(function(t){
+     partialsX({f:1046.5,parts:GLA,t:t,d:.9,p:.30,wet:.45});
+     partialsX({f:1568,parts:GLA,t:t+.12,d:1,p:.26,wet:.48});});}],
+];
+var C=[
+ ['C1','グリス+呼び鈴（第7弾H1）','3音のグリス→フロントベル。完結した案内',function(){
+   gliss([523.25,587.33,659.26],.06,.4);
+   partialsX({f:987.77,parts:DSK,t:.26,d:1.1,p:.5,wet:.58});
+   sub(123.47,{t:.26,d:.8,p:.14,wet:.3});}],
+ ['C2','ピンポン（第7弾H3）','呼び鈴の下降2音。上質な玄関チャイム',function(){
+   partialsX({f:1318.5,parts:WBEL,d:1,p:.45,wet:.6});harp(1318.5,0,.2);
+   partialsX({f:1046.5,parts:WBEL,t:.28,d:1.4,p:.42,wet:.62});harp(1046.5,.28,.2);
+   pad([329.63,523.25],{d:1.7,p:.1,filter:950,a:.12,wet:.6});}],
+ ['C3','お呼び出し（第7弾H10）','空港の下降3音をハープの質感で',function(){
+   harp(1046.5,0,.44,-.12);harp(880,.22,.42);harp(698.46,.44,.44,.12);
+   partialsX({f:698.46,parts:WBEL,t:.44,d:1.3,p:.25,wet:.62});
+   pad([349.23,523.25],{d:1.9,p:.1,filter:950,a:.13,wet:.6});}],
+ ['C4','声の前で切れる','C1 からパッドと低音を外し、読み上げに被らせない',function(){
+   gliss([523.25,587.33,659.26],.06,.4);
+   partialsX({f:987.77,parts:DSK,t:.24,d:.8,p:.46,wet:.4});}],
+ ['C5','ターン・モチーフ（第7弾H4）','上がって回って着地する。「こちらへどうぞ」',function(){
+   gliss([523.25,659.26,587.33,783.99],.08,.42);
+   partialsX({f:1568,parts:GLA,t:.4,d:.9,p:.1,wet:.72});
+   pad([261.63,392,493.88],{d:1.8,p:.11,filter:950,a:.12,wet:.6});}],
+ ['C6','二度の呼びかけ（第7弾H5）','G→Cを2回。「お客様、お客様」',function(){
+   harp(783.99,0,.4);harp(1046.5,.13,.42);
+   harp(783.99,.42,.36);harp(1046.5,.55,.4);
+   pad([392,523.25],{d:1.7,p:.1,filter:950,a:.12,wet:.6});}],
+];
+var E=[
+ ['E1','下りグリス（第7弾F1）','6音で静かに降りる。流れるような残念',function(){
+   gliss([880,783.99,698.46,659.26,587.33,523.25],.055,.38);
+   pad([220,261.63,329.63],{d:1.6,p:.12,filter:850,a:.12,wet:.6});}],
+ ['E2','ためらい（第7弾F4）','半音だけ下がる二音',function(){
+   harp(659.26,0,.42);harp(622.25,.18,.4);
+   pad([207.65,261.63,311.13],{d:1.6,p:.13,filter:750,a:.12,wet:.6});}],
+ ['E3','短い下降','4音で素早く降りる。行列を止めない長さ',function(){
+   gliss([783.99,659.26,587.33,493.88],.05,.36);
+   pad([220,293.66],{d:.9,p:.1,filter:800,a:.08,wet:.5});}],
+ ['E4','翳り（第7弾F8）','maj9の光が短調に翳る。和音だけで語る',function(){
+   pad([261.63,329.63,392,493.88],{d:.8,p:.13,filter:1000,a:.1,wet:.55});
+   pad([261.63,311.13,392,466.16],{t:.5,d:1.6,p:.14,filter:800,a:.12,wet:.62});
+   sub(130.81,{t:.5,d:1.4,p:.16,wet:.3});}],
+ ['E5','低域の三連下行（第7弾F9）','低いハープが3歩さがる。落ち着いた告知',function(){
+   gliss([392,329.63,261.63],.1,.42);
+   sub(130.81,{t:.2,d:1.2,p:.2,wet:.3});}],
+];
+
+/* ===== 画面 ===== */
+var picks={};
+function render(secId,list,kind){
+  var el=document.getElementById(secId);
+  list.forEach(function(it){
+    var row=document.createElement('div');row.className='row';row.dataset.id=it[0];
+    var id=document.createElement('span');id.className='id';id.textContent=it[0];
+    var nm=document.createElement('span');nm.className='nm';
+    var b=document.createElement('b');b.textContent=it[1];
+    var sm=document.createElement('small');sm.textContent=it[2];
+    nm.appendChild(b);nm.appendChild(sm);
+
+    var play=document.createElement('button');play.className='play';play.textContent='再生';
+    var many=document.createElement('button');
+    if(kind==='T'){
+      // ステッパーは連打が本番。1回では判断できない。
+      many.textContent='連打×6';
+      play.onclick=function(){ac();it[3](0);};
+      many.onclick=function(){ac();for(var i=0;i<6;i++)(function(i){setTimeout(function(){it[3](i);},i*260);})(i);};
+    }else{
+      many.textContent='×3';
+      play.onclick=function(){ac();it[3]();};
+      many.onclick=function(){ac();for(var i=0;i<3;i++)setTimeout(it[3],i*700);};
+    }
+    var pick=document.createElement('button');pick.className='pick';pick.textContent='選ぶ';
+    pick.onclick=function(){
+      picks[kind]=it;
+      [].forEach.call(el.querySelectorAll('.row'),function(r){r.dataset.picked=String(r.dataset.id===it[0]);});
+      status();
+    };
+    row.appendChild(id);row.appendChild(nm);row.appendChild(play);row.appendChild(many);row.appendChild(pick);
+    el.appendChild(row);
+  });
+}
+var KINDS=[['T','ステッパー'],['L','上限'],['S','確定'],['P','支払い'],['K','厨房'],['C','呼び出し'],['E','エラー']];
+function status(){
+  var done=KINDS.filter(function(k){return picks[k[0]];});
+  document.getElementById('status').textContent = done.length
+    ? '選択中: ' + done.map(function(k){return k[1]+' '+picks[k[0]][0];}).join(' / ')
+      + '（残り ' + (KINDS.length-done.length) + '）'
+    : 'まだ選ばれていません';
+}
+render('sec-t',T,'T');render('sec-l',L,'L');render('sec-s',S,'S');
+render('sec-p',P,'P');render('sec-k',K,'K');render('sec-c',C,'C');render('sec-e',E,'E');
+
+/* 1件の注文が流れる順に鳴らす。個々に良くても、並べると喧嘩することがある。 */
+document.getElementById('flow').onclick=function(){
+  ac();
+  var t=0;
+  if(picks.T){for(var i=0;i<4;i++)(function(i){setTimeout(function(){picks.T[3](i);},i*300);})(i);t=1500;}
+  if(picks.S) setTimeout(function(){picks.S[3]();},t), t+=2600;
+  if(picks.P) setTimeout(function(){picks.P[3]();},t), t+=2000;
+  if(picks.K) setTimeout(function(){picks.K[3]();},t), t+=2200;
+  if(picks.C) setTimeout(function(){picks.C[3]();},t), t+=2600;
+};
+document.getElementById('dump').onclick=function(){
+  var out=document.getElementById('out');
+  out.style.display='block';
+  out.value = KINDS.map(function(k){
+    return k[1]+'='+(picks[k[0]]?picks[k[0]][0]+'（'+picks[k[0]][1]+'）':'未選択');
+  }).join('\n');
+  out.select();
+};
+document.getElementById('clear').onclick=function(){
+  picks={};document.getElementById('out').style.display='none';
+  [].forEach.call(document.querySelectorAll('.row'),function(r){r.dataset.picked='false';});
+  status();
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# ビルド生成物
+main.wasm
+wasm_exec.js
+
+# 各環境ごとの Firebase 接続設定（CI では自動生成）
+firebase-config.js
+
+# CDN から取得した Tailwind のローカルキャッシュ
+tailwind.local.js
+
+.DS_Store
+
+# go build の出力
+/bundler
+
+# 作業バックアップ
+*.bak

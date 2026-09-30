@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>受付の手応え — 確認用</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+  href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root{
+  --cream:#FCF6DC; --card:#FDF8E4; --lift:#FFFBEC;
+  --brown:#613E28; --brown-soft:#6B4E35;
+  --gold:#BB985F; --gold-text:#8A6C34; --gold-line:rgba(187,152,95,.38);
+  --yellow:#F1CA63;
+  --serif:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Zen Kaku Gothic New','Hiragino Sans','Yu Gothic',Meiryo,sans-serif;
+  --tap:56px;
+  /* --- 動きの寸法。値を1か所に集め、用途ごとに使い分ける ---
+     到着は減速、退出は加速。退出は入場より必ず短くする（待たされないため）。 */
+  --m-drop:520ms;   --m-drop-ease:cubic-bezier(.34,1.3,.5,1);
+  --m-lift:340ms;   --m-lift-ease:ease-in;
+  --m-count:420ms;
+  --m-tap:260ms;    --m-tap-ease:cubic-bezier(.34,1.56,.64,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--cream);color:var(--brown-soft);font-family:var(--sans);
+  font-size:16px;line-height:1.75;padding:28px 20px 60px}
+.wrap{max-width:880px;margin:0 auto}
+h1{font-family:var(--serif);color:var(--brown);font-size:26px;font-weight:600;
+  letter-spacing:.14em;margin:0 0 6px;text-align:center}
+.lead{text-align:center;margin:0 0 26px;font-size:14px}
+.panel{background:var(--card);border:1px solid var(--gold-line);border-radius:22px;
+  padding:26px 24px;margin-bottom:22px}
+.panel h2{font-family:var(--serif);color:var(--brown);font-size:17px;font-weight:600;
+  letter-spacing:.12em;margin:0 0 4px}
+.panel p.note{margin:0 0 18px;font-size:13px}
+
+/* --- ステッパー（本体と同じ形） --- */
+.row{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap}
+.stepper{display:inline-flex;align-items:center;gap:16px;background:var(--lift);
+  border:1px solid var(--gold-line);border-radius:999px;padding:8px 14px}
+.step{width:54px;height:54px;border-radius:50%;border:0;background:var(--yellow);
+  color:var(--brown);display:grid;place-items:center;cursor:pointer}
+.step:disabled{opacity:.34;cursor:not-allowed}
+.step svg{width:24px;height:24px}
+.qty{font-family:var(--serif);color:var(--brown);font-size:32px;min-width:78px;text-align:center}
+.qty small{font-size:.42em;margin-left:3px}
+.qty[data-zero="true"]{color:var(--gold-line)}
+.which{display:flex;gap:10px;justify-content:center;margin-bottom:18px}
+.which button{min-height:48px;padding:0 22px 0 14px;border-radius:999px;font:inherit;cursor:pointer;
+  display:inline-flex;align-items:center;gap:8px;
+  border:1px solid var(--gold-line);background:transparent;color:var(--brown-soft)}
+.which button img{width:30px;height:auto}
+.which button[aria-pressed="true"]{background:var(--brown);color:var(--lift);border-color:var(--brown)}
+
+/* --- 合計と数え札 --- */
+.total-row{display:flex;align-items:center;justify-content:center;gap:22px;margin-top:26px}
+.total-label{font-size:16px;letter-spacing:.14em}
+.total-yen{font-family:var(--serif);color:var(--brown);font-size:46px;font-weight:500}
+.total-yen small{font-size:.45em;margin-left:4px}
+.total-row[data-lit="true"] .total-yen{
+  background:linear-gradient(100deg,var(--brown) 30%,var(--gold-text) 46%,var(--brown) 62%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent}
+
+.tally{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;
+  gap:2px;margin-top:16px;min-height:56px}
+/* 1つ＝ベビーカステラ 1カップ。お店の水彩をそのまま数える単位にする。 */
+.tally-mark{width:46px;height:auto;display:block;transform-origin:50% 60%}
+/* 落として弾ませるのはやめ、置かれるように降りて止める。
+   到着なので減速のみ。行き過ぎ（overshoot）は品を落とす。 */
+.tally-mark[data-in="true"]{animation:mark-in var(--m-drop) var(--m-drop-ease) both}
+@keyframes mark-in{
+  from{opacity:0;transform:translateY(-12px) scale(.9) rotate(var(--tilt-from,-5deg))}
+  to  {opacity:1;transform:translateY(0)     scale(1)  rotate(var(--tilt,0deg))}
+}
+/* 外したものは持ち上がって消える。退出は加速、入場より短く。 */
+.tally-mark[data-out="true"]{animation:mark-out var(--m-lift) var(--m-lift-ease) both}
+@keyframes mark-out{to{opacity:0;transform:translateY(-16px) scale(.86)}}
+
+/* --- 確定ボタンと完了 --- */
+.cta{min-height:var(--tap);border:0;border-radius:999px;background:var(--brown);color:var(--lift);
+  font-family:var(--serif);font-size:19px;letter-spacing:.1em;padding:0 40px;cursor:pointer}
+.cta:disabled{opacity:.36;cursor:not-allowed}
+.done{position:relative;text-align:center;padding:26px 0 10px;overflow:visible}
+.done-num{font-family:var(--serif);color:var(--brown);font-size:72px;margin:6px 0;line-height:1}
+.done-num[data-show="true"]{animation:num-in .62s cubic-bezier(.22,1,.36,1)}
+@keyframes num-in{from{opacity:0;transform:translateY(16px) scale(.88)}to{opacity:1;transform:none}}
+.bloom-layer{position:absolute;inset:0;pointer-events:none;overflow:visible}
+.bloom-dot{position:absolute;left:50%;top:40%;border-radius:50%;opacity:0;
+  background:radial-gradient(circle at 34% 30%,#FBE7A6 0%,var(--yellow) 46%,#D9A343 80%,#B07C2C 100%);
+  box-shadow:0 1px 3px rgba(97,62,40,.22)}
+.hint{text-align:center;font-size:13px;color:var(--brown-soft);margin:22px 0 0}
+kbd{font:inherit;background:var(--lift);border:1px solid var(--gold-line);border-radius:6px;padding:1px 7px}
+@media (prefers-reduced-motion:reduce){
+  .tally-mark[data-in="true"],.tally-mark[data-out="true"],
+  .done-num[data-show="true"]{animation:none}
+  .total-row[data-lit="true"] .total-yen{background:none;color:var(--brown);-webkit-text-fill-color:currentColor}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>受付の手応え</h1>
+  <p class="lead">本番の配線（Firebase・集計）は通していません。動きと音だけを確かめてください。</p>
+
+  <div class="panel">
+    <h2>１　押す・数える</h2>
+    <p class="note">押すたびに1つ置かれます。音は長音階で、個数に合わせて上がります。</p>
+    <div class="which">
+      <button type="button" data-flavor="plain" aria-pressed="true">
+        <img src="art/mark-yuzu.png" alt="" aria-hidden="true">ゆず</button>
+      <button type="button" data-flavor="flavor_b" aria-pressed="false">
+        <img src="art/mark-cacao.png" alt="" aria-hidden="true">チョコ</button>
+    </div>
+    <div class="row">
+      <div class="stepper">
+        <button type="button" class="step" data-step="-1" aria-label="1カップ減らす">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>
+        </button>
+        <span class="qty" id="qty" data-zero="true">0<small>カップ</small></span>
+        <button type="button" class="step" data-step="1" aria-label="1カップ増やす">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="total-row" id="total-row">
+      <span class="total-label">合計</span>
+      <span class="total-yen" id="total">0<small>円</small></span>
+    </div>
+    <div class="tally" id="tally" aria-hidden="true"></div>
+  </div>
+
+  <div class="panel" style="text-align:center">
+    <h2>２　確定する</h2>
+    <p class="note">合計が走り、金の罫が一度だけ光ります。</p>
+    <button type="button" class="cta" id="confirm" disabled>注文を確定する</button>
+    <div class="done" id="done" hidden>
+      <p style="margin:0;font-size:14px;letter-spacing:.2em">ご注文ありがとうございました</p>
+      <p class="done-num" id="done-num">#012</p>
+      <p style="margin:0;font-size:14px" id="done-meta"></p>
+    </div>
+  </div>
+
+  <p class="hint">上限は <kbd>10</kbd> カップ。超えると音と揺れで返します。音が出ないときは一度画面をタップしてください（iOS は操作前に音を鳴らせません）。</p>
+</div>
+
+<script type="module">
+import * as audio from './lib/audio.js';
+import { nudge, countUp, bloom, reduced } from './lib/motion.js';
+
+const MAX = 10, PRICE = 250;
+let qty = 0, flavor = 'plain', prevTotal = 0;
+const $ = id => document.getElementById(id);
+
+const MARK = { plain:'art/mark-yuzu.png', flavor_b:'art/mark-cacao.png' };
+const LABEL = { plain:'ゆずカステラ', flavor_b:'チョコカステラ' };
+
+/* 手で並べたように見せるため、1つずつわずかに角度を変える。
+   全部が同じ向きだと判で押したようになり、水彩の良さが死ぬ。 */
+function markHTML(key, i){
+  const tilt = ((i * 37) % 11 - 5);
+  return `<img class="tally-mark" src="${MARK[key]}" alt="" aria-hidden="true"
+    style="--tilt:${tilt}deg;--tilt-from:${tilt - 5}deg">`;
+}
+
+function render(changed){
+  $('qty').innerHTML = `${qty}<small>カップ</small>`;
+  $('qty').dataset.zero = String(qty === 0);
+  const total = qty * PRICE;
+  countUp($('total'), prevTotal, total, v => `${v.toLocaleString('ja-JP')}<small>円</small>`);
+  prevTotal = total;
+
+  const t = $('tally');
+  const have = t.children.length;
+  if(qty > have){
+    for(let i = have; i < qty; i++){
+      t.insertAdjacentHTML('beforeend', markHTML(flavor, i));
+      const el = t.lastElementChild;
+      el.dataset.in = 'true';
+      el.style.animationDelay = ((i - have) * 60) + 'ms';
+    }
+  }else if(qty < have){
+    for(let i = have - 1; i >= qty; i--){
+      const el = t.children[i];
+      el.dataset.in = 'false'; el.dataset.out = 'true';
+      setTimeout(() => el.remove(), reduced() ? 0 : 340);
+    }
+  }
+  $('confirm').disabled = qty === 0;
+  document.querySelectorAll('.step').forEach(b=>{
+    const d = Number(b.dataset.step);
+    b.disabled = d < 0 ? qty <= 0 : qty >= MAX;
+  });
+  // 同時に動かすのは「置かれる絵」と「合計」の 2 つまでに抑える。
+  // 数字まで膨らませると、1 タップで 3 つ以上が動いて落ち着かない。
+}
+
+document.querySelectorAll('.step').forEach(b => b.addEventListener('click', () => {
+  const d = Number(b.dataset.step);
+  const next = qty + d;
+  if(next < 0 || next > MAX){ audio.limit(); nudge($('qty')); return; }
+  qty = next;
+  audio.step(d > 0, qty || 1);
+  render(true);
+}));
+
+document.querySelectorAll('[data-flavor]').forEach(b => b.addEventListener('click', () => {
+  flavor = b.dataset.flavor;
+  document.querySelectorAll('[data-flavor]').forEach(o =>
+    o.setAttribute('aria-pressed', String(o === b)));
+  $('tally').innerHTML = '';
+  const n = qty; qty = 0; render(false); qty = n; render(false);
+}));
+
+$('confirm').addEventListener('click', () => {
+  audio.confirm();
+  const row = $('total-row');
+  row.dataset.lit = 'true';
+  if(!reduced() && row.animate)
+    row.animate([{backgroundPosition:'-160% 0'},{backgroundPosition:'260% 0'}],
+      {duration:900, easing:'ease-in-out'});
+  setTimeout(() => { row.dataset.lit = 'false'; }, 950);
+
+  const done = $('done');
+  done.hidden = false;
+  $('done-num').dataset.show = 'false';
+  $('done-meta').textContent =
+    `${LABEL[flavor]} ${qty}カップ　合計 ${(qty*PRICE).toLocaleString('ja-JP')}円`;
+  requestAnimationFrame(() => {
+    $('done-num').dataset.show = 'true';
+    bloom(done, 16);
+  });
+});
+
+// iOS は操作を経ないと音を鳴らせない。最初のタップで必ず起こす。
+addEventListener('pointerdown', () => audio.unlock(), { once: true });
+render(false);
+</script>
+</body>
+</html>
