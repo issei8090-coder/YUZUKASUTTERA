@@ -168,5 +168,34 @@ for (const rel of ['lib/pure.js', 'lib/audio.js', 'lib/motion.js',
 if (/from\s+["']https?:/.test(js)) fail('app.js が外部 URL から import している');
 else console.log('  ok   外部 URL からの import は無い');
 
+console.log('\n[8] 認証待ちブロックの外から、中の宣言を使っていないか');
+// authReady.then(()=>{ … }) の中で const / let / function を宣言すると、
+// ブロックの外から呼んだ瞬間に ReferenceError になる。try の中で起きると
+// 「配信に失敗しました」の形で出るため、原因が認証やルールに見えてしまう。
+// 実際に nowServer がこれで、支払い口の金額表示が毎回失敗していた。
+{
+  const start = js.indexOf('authReady.then(()=>{');
+  const end = js.indexOf('});   // authReady.then');
+  if (start < 0 || end < 0) fail('authReady.then のブロックを app.js から読み取れない');
+  else {
+    const inner = js.slice(start, end);
+    // 外側のコードだけを見る（コメントと import は除く）。
+    const outside = (js.slice(0, start) + js.slice(end))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    // ブロック直下（行頭）の宣言だけを対象にする。入れ子の中の変数は外から見えない。
+    const names = new Set();
+    for (const m of inner.matchAll(/^(?:const|let|var)\s+([A-Za-z_$][\w$]*)/gm)) names.add(m[1]);
+    for (const m of inner.matchAll(/^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)) names.add(m[1]);
+    let leaked = 0;
+    for (const n of [...names].sort()) {
+      if (new RegExp(`\\b${n}\\b`).test(outside)) {
+        fail(`${n} を authReady.then の中で宣言して外から使っている（実行時に ReferenceError）`);
+        leaked++;
+      }
+    }
+    if (!leaked) console.log(`  ok   ブロック内の宣言 ${names.size} 件はすべて中だけで使われている`);
+  }
+}
+
 console.log(failures ? `\n✗ ${failures} 件の配線ずれ` : '\n✓ 配線は一致しています');
 process.exit(failures ? 1 : 0);

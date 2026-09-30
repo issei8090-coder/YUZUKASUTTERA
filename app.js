@@ -780,6 +780,52 @@ onValue(ref(db,'.info/connected'), snap=>{
   paintNet();
 });
 
+/* ---------- 金額表示 ----------
+   支払い口で選んだ注文の金額を、お客様に向けた別の端末へ出す。
+
+   配信先は支払い口ごとに分ける。1 本の共有ノードにすると、支払い口を
+   2 箇所にした瞬間に互いの金額を上書きし合う。既定は 'main'、
+   URL の #pay:2 / #amount:2 で 2 番目の口になる。
+
+   時刻の比較はサーバー時刻で行う。端末の時計がずれていると、
+   「一度も表示されない」か「永久に消えない」のどちらかになる。 */
+const AMOUNT_HOLD_MS = 10 * 60 * 1000;
+let amountShown = null, amountTimer = null;
+let serverSkew = 0;   // サーバー時刻 − この端末の時刻
+const nowServer = () => Date.now() + serverSkew;
+
+function renderAmount(){
+  const live = $('amount-live'), idle = $('amount-idle');
+  if(!live || !idle) return;
+  clearTimeout(amountTimer);
+
+  const d = amountShown;
+  const age = d?.at ? nowServer() - d.at : Infinity;
+  const fresh = !!d && d.amount > 0 && age < AMOUNT_HOLD_MS;
+
+  live.classList.toggle('hidden', !fresh);
+  idle.classList.toggle('hidden', !!fresh);
+  if(!fresh) return;
+
+  $('amount-num').textContent = d.number || '';
+  // 絵 × 個数。お客様は商品名を読むより、絵と数で確かめるほうが速い。
+  const lines = decodeLines(d.items);
+  $('amount-items').innerHTML = lines.length
+    ? lines.map(i => `
+        <span class="amount-line">
+          <span class="amount-mark"><img src="${MARK[i.flavor]||''}" alt="${label(i.flavor)}"></span>
+          <span class="amount-x" aria-hidden="true">×</span>
+          <span class="amount-n">${i.quantity}<small>${unit(i.flavor)}</small></span>
+        </span>`).join('')
+    : '';
+  // 金額は走らせる。切り替わったことがひと目で分かる。
+  countUp($('amount-yen'), 0, d.amount, v => `${yen(v)}<small>円</small>`, 520);
+
+  // 期限が来たら自分で引っ込める。支払い口の端末が落ちて消去が届かなかった
+  // 場合の保険なので、DB の更新は当てにできない。
+  amountTimer = setTimeout(renderAmount, Math.max(1000, AMOUNT_HOLD_MS - age));
+}
+
 authReady.then(()=>{
 onValue(ref(db,'orders'), snap=>{
   const v = snap.val();
@@ -836,20 +882,8 @@ async function seedDefaults(){
 }
 seedDefaults();
 
-/* ---------- 金額表示 ----------
-   支払い口で選んだ注文の金額を、お客様に向けた別の端末へ出す。
-
-   配信先は支払い口ごとに分ける。1 本の共有ノードにすると、支払い口を
-   2 箇所にした瞬間に互いの金額を上書きし合う。既定は 'main'、
-   URL の #pay:2 / #amount:2 で 2 番目の口になる。
-
-   時刻の比較はサーバー時刻で行う。端末の時計がずれていると、
-   「一度も表示されない」か「永久に消えない」のどちらかになる。 */
-const AMOUNT_HOLD_MS = 10 * 60 * 1000;
-let amountShown = null, amountTimer = null;
-let serverSkew = 0;   // サーバー時刻 − この端末の時刻
-const nowServer = () => Date.now() + serverSkew;
-
+/* 金額表示の購読。display/payment は auth が要るため、認証の後に張る
+   （PERMISSION_DENIED で切られた購読は自動では戻らない）。 */
 onValue(ref(db,'.info/serverTimeOffset'), snap=>{
   const v = snap.val();
   if(typeof v === 'number') serverSkew = v;
@@ -860,38 +894,6 @@ onValue(ref(db, 'display/payment/' + station()), snap=>{
   amountShown = snap.val();
   renderAmount();
 }, ()=>{ /* 読めないときは何も出さない */ });
-
-function renderAmount(){
-  const live = $('amount-live'), idle = $('amount-idle');
-  if(!live || !idle) return;
-  clearTimeout(amountTimer);
-
-  const d = amountShown;
-  const age = d?.at ? nowServer() - d.at : Infinity;
-  const fresh = !!d && d.amount > 0 && age < AMOUNT_HOLD_MS;
-
-  live.classList.toggle('hidden', !fresh);
-  idle.classList.toggle('hidden', !!fresh);
-  if(!fresh) return;
-
-  $('amount-num').textContent = d.number || '';
-  // 絵 × 個数。お客様は商品名を読むより、絵と数で確かめるほうが速い。
-  const lines = decodeLines(d.items);
-  $('amount-items').innerHTML = lines.length
-    ? lines.map(i => `
-        <span class="amount-line">
-          <span class="amount-mark"><img src="${MARK[i.flavor]||''}" alt="${label(i.flavor)}"></span>
-          <span class="amount-x" aria-hidden="true">×</span>
-          <span class="amount-n">${i.quantity}<small>${unit(i.flavor)}</small></span>
-        </span>`).join('')
-    : '';
-  // 金額は走らせる。切り替わったことがひと目で分かる。
-  countUp($('amount-yen'), 0, d.amount, v => `${yen(v)}<small>円</small>`, 520);
-
-  // 期限が来たら自分で引っ込める。支払い口の端末が落ちて消去が届かなかった
-  // 場合の保険なので、DB の更新は当てにできない。
-  amountTimer = setTimeout(renderAmount, Math.max(1000, AMOUNT_HOLD_MS - age));
-}
 
 onValue(ref(db,'config/prices'), snap=>{
   const v = snap.val();
