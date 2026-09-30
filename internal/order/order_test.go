@@ -391,21 +391,29 @@ func TestValidateLimits(t *testing.T) {
 	}
 }
 
-// 列がないときは番号札を出さずにその場で渡し切れること。
+// 番号札を出さない注文は、厨房だけを飛ばして受渡待ちから始まること。
+// 受渡と支払いは通常の注文と同じ経路を通らせる（勝手に完了・支払い済みにしない）。
 func TestBuildOrderImmediate(t *testing.T) {
 	res := BuildOrder(NewOrderRequest{
 		Seq: 21, Items: []ItemRequest{{Flavor: "plain", Quantity: 1}},
 		Prices: DefaultPrices(), NowMs: 1790654327731, MaxPerOrder: 10, Immediate: true,
 	})
 	if !res.OK {
-		t.Fatalf("その場渡しが拒否された: %s", res.Error)
+		t.Fatalf("札なしの注文が拒否された: %s", res.Error)
 	}
-	if res.Order.Status != StatusCompleted {
-		t.Errorf("Status = %q, want completed", res.Order.Status)
+	if res.Order.Status != StatusReady {
+		t.Errorf("Status = %q, want ready", res.Order.Status)
+	}
+	// 受付で勝手に支払い済みにしない。代金は受渡口で受け取り、誰かが一度押す。
+	if res.Order.Paid {
+		t.Error("札なしの注文が受付の時点で支払い済みになっている")
+	}
+	if res.Order.PaidMs != 0 {
+		t.Errorf("PaidMs = %d, want 0", res.Order.PaidMs)
 	}
 	// 札を使わないので番号は空。通し番号だけが記録に残る。
 	if res.Order.Number != "" || res.Order.Tag != 0 {
-		t.Errorf("その場渡しが札を消費した: number=%q tag=%d", res.Order.Number, res.Order.Tag)
+		t.Errorf("札なしの注文が札を消費した: number=%q tag=%d", res.Order.Number, res.Order.Tag)
 	}
 	if res.Order.Seq != 21 {
 		t.Errorf("Seq = %d, want 21", res.Order.Seq)
@@ -416,7 +424,7 @@ func TestBuildOrderImmediate(t *testing.T) {
 		Prices: DefaultPrices(), NowMs: 1790654327731, MaxPerOrder: 10,
 		Immediate: true, Remaining: map[string]int{"plain": 2, "flavor_b": 5},
 	}); sold.OK {
-		t.Error("その場渡しでも在庫を超えてはいけない")
+		t.Error("札なしでも在庫を超えてはいけない")
 	}
 }
 
@@ -472,12 +480,12 @@ func TestBuildOrderTag(t *testing.T) {
 	if r := base(func(r *NewOrderRequest) { r.InUseTags = []int{7} }); r.OK {
 		t.Error("まだ出ている札が二重発行された")
 	}
-	// その場渡しは札を使わない
+	// 札なしの注文は札を使わない
 	im := base(func(r *NewOrderRequest) { r.Immediate = true })
 	if !im.OK {
-		t.Fatalf("その場渡しが拒否された: %s", im.Error)
+		t.Fatalf("札なしの注文が拒否された: %s", im.Error)
 	}
 	if im.Order.Tag != 0 || im.Order.Number != "" {
-		t.Errorf("その場渡しが札を消費した: tag=%d number=%q", im.Order.Tag, im.Order.Number)
+		t.Errorf("札なしの注文が札を消費した: tag=%d number=%q", im.Order.Tag, im.Order.Number)
 	}
 }

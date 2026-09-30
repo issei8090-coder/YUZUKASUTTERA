@@ -46,7 +46,9 @@ const CASES = [
   ['札を指定', { items: [{ flavor: 'plain', quantity: 1 }], tag: 7, tagCount: 50 }],
   ['札が範囲外', { items: [{ flavor: 'plain', quantity: 1 }], tag: 99, tagCount: 50 }],
   ['札が使用中', { items: [{ flavor: 'plain', quantity: 1 }], tag: 7, tagCount: 50, inUseTags: [7] }],
-  ['その場渡し', { items: [{ flavor: 'plain', quantity: 2 }], immediate: true, paid: true }],
+  // 札なし（厨房を飛ばす）。画面は paid を常に false で渡すので、そちらで突き合わせる。
+  ['札なし', { items: [{ flavor: 'plain', quantity: 2 }], immediate: true, paid: false }],
+  ['札なし・受付で受取済み', { items: [{ flavor: 'plain', quantity: 2 }], immediate: true, paid: true }],
   ['営業回つき', { items: [{ flavor: 'plain', quantity: 1 }], session: 'r2' }],
   ['採番が不正', { items: [{ flavor: 'plain', quantity: 1 }], seq: 0 }],
 ];

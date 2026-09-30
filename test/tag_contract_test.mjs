@@ -53,7 +53,9 @@ check('出ている札の二重発行を拒否', order({ tag: 7, inUseTags: [7] 
 console.log('\n[3] goBuildOrder — 番号札を使わない注文');
 {
   const im = order({ immediate: true, tag: 0 });
-  check('その場で受渡完了になる', im.ok && im.order.status === 'completed');
+  // 飛ばすのは厨房だけ。受渡待ちから始め、受渡口で渡して代金も受け取る。
+  check('厨房を飛ばして受渡待ちになる', im.ok && im.order.status === 'ready');
+  check('受付では支払い済みにしない', im.ok && im.order.paid !== true);
   check('札を消費しない', !im.order.tag);
   check('番号は空', im.order.number === '');
   // 番号を出さなくても売上と在庫は通常どおり

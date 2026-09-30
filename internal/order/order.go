@@ -685,15 +685,21 @@ type NewOrderRequest struct {
 	// 作り置きのため、ここを超える注文は受け付けてはいけない。
 	Remaining map[string]int `json:"remaining"`
 
-	// Immediate はその場で渡し切る注文。列がないときは番号札を出す意味がないため、
-	// 受付と同時に受渡完了として記録する（売上には通常どおり計上される）。
+	// Immediate は番号札を出さない注文。列がないときは札を出す意味がないため、
+	// 作り置きをその場で渡す運用に切り替わる。
+	//
+	// このとき飛ばすのは「厨房」だけで、受渡と支払いは必ず通す。
+	// 受渡待ち (ready) として立て、受渡口で渡し、代金もそこで受け取る。
+	// 以前はここで completed + 支払い済みまで立てていたが、
+	// 受付係が代金を受け取り忘れても誰も気づけず、締めでも一致してしまった。
 	Immediate bool `json:"immediate"`
 
 	// Session は営業回。空なら既定の回。
 	Session string `json:"session"`
-	// Paid は受付時点で代金を受け取ったか。番号札を使わない「その場渡し」は
-	// 定義上その場で受け取っているので true で立てる。未払いで立てると
-	// 支払い口に「渡したのに未払い」として積み上がり、回収する手間が生まれる。
+	// Paid は受付時点で代金を受け取ったか。
+	// 受付で先に受け取る運用に備えて呼び出し側が決められるようにしてあるが、
+	// 画面からは常に false で渡す。代金を受け取ったことは、誰かが一度
+	// 押して初めて記録される（自動で支払い済みにしない）。
 	Paid bool `json:"paid"`
 
 	// Tag は手渡す番号札。0 なら札を出さない。
@@ -802,7 +808,7 @@ func BuildOrder(req NewOrderRequest) BuildResult {
 		return fail("1回のご注文は合計 %d カップまでです (指定=%d)", maxPerOrder, totalQty)
 	}
 
-	// 番号札の決定。その場渡しは札を使わない（使うと実在しない札を飛ばすことになる）。
+	// 番号札の決定。札なしの注文は札を使わない（使うと実在しない札を飛ばすことになる）。
 	tag := 0
 	if !req.Immediate {
 		tag = req.Tag
@@ -839,9 +845,9 @@ func BuildOrder(req NewOrderRequest) BuildResult {
 		Quantity: totalQty,
 		Price:    total,
 		Status:   StatusPending,
-		// 支払いは原則として未払いで始まる。受付・支払い口・受渡口のどこで
+		// 支払いは常に未払いで始まる。受付・支払い口・受渡口のどこで
 		// 受け取るかは運用次第なので、受付時点で支払い済みと決めつけない。
-		// 例外は番号札を使わない「その場渡し」で、これは受付で受け取っている。
+		// 番号札を使わない注文も例外にしない（受渡口で受け取る）。
 		Paid:       req.Paid,
 		Session:    session,
 		CreatedAt:  t.Format("15:04:05"),
@@ -853,8 +859,11 @@ func BuildOrder(req NewOrderRequest) BuildResult {
 		o.Flavor = items[0].Flavor
 		o.UnitPrice = items[0].UnitPrice
 	}
+	// 札を出さない注文は厨房を飛ばして受渡待ちから始める。
+	// 作り置きをその場で渡すだけなので焼き待ちには出さないが、
+	// 受渡と支払いの記録は通常の注文とまったく同じ経路をたどらせる。
 	if req.Immediate {
-		o.Status = StatusCompleted
+		o.Status = StatusReady
 	}
 	if o.Paid {
 		o.PaidMs = req.NowMs

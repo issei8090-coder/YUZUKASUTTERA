@@ -1,8 +1,21 @@
 # 文化祭 模擬店（ベビーカステラ）注文管理Webシステム
 
-Go言語 (WebAssembly) と Firebase Realtime Database を使用して構築された、文化祭模擬店向けの 3モード切替型注文管理システムです。
+Go言語 (WebAssembly) と Firebase Realtime Database を使用して構築された、文化祭模擬店向けの画面切替型注文管理システムです。
 
-受付・厨房・受渡の 3 台以上の端末がリアルタイムに同じ注文データを見ます。
+受付・厨房・受渡・支払い口などの端末がリアルタイムに同じ注文データを見ます。
+端末ごとに URL の `#` を決めて使います。
+
+| URL | 画面 | 誰が使うか |
+|---|---|---|
+| （なし） | 受付 | お客様に向ける。商品を選んで確定する |
+| `#kitchen` | 厨房 | 焼き待ちの伝票。置きっぱなしにする |
+| `#ready` | 受渡 | 品物を渡し、代金も受け取る。置きっぱなしにする |
+| `#pay` | 支払い口 | 未収の回収に専念する（`#pay:2` で 2 口目） |
+| `#amount` | 金額表示 | お客様に向ける。会計中の金額だけを出す |
+| `#call` | 呼び出し表示 | お客様に向ける。番号札の番号を大きく出す |
+| `#records` | 記録・売上 | 本部。記録表・売上・CSV・営業回の締め |
+
+注文の一生と場合分けは **[`docs/FLOW.md`](docs/FLOW.md)** にまとめてあります。
 金額計算・採番・状態遷移・集計・CSV 出力といった「間違うと売上が合わなくなる処理」は
 すべて Go 側 (WASM) に集約し、画面側では計算しません。
 
@@ -26,6 +39,8 @@ Go言語 (WebAssembly) と Firebase Realtime Database を使用して構築さ�
 | `firebase.json` | `firebase deploy --only database` 用の設定 |
 | `firebase-config.sample.js` | 接続設定のひな形。コピーして `firebase-config.js` を作る |
 | `test/wasm_contract_test.mjs` | ビルド済み `main.wasm` を Node から叩く契約テスト |
+| `docs/FLOW.md` | 注文の一生と、場合分けの一覧（コードから起こしたもの） |
+| `docs/ISSUES.md` | 見つかっている問題と、直したもの |
 | `build.sh` | ローカル用のビルド & 配信スクリプト |
 | `.github/workflows/deploy.yml` | テスト → ビルド → GitHub Pages デプロイ |
 

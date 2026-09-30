@@ -204,3 +204,30 @@ func TestRulesConfigIsClosed(t *testing.T) {
 			"でたらめな商品キーを足すと、その商品の注文が通ってしまう")
 	}
 }
+
+// 注文を作るときに立てられる状態が、Go の BuildOrder と一致していること。
+//
+// BuildOrder は厨房を通す注文を pending、番号札を出さない注文（厨房を飛ばす）を
+// ready で立てる。ルール側の作成時パターンがこれとずれると、
+// 「画面では確定できるのに DB だけが拒否する」が起きる。実際に完了扱いを
+// やめたときここがずれた。
+func TestRulesCreatableStatuses(t *testing.T) {
+	rules := loadRules(t)
+	st := child(t, rules, "rules", "orders", "$orderId", "status")
+	expr, _ := st[".validate"].(string)
+
+	// 作成時の枝は三項演算子の前半。ここだけを見る。
+	head, _, found := strings.Cut(expr, ":")
+	if !found {
+		t.Fatalf("status の .validate に作成時の枝が無い: %s", expr)
+	}
+	for _, want := range []string{string(StatusPending), string(StatusReady)} {
+		if !strings.Contains(head, want) {
+			t.Errorf("%q で注文を作れない。BuildOrder はこの状態で立てる", want)
+		}
+	}
+	// completed で作れてはいけない。受渡と支払いを飛ばした注文が生まれる。
+	if strings.Contains(head, string(StatusCompleted)) {
+		t.Error("completed で注文を作れてしまう。受渡も支払いも通らない注文が入る")
+	}
+}

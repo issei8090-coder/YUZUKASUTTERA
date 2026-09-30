@@ -430,11 +430,21 @@ tbody tr:hover{background:var(--lift)}
    何度も見て手を動かす「捌く画面」。用途が違うので意匠も分ける。
    暗い地・装飾なし・サンセリフ・太い数字で、グレアと視認距離に耐えさせる。
    ============================================================ */
-body[data-tab="kitchen"]{background:#141210;color:#F2ECE0}
-body[data-tab="kitchen"] .deco,
-body[data-tab="kitchen"] .masthead{display:none}
-body[data-tab="kitchen"] .wrap{max-width:none;padding-left:16px;padding-right:16px}
-body[data-tab="kitchen"] .nav-toggle{background:#242019;border-color:#3A322A;color:#C9BFAE}
+/* 厨房・受渡・支払い口は「置いて立って使う」同じ性格の画面なので、地も揃える。
+   ばらばらだと、担当を交代したときに毎回読み直すことになる。 */
+body[data-tab="kitchen"],
+body[data-tab="ready"],
+body[data-tab="pay"]{background:#141210;color:#F2ECE0}
+body[data-tab="kitchen"] .deco, body[data-tab="ready"] .deco, body[data-tab="pay"] .deco,
+body[data-tab="kitchen"] .masthead,
+body[data-tab="ready"] .masthead,
+body[data-tab="pay"] .masthead{display:none}
+body[data-tab="kitchen"] .wrap,
+body[data-tab="ready"] .wrap,
+body[data-tab="pay"] .wrap{max-width:none;padding-left:16px;padding-right:16px}
+body[data-tab="kitchen"] .nav-toggle,
+body[data-tab="ready"] .nav-toggle,
+body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#C9BFAE}
 
 .kds{--ok:#5BB98C;--warn:#F0B429;--late:#E2574C;--line:#332C24;--panel:#1F1B16;--dim:#A99E8C;
   /* 罫線用の --late は暗い地の上で 4:1 前後しか出ない。文字にはこちらを使う。 */
@@ -534,6 +544,118 @@ body[data-tab="kitchen"] .nav-toggle{background:#242019;border-color:#3A322A;col
 @media (max-width:760px){
   .kds-batch{grid-auto-flow:row}
   .kds-sound{margin-left:0}
+}
+
+/* ============================================================
+   業務用の画面（受渡・支払い口）。
+   厨房と同じ地と同じ寸法づかいにする。立ったまま 1m 離れて見て、
+   手袋のままでも押し外さない大きさが要る点が厨房と同じだから。
+
+   出すのは「番号・品物・金額・押すところ」だけ。
+   迷う余地を作らないため、1 枚のカードに主たるボタンは 1 つに絞る。
+   ============================================================ */
+
+/* 未収・警告の見出し。数字の色だけで状態が読めるようにする。 */
+.ops-due b{color:var(--warn)}
+.ops-alert{color:var(--late-text)}
+.ops-alert b{color:var(--late-text)}
+
+/* 番号で絞る入力。会計の列の中で目で探させない。 */
+.ops-find{margin-left:auto;display:inline-flex;align-items:center;gap:8px}
+.ops-find input{min-height:48px;width:clamp(150px,20vw,230px);padding:0 14px;border-radius:8px;
+  background:#141210;border:1px solid var(--line);color:#F2ECE0;font-size:19px;
+  font-variant-numeric:tabular-nums}
+.ops-find input::placeholder{color:var(--dim);opacity:.8}
+.ops-mini{min-height:48px;padding:0 16px;border-radius:8px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim);font-size:16px}
+.ops-mini:hover{color:#F2ECE0;border-color:var(--dim)}
+
+/* カード。厨房の伝票と同じ骨格を使う。 */
+.ops-card{background:var(--panel);border:1px solid var(--line);border-top:7px solid var(--ok);
+  border-radius:10px;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.ops-card[data-age="warn"]{border-top-color:var(--warn)}
+.ops-card[data-age="late"]{border-top-color:var(--late);background:#251A17}
+/* 渡したのに未払い＝取りはぐれ。ここだけは並びの先頭で赤く出す。 */
+.ops-card[data-lost="true"]{border-top-color:var(--late);background:#251A17}
+/* 会計中の 1 枚。お客様の画面に出ているのがどれかを、一覧の上で示す。 */
+.ops-card[data-busy="true"]{border-color:var(--warn);box-shadow:0 0 0 2px var(--warn) inset}
+
+.ops-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.ops-num{font-size:clamp(38px,5.8vh,52px);font-weight:800;line-height:1;
+  font-variant-numeric:tabular-nums;color:#F2ECE0}
+.ops-timer{font-size:clamp(22px,3.4vh,29px);font-weight:700;color:var(--dim);
+  font-variant-numeric:tabular-nums}
+.ops-card[data-age="warn"] .ops-timer{color:var(--warn)}
+.ops-card[data-age="late"] .ops-timer{color:var(--late-text)}
+/* 「お渡し済み・未払い」「会計中」のような、状態そのものを示す札。 */
+.ops-state{font-size:clamp(16px,2.4vh,20px);font-weight:700;letter-spacing:.08em;
+  color:var(--late-text)}
+.ops-state[data-kind="busy"]{color:var(--warn)}
+
+/* 明細は「絵 × 個数」。番号を照合して品物を取る場所なので、
+   商品名を読むより絵と数を見るほうが速い。個数は名前より大きくする。 */
+.ops-lines{list-style:none;margin:0;padding:8px 0 0;border-top:1px solid var(--line);
+  display:flex;flex-wrap:wrap;gap:6px 24px}
+.ops-lines li{display:flex;align-items:center;gap:8px}
+.ops-mark{width:clamp(46px,7vh,62px);aspect-ratio:4/3;flex:none;display:grid;place-items:center}
+.ops-mark img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.ops-x{font-size:clamp(15px,2.2vh,19px);color:var(--dim);line-height:1}
+.ops-qty{font-size:clamp(28px,4.2vh,38px);font-weight:800;line-height:1.1;
+  font-variant-numeric:tabular-nums;color:#F2ECE0}
+.ops-name{font-size:clamp(14px,2vh,17px);color:var(--dim);letter-spacing:.04em}
+
+/* 受け取る金額。支払い口で最初に目が行くべき数字なので、番号より大きくする。 */
+.ops-amount{margin:0;text-align:right;font-size:clamp(44px,7vh,66px);font-weight:800;
+  line-height:1;font-variant-numeric:tabular-nums;color:var(--warn)}
+.ops-amount small{font-size:.36em;margin-left:.12em;font-weight:700}
+.ops-amount[data-paid="true"]{color:var(--dim)}
+.ops-hint{margin:0;text-align:center;font-size:clamp(13px,1.9vh,16px);color:var(--dim);
+  letter-spacing:.04em;line-height:1.5}
+
+/* 押すところ。厨房の打ち返しと同じ寸法・同じ色にする。
+   赤は「中止」に見えるので、急ぎでもボタンの色は変えない（枠と時計で伝える）。 */
+.ops-do{margin-top:auto;width:100%;min-height:clamp(62px,8.8vh,76px);border-radius:8px;cursor:pointer;
+  background:#2E7D55;border:1px solid #3E9D6C;color:#fff;font-size:clamp(21px,3.2vh,27px);
+  font-weight:700;letter-spacing:.06em}
+.ops-do{white-space:nowrap;padding:0 10px}
+.ops-do:hover{background:#369564}
+.ops-do:active{transform:scale(.98)}
+/* 代金を受け取る操作は、渡す操作と色を変える。同じ色だと押し分けが効かない。 */
+.ops-do[data-kind="cash"]{background:#8A6410;border-color:#B5881E;
+  font-size:clamp(17px,2.5vh,22px)}
+.ops-do[data-kind="cash"]:hover{background:#9C7213}
+/* 逃げ道（そのまま渡す・戻る）は主たるボタンより明らかに弱くする。 */
+.ops-sub{width:100%;min-height:52px;border-radius:8px;cursor:pointer;background:transparent;
+  border:1px solid var(--line);color:var(--dim);font-size:clamp(15px,2.2vh,18px)}
+.ops-sub{white-space:nowrap;padding:0 10px}
+.ops-sub:hover{color:#F2ECE0;border-color:var(--dim)}
+.ops-row{display:flex;gap:10px}
+.ops-row .ops-sub{width:auto;flex:1}
+
+/* 支払い済みの控え。普段は畳んでおく。 */
+.ops-fold{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0 16px}
+.ops-fold summary{min-height:56px;display:flex;align-items:center;cursor:pointer;
+  font-size:18px;color:var(--dim);letter-spacing:.04em}
+.ops-fold[open] summary{border-bottom:1px solid var(--line)}
+/* 控えは「どれを戻すか」を選ぶだけの並び。1 行に収まる幅を確保しておかないと、
+   番号・金額・ボタンが三つとも折り返して読めなくなる。 */
+.ops-paid-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:10px;padding:14px 0 72px}
+.ops-paid-row{background:#141210;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+  display:flex;align-items:center;gap:12px}
+.ops-paid-num{font-size:22px;font-weight:700;color:#F2ECE0;font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.ops-paid-yen{font-size:16px;color:var(--dim);font-variant-numeric:tabular-nums;
+  white-space:nowrap;margin-right:auto}
+.ops-paid-row .ops-mini{white-space:nowrap;flex:none}
+.ops-note{margin:0;padding:14px 0;color:var(--dim);font-size:16px}
+
+@media (max-width:760px){
+  .ops-find{margin-left:0;width:100%}
+  .ops-find input{flex:1;width:auto}
+  /* 幅が足りない端末では、はみ出させるより折り返させる。
+     ボタンの文言は金額を含むので、桁が増えると 1 行に収まらないことがある。 */
+  .ops-do, .ops-sub{white-space:normal;line-height:1.35;padding:8px 10px}
 }
 
 /* ============================================================
@@ -678,17 +800,18 @@ body[data-tab="amount"] .masthead{display:none}
 
   /* 直前の注文は細い帯にして高さを食わない */
 
-  /* ---- 厨房・受渡：見出しは固定、一覧だけスクロール ---- */
-  #view-kitchen{flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(8px,1.4vh,18px)}
+  /* ---- 厨房・受渡・支払い口：上のバーは固定、一覧だけスクロール ----
+     この 3 つは立って使う画面なので、件数と最長待ちは常に見えている必要がある。
+     画面ごと送ると、下を見ている間に上の数字が消える。 */
+  #view-kitchen, #view-ready, #view-pay{
+    flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(8px,1.4vh,18px)}
   #view-kitchen .sec-title{margin:0}
-  /* 厨房だけは見出しを固定して伝票欄だけを送る。記録は画面ごと送ればよい。 */
-  #kitchen-list{overflow-y:auto;min-height:0;padding-bottom:6px}
+  #kitchen-list, #ready-list, #pay-list{overflow-y:auto;min-height:0;padding-bottom:6px}
+  /* 支払い済みの控えは畳んである。一覧の送りに巻き込まない。 */
+  #view-pay .ops-fold{flex:none}
+  /* 記録は読む画面なので、こちらは画面ごと送ってよい。 */
   #view-records{flex:1;min-height:0;overflow-y:auto}
   #view-records .sec-title{margin:0 0 14px}
-  /* 支払い口も画面ごと送る。ここを書き忘れると .wrap の overflow:hidden に
-     閉じ込められ、未払いが増えたときに下の注文へ届かなくなる。 */
-  #view-pay{flex:1;min-height:0;overflow-y:auto}
-  #view-pay .sec-title{margin:0 0 14px}
   .panel{padding:clamp(14px,2.2vh,30px)}
   .queue-n{font-size:clamp(30px,5.6vh,52px)}
 }
@@ -917,28 +1040,51 @@ if (location.protocol === 'file:') {
       <p class="call-empty" id="amount-idle">ただいまお会計中のお客様はいらっしゃいません</p>
     </section>
 
-    <!-- ===== 支払い口 ===== -->
-    <section id="view-pay" role="tabpanel" aria-labelledby="tab-pay" class="hidden">
-      <div class="panel" style="margin-bottom:28px">
-        <h2 class="sec-title" style="margin:0 0 16px">未収のお会計</h2>
-        <div class="figures" id="pay-figures"></div>
-      </div>
+    <!-- ===== 受渡（お渡し口の端末） =====
+         厨房と同じ業務用の画面にする。立ったまま 1m 離れて一瞥する使い方なので、
+         番号・金額・押すところだけを大きく出し、それ以外は出さない。 -->
+    <section id="view-ready" role="tabpanel" aria-labelledby="tab-ready" class="kds hidden">
+      <header class="kds-bar">
+        <span class="kds-label">受渡</span>
+        <span class="kds-stat"><b id="ready-count">0</b> 件 お渡し待ち</span>
+        <span class="kds-stat">最長待ち <b id="ready-oldest">—</b></span>
+        <span class="kds-stat ops-due" id="ready-due" hidden>未収 <b id="ready-unpaid">0</b> 件</span>
+      </header>
 
-      <h2 class="sec-title">未払いの注文</h2>
-      <div class="finder">
-        <label class="sr-only" for="pay-find">番号で絞り込む</label>
-        <input type="text" id="pay-find" inputmode="numeric" autocomplete="off"
-               placeholder="番号札の番号で絞り込む">
-        <button type="button" class="mini" id="pay-find-clear">解除</button>
-      </div>
-      <div class="cards" id="pay-list"></div>
-      <p class="empty hidden" id="pay-empty">未払いの注文はありません。</p>
+      <div class="kds-grid" id="ready-list"></div>
+      <p class="kds-empty hidden" id="ready-empty">
+        <b>お渡しする注文はありません</b>
+        厨房が「用意した」を押すと、ここに出ます。<br>
+        番号札を使わない注文は、受付で確定した時点でここに出ます。
+      </p>
+    </section>
 
-      <div class="panel" style="margin-top:34px">
-        <h2 class="sec-title" style="margin:0 0 16px">支払い済み（打ち間違いはここから戻せます）</h2>
-        <div class="cards" id="paid-list"></div>
-        <p class="empty hidden" id="paid-empty">まだ支払い済みの注文はありません。</p>
-      </div>
+    <!-- ===== 支払い口 =====
+         受け取る金額と、押すところ。この 2 つだけを大きく出す。 -->
+    <section id="view-pay" role="tabpanel" aria-labelledby="tab-pay" class="kds hidden">
+      <header class="kds-bar">
+        <span class="kds-label">支払い口</span>
+        <span class="kds-stat"><b id="pay-count">0</b> 件 未収</span>
+        <span class="kds-stat"><b id="pay-sum">0</b> 円</span>
+        <span class="kds-stat ops-alert" id="pay-lost-wrap" hidden>
+          渡したのに未払い <b id="pay-lost">0</b> 件</span>
+        <span class="ops-find">
+          <label class="sr-only" for="pay-find">番号で絞り込む</label>
+          <input type="text" id="pay-find" inputmode="numeric" autocomplete="off"
+                 placeholder="番号で絞り込む">
+          <button type="button" class="ops-mini" id="pay-find-clear">解除</button>
+        </span>
+      </header>
+
+      <div class="kds-grid" id="pay-list"></div>
+      <p class="kds-empty hidden" id="pay-empty">未払いの注文はありません。</p>
+
+      <!-- 打ち間違いを戻す導線。普段は畳んでおき、未収の並びを邪魔しない。 -->
+      <details class="ops-fold">
+        <summary>支払い済み（打ち間違いはここから戻せます）</summary>
+        <div class="ops-paid-list" id="paid-list"></div>
+        <p class="ops-note hidden" id="paid-empty">まだ支払い済みの注文はありません。</p>
+      </details>
     </section>
 
     <!-- ===== 受渡・記録 ===== -->
@@ -950,10 +1096,6 @@ if (location.protocol === 'file:') {
         </div>
         <button type="button" class="cta-ghost" id="session-new" style="min-height:var(--tap);font-size:15px;padding:0 24px">締めて次の回を始める</button>
       </div>
-
-      <h2 class="sec-title">お渡しする注文</h2>
-      <div class="cards" id="ready-list"></div>
-      <p class="empty hidden" id="ready-empty">お渡し待ちの注文はありません。厨房が焼き上げるとここに出ます。</p>
 
       <div class="panel" style="margin-top:34px">
         <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
@@ -1006,7 +1148,8 @@ if (location.protocol === 'file:') {
     <button type="button" role="tab" id="tab-kitchen" aria-controls="view-kitchen" data-go="kitchen">厨房</button>
     <button type="button" role="tab" id="tab-pay"     aria-controls="view-pay"     data-go="pay">支払い口</button>
     <button type="button" role="tab" id="tab-amount"  aria-controls="view-amount"  data-go="amount">金額表示</button>
-    <button type="button" role="tab" id="tab-records" aria-controls="view-records" data-go="records">受渡・記録</button>
+    <button type="button" role="tab" id="tab-ready"   aria-controls="view-ready"   data-go="ready">受渡</button>
+    <button type="button" role="tab" id="tab-records" aria-controls="view-records" data-go="records">記録・売上</button>
     <button type="button" role="tab" id="tab-call"    aria-controls="view-call"    data-go="call">呼び出し表示</button>
   </div>
 </div>
@@ -1099,6 +1242,7 @@ if (location.protocol === 'file:') {
     <p class="done-label" id="done-h">ご注文ありがとうございました</p>
     <p class="done-num" id="done-num">#001</p>
     <p class="done-meta" id="done-meta"></p>
+    <p class="done-next" id="done-next"></p>
     <button type="button" class="cta">閉じる</button>
   </div>
 </div>

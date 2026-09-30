@@ -50,7 +50,7 @@
       }
     },
     "rulesVersion": {
-      "v5": {
+      "v6": {
         ".read": "auth != null"
       }
     },
@@ -102,7 +102,7 @@
           ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 100000 && (!data.exists() || newData.val() === data.val())"
         },
         "status": {
-          ".validate": "newData.isString() && ( !data.exists() ? newData.val().matches(/^(pending|completed)$/) : ( newData.val() === data.val() || (data.val() === 'pending' && newData.val().matches(/^(ready|cancelled)$/)) || (data.val() === 'ready' && newData.val().matches(/^(completed|pending|cancelled)$/)) || (data.val() === 'completed' && newData.val().matches(/^(ready|cancelled)$/)) || (data.val() === 'cancelled' && newData.val() === 'pending') ) )"
+          ".validate": "newData.isString() && ( !data.exists() ? newData.val().matches(/^(pending|ready)$/) : ( newData.val() === data.val() || (data.val() === 'pending' && newData.val().matches(/^(ready|cancelled)$/)) || (data.val() === 'ready' && newData.val().matches(/^(completed|pending|cancelled)$/)) || (data.val() === 'completed' && newData.val().matches(/^(ready|cancelled)$/)) || (data.val() === 'cancelled' && newData.val() === 'pending') ) )"
         },
         "session": {
           ".validate": "newData.isString() && newData.val().length <= 32 && newData.val().matches(/^[A-Za-z0-9_-]+$/) && (!data.exists() || newData.val() === data.val())"
