@@ -514,6 +514,27 @@ $('submit-btn').addEventListener('click', ()=>{
 });
 $('confirm-back').addEventListener('click', closeModal);
 
+/* ---------- どこで待たされているか ----------
+   「確定が遅い」だけでは、認証・注文の読み直し・採番・書き込みのどれが
+   遅いのか切り分けられない。段階ごとの所要時間を console に出す。
+   画面には出さない（受付の画面はお客様に向く）。
+
+   メソッド呼び出しの形にすると dom_wiring_test が定義を見つけられないので、
+   素の関数に状態を渡す形にしてある。 */
+function watchStart(name){
+  const t = performance.now();
+  return { name, t0:t, last:t, laps:[] };
+}
+function watchLap(w, label){
+  const now = performance.now();
+  w.laps.push(`${label} ${Math.round(now - w.last)}ms`);
+  w.last = now;
+}
+function watchEnd(w){
+  // console.debug は Chrome の既定で隠れる（詳細/Verbose のみ）。log で出す。
+  console.log(`[${w.name}] ${w.laps.join(' / ')} → 合計 ${Math.round(performance.now() - w.t0)}ms`);
+}
+
 /* 列がないときは番号札を出す意味がないので、札を出さずに受け付ける。
    飛ばすのは厨房だけで、受渡と支払いは通常の注文とまったく同じ経路を通す。
    売上・在庫も同じに扱う（記録から漏らさない）。 */
@@ -526,6 +547,7 @@ async function placeOrder(immediate, pickedTag){
     toast('番号札を入力してから確定してください。');
     return;
   }
+  const w = watchStart('注文確定');
   const btn = $('confirm-now');
   const keep = btn.innerHTML;
   const keys = $('pad-keys');
@@ -534,6 +556,7 @@ async function placeOrder(immediate, pickedTag){
   if(immediate) btn.textContent = '送信中…';
   try{
     await authReady;   // 描画は待たせないが、書き込みは認証の後でしか通らない
+    watchLap(w, '認証');
 
     const noTag = immediate || !useTags;
     // 札は受付係が実物を見てタップしたものを使う。山の並び順に依存させない。
@@ -559,6 +582,7 @@ async function placeOrder(immediate, pickedTag){
       const v = snap.val();
       if(v) live = Object.entries(v).map(([k,o]) => normalize(o,k));
     }catch(e){ /* 読めなければ購読の値で進む。受付は止めない */ }
+    watchLap(w, '注文の読み直し');
 
     const inSess = live.filter(o => inSession(o, session));
     const remaining = {};
@@ -585,10 +609,12 @@ async function placeOrder(immediate, pickedTag){
     if(!dry.ok){ closeModal(); toast(dry.error || '注文を作成できませんでした。'); return; }
 
     const seq = await nextSeq();
+    watchLap(w, '採番');
     const built = build({ ...req, seq });
     if(!built.ok){ closeModal(); toast(built.error || '注文を作成できませんでした。'); return; }
 
     await tracked(set(ref(db, built.path), built.order));
+    watchLap(w, '書き込み');
     closeModal();
     if(soundOn()) audio.confirm();
     showThanks(built.order);
@@ -599,6 +625,7 @@ async function placeOrder(immediate, pickedTag){
     toast(writeHint(err, '注文を保存できませんでした'));
     console.error(err);
   }finally{
+    watchEnd(w);
     btn.disabled = false;
     btn.innerHTML = keep;
     if(keys){ keys.querySelectorAll('button').forEach(b=>b.disabled = false); padReset(); }
@@ -886,6 +913,17 @@ onValue(ref(db,'config/limits'), snap=>{
     renderMenu(); renderKitchen(); renderFigures();
   }
 }, ()=>toast('上限の設定を読み込めません。通信を確かめてください。'));
+
+/* ---------- 採番トランザクションの下ごしらえ ----------
+   runTransaction は「その端末が今持っている値」から計算を始め、その値の
+   ハッシュを添えてサーバーへ投げる。config/orderCounter/lane0 を誰も購読して
+   いないと手元の値は空なので、1 回目は必ず 1 を書こうとしてハッシュが合わず
+   datastale で弾かれる。正しい値が届いてから投げ直すので、注文 1 件ごとに
+   余計な往復を払っていた（しかも runTransaction が内部で張る購読は終了時に
+   外れるため、次の注文でまた同じことが起きる）。
+   ここで購読を張っておくと、1 回目から正しい値で投げられる。値は使わない。 */
+onValue(ref(db,'config/orderCounter/lane0'), ()=>{}, ()=>{});
+
 });   // authReady.then
 
 setInterval(renderReady, 15000);   // 厨房は tickKitchen が毎秒更新するので対象外
@@ -1000,15 +1038,37 @@ function opsLines(o){
      </li>`).join('') + `</ul>`;
 }
 
+/* 一覧を描き替えても、手元の位置を動かさない。
+   innerHTML を差し替えるとその要素の scrollTop は 0 に戻り、フォーカスも失われる。
+   この 2 画面は別の端末の操作でも描き替わるため、混んでいる時ほど
+   自分は何も触っていないのに一覧が先頭へ飛んでいた。
+   時計の更新については tickReady が既に全体描き直しを避けている。同じ理由。 */
+function paintList(el, html){
+  if(!el) return;
+  const top = el.scrollTop;
+  const a   = document.activeElement;
+  // 押していたボタンは「操作の種類 + 注文」で見分ける。消えていれば戻さない
+  // （渡し終えた注文に勝手にフォーカスを移さないため）。
+  const keep = (a && el.contains(a) && a.dataset)
+    ? { act:a.dataset.act||'', id:a.dataset.id||'' } : null;
+  el.innerHTML = html;
+  el.scrollTop = top;
+  if(!keep) return;
+  const back = Array.from(el.querySelectorAll('button[data-act]')).find(
+    b => (b.dataset.act||'') === keep.act && (b.dataset.id||'') === keep.id);
+  if(back) back.focus();
+}
+
 function renderReady(){
   const list = orders.filter(o=>o.status==='ready').sort(byOrder);
   const unpaid = list.filter(o=>!o.paid);
 
-  $('ready-list').innerHTML = list.map(o=>{
+  paintList($('ready-list'), list.map(o=>{
     const sec = elapsedSec(o.createdMs);
     const due = !o.paid;
     return `
-    <article class="ops-card" id="rc-${o.id}" data-ms="${o.createdMs||0}" data-age="${ageOf(sec)}">
+    <article class="ops-card" id="rc-${o.id}" data-ms="${o.createdMs||0}" data-age="${ageOf(sec)}"
+             aria-label="${numOf(o)}${due ? ` 未収 ${yen(o.price||0)}円` : ''}">
       <div class="ops-head">
         <span class="ops-num">${numOf(o)}</span>
         <span class="ops-timer">${o.createdMs ? mmss(sec) : '—'}</span>
@@ -1032,7 +1092,7 @@ function renderReady(){
              <button type="button" class="ops-sub" data-act="flash" data-id="${o.id}">呼ぶ</button>
            </div>` : ''}`}
     </article>`;
-  }).join('');
+  }).join(''));
 
   $('ready-empty').classList.toggle('hidden', list.length>0);
   $('ready-count').textContent = list.length;
@@ -1175,12 +1235,13 @@ function renderPay(){
     clearAmount();
   }
 
-  $('pay-list').innerHTML = unpaid.map(o=>{
+  paintList($('pay-list'), unpaid.map(o=>{
     const handed = o.status==='completed';   // 渡したのに未払い＝取りはぐれ
     const busy   = collecting?.id === o.id;
     const amount = yen(o.price||0);
     return `
-    <article class="ops-card" data-busy="${busy}" data-lost="${handed}">
+    <article class="ops-card" data-busy="${busy}" data-lost="${handed}"
+             aria-label="${numOf(o)} ${amount}円${handed ? ' お渡し済み・未払い' : ''}">
       <div class="ops-head">
         <span class="ops-num">${numOf(o)}</span>
         ${busy
@@ -1193,10 +1254,12 @@ function renderPay(){
       <p class="ops-amount">${amount}<small>円</small></p>
       ${busy ? `
         <p class="ops-hint">お客様側の画面にこの金額を出しています</p>
-        <button type="button" class="ops-do" data-kind="cash" data-act="collect-ok" data-id="${o.id}">
+        <button type="button" class="ops-do" data-kind="cash" data-act="collect-ok" data-id="${o.id}"
+                aria-label="${numOf(o)} の ${amount}円 を受け取った${collecting.alsoHandOver ? '。あわせて渡す' : ''}">
           受け取った${collecting.alsoHandOver ? ' → 渡す' : ''}</button>
         <div class="ops-row">
-          <button type="button" class="ops-sub" data-act="collect-cancel">戻る</button>
+          <button type="button" class="ops-sub" data-act="collect-cancel"
+                  aria-label="${numOf(o)} の会計をやめる">戻る</button>
         </div>`
       : `
         <button type="button" class="ops-do" data-kind="cash" data-act="pay" data-id="${o.id}"
@@ -1206,7 +1269,7 @@ function renderPay(){
           <button type="button" class="ops-sub" data-act="paydone" data-id="${o.id}">受け取って渡した</button>
         </div>` : ''}`}
     </article>`;
-  }).join('');
+  }).join(''));
 
   $('pay-empty').classList.toggle('hidden', unpaid.length>0);
   $('pay-empty').textContent = payFilter
@@ -1345,6 +1408,57 @@ async function clearAmount(){
   }catch(e){ console.error('金額表示の消去に失敗:', e); }
 }
 
+/* ---------- 現金を扱う操作の手応え ----------
+   受渡口・支払い口は現金が動く画面なので、押した結果が画面に残る必要がある。
+   押すとカードは一覧から消えるが、消えた理由は「自分が記録した」とも
+   「別の端末が先に記録した」とも読めてしまい、区別が付かなかった。 */
+
+/* 応答が返るまで押せなくする。行列の中では同じところを二度叩くのが普通で、
+   2 回目は必ず「すでに支払い済みです」の赤いエラーになっていた。
+   受け取れたのか失敗したのか、画面から区別が付かない状態だった。
+
+   disabled だけでは足りない。応答待ちの間に別の端末の操作で一覧が描き替わると
+   ボタンは作り直され、disabled が消えたものが出てくる。注文の側で覚える。 */
+const cashBusy = new Set();
+function lockTap(b, id){
+  if(cashBusy.has(id)) return false;
+  cashBusy.add(id);
+  if(b && !b.disabled){
+    b.disabled = true;
+    // aria-label がある要素は文字を差し替えても読み上げに出ない。両方を持ち替える。
+    b.dataset.wasText = b.textContent;
+    const al = b.getAttribute('aria-label');
+    if(al != null) b.dataset.wasAria = al;
+    b.textContent = '記録中…';
+    b.setAttribute('aria-label', '記録中');
+    b.setAttribute('aria-busy', 'true');
+  }
+  return true;
+}
+/* 応答が返ったら必ず解く。成功時に解かないと、トーストから戻した注文が
+   もう一度は押せない状態で一覧に戻ってくる。 */
+function unlockTap(b, id){
+  cashBusy.delete(id);
+  if(!b) return;
+  b.disabled = false;
+  b.removeAttribute('aria-busy');
+  if(b.dataset.wasText != null){ b.textContent = b.dataset.wasText; delete b.dataset.wasText; }
+  if(b.dataset.wasAria != null){ b.setAttribute('aria-label', b.dataset.wasAria); delete b.dataset.wasAria; }
+  else b.removeAttribute('aria-label');
+}
+
+/* 受け取った記録が残ったことを示し、その場から戻せるようにする。
+   戻す導線は「支払い済み」の畳んだ一覧にもあるが、開いて 20 件から
+   番号を探す必要があり、直後の押し間違いを直す速さではない。
+   金額の記録を先に戻す。状態の差し戻しが失敗しても、現金の記録だけは合う。 */
+function cashDone(msg, id, alsoHandOver){
+  toast(msg, 'info', ()=>{
+    setPaid(id, false).then(ok=>{
+      if(ok && alsoHandOver) changeStatus(id,'completed','ready');
+    });
+  }, 7000);
+}
+
 /* ---------- 支払い口：会計中の 1 件 ----------
    モーダルで覆うと「いまどれを会計中か」が一覧から見えなくなり、
    お客様側の端末に何を出しているのかもスタッフから分からなくなる。
@@ -1373,12 +1487,17 @@ function cancelCollect(){
 async function confirmCollect(){
   const c = collecting;
   if(!c) return;
+  const o = orders.find(x=>x.id===c.id);
+  const amount = o ? yen(o.price||0) : '';
   collecting = null;
   clearAmount();
   renderPay();
   if(await setPaid(c.id, true)){
     if(soundOn()) audio.paid();
     if(c.alsoHandOver) changeStatus(c.id,'ready','completed');
+    // 会計中のカードは押した時点で一覧から消える。何を記録したのかを
+    // 番号と金額で言い直し、その場から戻せるようにする。
+    cashDone(`${numOf(o)} ${amount}円 受け取りました`, c.id, c.alsoHandOver);
   }
 }
 
@@ -1494,14 +1613,25 @@ document.addEventListener('click', e=>{
       setPaid(id, true).then(ok=>{ if(ok && soundOn()) audio.paid(); });
       break;
     // 受渡口の「N円を受け取って渡した」。未払いの注文はこれが普通の道なので、
-    // 確認を挟まず 1 タップで済ませる。押し間違いは記録表から両方とも戻せる。
-    case 'handpaid':
+    // 確認を挟まず 1 タップで済ませる。押し間違いはその場のトーストから戻せる。
+    case 'handpaid': {
+      const o = orders.find(x=>x.id===id);
+      const amount = o ? yen(o.price||0) : '';
+      // 通信が遅いと二度押しになる。1 回目の応答が返るまで押せなくしておく。
+      // 無しだと 2 回目が「すでに支払い済みです」の赤いエラーになり、
+      // 受け取れたのか失敗したのか画面から判断できない。
+      if(!lockTap(b, id)) break;
       setPaid(id, true).then(ok=>{
+        unlockTap(b, id);
         if(!ok) return;                       // 支払いを記録できなければ渡さない
         if(soundOn()) audio.paid();
         changeStatus(id,'ready','completed');
+        // 現金を受け取った記録が残ったことを、音とは別に目でも示す。
+        // 音は切れる（soundOn が false・周りがうるさい）ので、これが唯一の合図。
+        cashDone(`${numOf(o)} ${amount}円 受け取って渡しました`, id, true);
       });
       break;
+    }
     case 'collect-ok':     confirmCollect(); break;
     case 'collect-cancel': cancelCollect(); break;
     case 'unpay':

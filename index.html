@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ゆず香ステラ — 注文管理</title>
+<!-- 宣言しないと、ブラウザは読み込みごとに /favicon.ico を取りに行って失敗する。
+     Service Worker は控えを持っていないので、その失敗が毎回コンソールに積まれ、
+     本当に見たいエラーが埋もれていた。既にある絵を指しておく。 -->
+<link rel="icon" href="art/yuzu-sm.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1048,7 +1052,11 @@ if (location.protocol === 'file:') {
         <span class="kds-label">受渡</span>
         <span class="kds-stat"><b id="ready-count">0</b> 件 お渡し待ち</span>
         <span class="kds-stat">最長待ち <b id="ready-oldest">—</b></span>
-        <span class="kds-stat ops-due" id="ready-due" hidden>未収 <b id="ready-unpaid">0</b> 件</span>
+        <!-- 未収は他の端末の操作で増減する。読み上げは「未収 3 件」の形で
+             一度に伝える（数字だけを読み上げると何の数か分からない）。
+             件数・最長待ちは常時変わるので、あえて live にしない。 -->
+        <span class="kds-stat ops-due" id="ready-due" hidden
+              role="status" aria-atomic="true">未収 <b id="ready-unpaid">0</b> 件</span>
       </header>
 
       <div class="kds-grid" id="ready-list"></div>
@@ -1066,7 +1074,10 @@ if (location.protocol === 'file:') {
         <span class="kds-label">支払い口</span>
         <span class="kds-stat"><b id="pay-count">0</b> 件 未収</span>
         <span class="kds-stat"><b id="pay-sum">0</b> 円</span>
-        <span class="kds-stat ops-alert" id="pay-lost-wrap" hidden>
+        <!-- 取りはぐれ。この画面で唯一 live にする値。
+             assertive にすると数が動くたび読み上げを遮るので status に留める。 -->
+        <span class="kds-stat ops-alert" id="pay-lost-wrap" hidden
+              role="status" aria-atomic="true">
           渡したのに未払い <b id="pay-lost">0</b> 件</span>
         <span class="ops-find">
           <label class="sr-only" for="pay-find">番号で絞り込む</label>

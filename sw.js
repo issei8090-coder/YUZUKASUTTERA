@@ -7,7 +7,7 @@
  * 端末が古いまま動き続ける。オンラインなら必ず新しいほうが勝ち、
  * 通信が落ちたときだけキャッシュに落ちる。 */
 
-const VERSION = 'yuzuka-v1';
+const VERSION = 'yuzuka-v2';   // 殻の内容か扱いを変えたら上げる（古い控えを捨てさせる）
 const SHELL = [
   './', './index.html', './app.js', './wasm_exec.js', './main.wasm',
   './lib/pure.js', './lib/audio.js', './lib/motion.js',
@@ -60,7 +60,13 @@ self.addEventListener('fetch', e => {
         const shell = await caches.match('./index.html');
         if(shell) return shell;
       }
-      throw err;
+      // ここで throw すると respondWith が reject し、ブラウザは
+      // 「Uncaught (in promise) TypeError: Failed to fetch」と
+      // net::ERR_FAILED をコンソールに積む。控えを持っていない小物
+      // （favicon など）1 つで毎回それが出るため、本当に見たい
+      // Firebase のエラーがその中に埋もれてしまっていた。
+      // 応答として返す。記録は残るが、例外にはしない。
+      return new Response('', { status: 504, statusText: 'offline (no cache)' });
     }
   })());
 });
