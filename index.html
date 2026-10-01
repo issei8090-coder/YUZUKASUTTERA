@@ -2012,46 +2012,46 @@ if (location.protocol === 'file:') {
          透け方は、面を薄く塗って奥の稜線を細く残すことで出す。
          取り上げた札には実際の番号を入れる。番号が入ると、手元の札と
          見比べる対象になり、絵が案内から確認の手がかりに変わる。 -->
-    <svg class="place-ill" viewBox="0 0 260 162" fill="none" aria-hidden="true"
+    <svg class="place-ill" viewBox="40 -6 196 156" fill="none" aria-hidden="true"
          stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
 
       <!-- 取り上げた 1 枚。わずかに傾けて、抜き上げた途中に見せる。
            ケースから十分に離すと「抜き上げた」になる。近いと「刺さっている」に見える。 -->
-      <g transform="rotate(-9 196 40)">
-        <rect x="163" y="2" width="66" height="78" rx="12" stroke-width="2.6"/>
-        <circle cx="196" cy="17" r="4" stroke-width="2.2"/>
-        <path d="M176 28h40" stroke-width="1.4" opacity=".4"/>
-        <text class="place-tag-num" id="place-tag-num" x="196" y="62"
+      <g transform="rotate(-9 191 40)">
+        <rect x="158" y="2" width="66" height="78" rx="12" stroke-width="2.6"/>
+        <circle cx="191" cy="17" r="4" stroke-width="2.2"/>
+        <path d="M171 28h40" stroke-width="1.4" opacity=".4"/>
+        <text class="place-tag-num" id="place-tag-num" x="191" y="62"
               text-anchor="middle" stroke="none" fill="currentColor">0</text>
       </g>
 
       <!-- 抜く向き。ここだけが引かれていく。 -->
       <path class="place-arrow" pathLength="100" stroke-width="2.6"
-            d="M104 98c16-14 34-24 50-31M150 59l12 8-8 10"/>
+            d="M114 86c13-11 27-20 40-26M150 54l11 8-7 10"/>
 
-      <!-- ケースに差さっている札（先に描いて、透明な面の下に置く）。
-           札は深く沈めず、半分以上を上に出す。沈めると箱の中身が見えない。 -->
+      <!-- ケースに差さっている札。1 列に、奥へ重ねて差す。
+           奥から順に描く（手前の 1 枚が重なって前に出る）。 -->
       <g stroke-width="2.2">
-        <rect x="26" y="68" width="22" height="40" rx="4"/>
-        <circle cx="37" cy="76" r="2.3" stroke-width="1.6"/>
-        <rect x="54" y="68" width="22" height="40" rx="4"/>
-        <circle cx="65" cy="76" r="2.3" stroke-width="1.6"/>
-        <rect x="82" y="68" width="22" height="40" rx="4"/>
-        <circle cx="93" cy="76" r="2.3" stroke-width="1.6"/>
+        <rect x="64" y="74" width="30" height="40" rx="5"/>
+        <circle cx="79" cy="82" r="2.4" stroke-width="1.6"/>
+        <rect x="59" y="79" width="30" height="40" rx="5"/>
+        <circle cx="74" cy="87" r="2.4" stroke-width="1.6"/>
+        <rect x="54" y="84" width="30" height="40" rx="5"/>
+        <circle cx="69" cy="92" r="2.4" stroke-width="1.6"/>
       </g>
 
-      <!-- 透明なケース。札立てなので浅く作る。箱にすると収納に見える。
+      <!-- 透明な札立て。1 列ぶんの幅しかない浅い器。
            面を薄く塗り、奥の稜線を細く残すことで透け方を出す。 -->
       <g fill="currentColor" fill-opacity=".05">
-        <path d="M14 104h142v24a6 6 0 0 1-6 6H20a6 6 0 0 1-6-6z" stroke-width="2.6"/>
-        <path d="M14 104l14-13h142l-14 13z" stroke-width="2.1"/>
-        <path d="M156 104l14-13v24l-14 13z" stroke-width="2.1"/>
+        <path d="M46 104h52v28a6 6 0 0 1-6 6H52a6 6 0 0 1-6-6z" stroke-width="2.6"/>
+        <path d="M46 104l13-12h52l-13 12z" stroke-width="2.1"/>
+        <path d="M98 104l13-12v28l-13 12z" stroke-width="2.1"/>
       </g>
       <!-- 奥の稜線。細くすると、手前の面の向こう側に見える。 -->
-      <path d="M28 91v24M170 91v24" stroke-width="1.1" opacity=".38"/>
-      <!-- 面の照り。2 本入れるだけでアクリルらしくなる。 -->
-      <path d="M26 130l14-22" stroke-width="1.3" opacity=".32"/>
-      <path d="M35 132l14-22" stroke-width="1.3" opacity=".18"/>
+      <path d="M59 92v28M111 92v28" stroke-width="1.1" opacity=".38"/>
+      <!-- 面の照り。アクリルらしさはここで出る。 -->
+      <path d="M56 132l13-24" stroke-width="1.3" opacity=".32"/>
+      <path d="M65 134l13-24" stroke-width="1.3" opacity=".18"/>
     </svg>
     <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
       <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">取りました・確定する</button>
