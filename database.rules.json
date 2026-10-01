@@ -52,6 +52,25 @@
     "rulesVersion": {
       "v6": {
         ".read": "auth != null"
+      },
+      "v7": {
+        ".read": "auth != null"
+      }
+    },
+    "desks": {
+      ".read": "auth != null",
+      "$desk": {
+        ".write": "auth != null",
+        ".validate": "$desk.matches(/^[1-4]$/) && newData.hasChildren(['client', 'at'])",
+        "client": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 64"
+        },
+        "at": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "$other": {
+          ".validate": false
+        }
       }
     },
     "orders": {

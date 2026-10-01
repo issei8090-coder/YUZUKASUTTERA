@@ -236,7 +236,12 @@ function applySession(){
   orders = allOrders.filter(o => inSession(o, session));
 
   const ids = new Set(orders.filter(o => o.status === 'pending').map(o => o.id));
-  if(!firstSnap){
+  // 鳴らすのは厨房の画面を開いている端末だけ。受渡の着信音・呼び出しのチャイムと
+  // 同じ理由で、全端末で鳴らすと重なって何も聞き取れなくなる。
+  // ここだけ条件が漏れていたため、受付で注文を確定した端末自身が厨房の呼び鈴を
+  // 鳴らしていた。確定音（和音）に金属的な二打が重なるので、成功したのに
+  // 「エラー音が混じる」と聞こえる。
+  if(!firstSnap && document.body.dataset.tab === 'kitchen'){
     for(const id of ids) if(!knownIds.has(id)){ ping(); break; }
   }
   knownIds = ids;
@@ -397,15 +402,24 @@ function paintTagMode(){
   if(useTags && openEl?.id === 'm-confirm') padReset();
   const now = $('confirm-now');
   if(now) now.textContent = '注文を確定する';
+  // 切り替えは管理画面にある。受付の画面はお客様に向くので、押せるものは置かない。
   const t = $('tagmode-toggle');
   if(t){
     t.setAttribute('aria-pressed', String(useTags));
     t.textContent = useTags ? '番号札を使っています' : '番号札なしで渡しています';
   }
+  const hint = $('tagmode-hint');
+  if(hint){
+    hint.textContent = useTags
+      ? '押すと、番号札なしの運用に切り替わります。'
+      : '押すと、番号札を使う運用に戻ります。いまは厨房を通さず、受渡口でお品物と代金をお渡ししています。';
+    hint.dataset.warn = String(!useTags);
+  }
+  // 受付には、いまどちらの運用かだけを出す。切り替えの導線は置かない。
   const note = $('lane-note');
   if(note){
     note.textContent = useTags
-      ? ''
+      ? '番号札を使っています。'
       : '番号札は使いません。その場でお渡しし、受付で代金をいただきます。';
     note.dataset.warn = 'false';
   }
@@ -421,6 +435,222 @@ async function setTagMode(on){
 }
 
 $('tagmode-toggle')?.addEventListener('click', ()=>setTagMode(!useTags));
+
+/* ---------- 受付機 ----------
+   受付は複数台置く。どの端末がどの受付機かを端末自身に名乗らせ、
+   同じ番号で 2 台立つのを止める。2 台立つと、受付係も受渡口も
+   「どちらの端末が受けた注文か」を追えなくなる。
+
+   名乗りは desks/<番号> に置き、onDisconnect で片づける。画面を閉じる・
+   電池が切れる・回線が落ちる、のいずれでも席は空きに戻るので「使用中のまま
+   誰も使えない」が残りにくい。それでも残ったときは管理画面から空ける。 */
+const DESKS = [
+  { id:'1', label:'受付機1', note:'' },
+  { id:'2', label:'受付機2', note:'' },
+  { id:'3', label:'受付機3', note:'' },
+  { id:'4', label:'受付機4', note:'予備' }
+];
+/* 席が「自分のもの」かを見分ける印。リロードを挟んでも同じ印でいる必要がある。
+   毎回変えると、onDisconnect が片づける前にリロードした自分自身を
+   「他の端末が使用中」と読んで、自分で自分を締め出す。 */
+const clientId = (()=>{
+  const mk = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try{
+    let v = localStorage.getItem('deskClient');
+    if(!v){ v = mk(); localStorage.setItem('deskClient', v); }
+    return v;
+  }catch(e){ return mk(); }
+})();
+
+let myDesk = null;          // いま名乗っている受付機の番号
+let desksOnline = {};       // DB にある名乗り（番号 → {client, at}）
+let desksKnown = false;     // 名乗りが一度でも届いたか
+let deskClaiming = false;   // 掴みに行っている最中
+let deskBooted = false;     // 起動時の取り直しを一度だけ試す
+
+const deskLabel = id => (DESKS.find(d=>d.id===id)||{}).label || '';
+// 自分以外の端末が起動している席。
+const deskTaken = id => {
+  const d = desksOnline[id];
+  return !!d && !!d.client && d.client !== clientId;
+};
+// 名乗りが古い席。onDisconnect が届かなかった可能性がある（電池切れなど）。
+const DESK_STALE_MS = 3 * 60 * 1000;
+const deskStale = id => {
+  const d = desksOnline[id];
+  return !!d && (Date.now() - (d.at || 0)) > DESK_STALE_MS;
+};
+
+function paintDesks(){
+  // 受付の画面に出す札。お客様に向く画面なので主張させない。
+  const chip = $('desk-chip');
+  if(chip){
+    chip.textContent = myDesk ? deskLabel(myDesk) : '受付機を選ぶ';
+    chip.dataset.set = String(!!myDesk);
+    chip.setAttribute('aria-label', myDesk
+      ? `この端末は${deskLabel(myDesk)}です。押すと選び直せます`
+      : 'この端末がどの受付機かを選ぶ');
+  }
+  // 選ぶ画面。起動中の受付機は押せない。
+  const pick = $('desk-pick');
+  if(pick){
+    pick.innerHTML = DESKS.map(d=>{
+      const taken = deskTaken(d.id);
+      const mine  = myDesk === d.id;
+      const sub = taken ? (deskStale(d.id) ? '起動中（応答なし）' : '起動中')
+                        : mine ? 'この端末' : (d.note || '空いています');
+      return `<button type="button" data-desk="${d.id}" ${taken ? 'disabled' : ''}
+        aria-label="${d.label}${d.note ? `（${d.note}）` : ''}${taken ? '。起動中のため選べません' : ''}">
+        ${d.label}<small>${sub}</small></button>`;
+    }).join('');
+  }
+  // 選び直しをやめる道。名乗る前は出さない（選ばないと受付が使えない）。
+  const cancel = $('desk-cancel');
+  if(cancel) cancel.hidden = !myDesk;
+  renderDeskAdmin();
+}
+
+/* 管理画面の在席表。どの受付機が起動しているかと、残ってしまった席を空ける道。 */
+function renderDeskAdmin(){
+  const grid = $('desk-admin');
+  if(!grid) return;
+  grid.innerHTML = DESKS.map(d=>{
+    const on   = desksOnline[d.id];
+    const mine = !!on && on.client === clientId;
+    const state = !on ? '空いています'
+      : mine ? '起動中（この端末）'
+      : deskStale(d.id) ? '起動中（応答なし）' : '起動中';
+    return `<div class="desk-cell" data-busy="${!!on}" data-mine="${mine}">
+      <span class="desk-name">${d.label}${d.note ? `（${d.note}）` : ''}</span>
+      <span class="desk-state">${state}</span>
+      <button type="button" class="desk-free" data-act="deskfree" data-id="${d.id}"
+              ${on ? '' : 'disabled'} aria-label="${d.label} を空きに戻す">空ける</button>
+    </div>`;
+  }).join('');
+  const busy = DESKS.filter(d=>desksOnline[d.id]).length;
+  const c = $('desk-count');
+  if(c) c.textContent = `起動中 ${busy}台 ／ 空き ${DESKS.length - busy}台（全${DESKS.length}台）`;
+}
+
+/* 「切れたら消す」の予約を外す。外し忘れると、別の端末がその席を取った後に
+   こちらの回線が切れた瞬間、他人の名乗りを消してしまう。 */
+async function dropDisconnect(id){
+  if(!id) return;
+  try{ await onDisconnect(ref(db,'desks/'+id)).cancel(); }catch(e){}
+}
+
+/* 席を空ける。force なしでは自分の席しか触らない（他の端末の名乗りを黙って奪わない）。 */
+async function releaseDesk(id, force){
+  if(!id) return;
+  await dropDisconnect(id);
+  try{
+    await authReady;
+    await runTransaction(ref(db,'desks/'+id), cur=>{
+      if(!cur) return null;
+      if(!force && cur.client !== clientId) return;   // 自分の席でなければ中止
+      return null;                                     // null を返すと削除
+    });
+  }catch(e){ console.error('受付機を空けられませんでした:', e); }
+}
+
+/* 席を掴む。購読の値で判定すると、2 台が同時に同じ番号を押したとき両方通る。
+   トランザクションにして、後から来たほうを必ず弾く。 */
+async function claimDesk(id, quiet){
+  if(deskClaiming) return false;
+  deskClaiming = true;
+  const err = $('desk-err');
+  const say = msg => { if(err){ err.textContent = msg; err.classList.add('show'); } };
+  try{
+    await authReady;
+    const prev = myDesk;
+    const r = ref(db, 'desks/' + id);
+    const tx = await runTransaction(r, cur=>{
+      if(cur && cur.client && cur.client !== clientId) return;   // 起動中 → 中止
+      return { client: clientId, at: Date.now() };
+    });
+    if(!tx.committed){
+      say(`${deskLabel(id)} は別の端末が起動しています。ほかの受付機を選んでください。`);
+      return false;
+    }
+    // 繋がりが切れたら席を空ける。画面を閉じる・電池切れ・回線断のどれでも効く。
+    try{ await onDisconnect(r).remove(); }catch(e){}
+    if(prev && prev !== id) await releaseDesk(prev);
+    myDesk = id;
+    try{ localStorage.setItem('deskNo', id); }catch(e){}
+    if(err){ err.textContent = ''; err.classList.remove('show'); }
+    paintDesks();
+    if(openEl?.id === 'm-desk') closeModal();
+    if(!quiet) toast(`この端末は ${deskLabel(id)} です。`, 'info');
+    return true;
+  }catch(e){
+    say(writeHint(e, '受付機を登録できませんでした'));
+    return false;
+  }finally{ deskClaiming = false; }
+}
+
+/* 受付の画面は、受付機を名乗るまで使わせない。
+   誰が起動中か分からないうちは訊かない（空いている席まで「起動中」に見えてしまう）。 */
+function ensureDesk(){
+  if(document.body.dataset.tab !== 'order') return;
+  if(myDesk || deskClaiming || !desksKnown) return;
+  if(openEl && openEl.id !== 'm-desk') return;   // 別の確認が出ている間は割り込まない
+  openModal('m-desk', ()=>{ setTimeout(ensureDesk, 0); });
+}
+
+/* 名乗りが届いたら、この端末が覚えている席と突き合わせる。 */
+function reconcileDesk(){
+  if(deskClaiming) return;
+  if(myDesk){
+    const on = desksOnline[myDesk];
+    if(on && on.client === clientId) return;     // そのまま
+    // 管理画面から空けられた／別の端末に取られた。名乗りを捨てて選び直させる。
+    dropDisconnect(myDesk);
+    myDesk = null;
+    try{ localStorage.removeItem('deskNo'); }catch(e){}
+    paintDesks();
+    toast('この端末の受付機が空きに戻されました。もう一度選んでください。');
+    ensureDesk();
+    return;
+  }
+  if(!deskBooted){
+    deskBooted = true;
+    let remembered = null;
+    try{ remembered = localStorage.getItem('deskNo'); }catch(e){}
+    // リロードでは onDisconnect の片づけがまだ終わっていないことがある。
+    // 自分の印が付いた席は自分のものとして黙って取り直す（毎回選ばせない）。
+    // 取り直すのは受付の画面を開いている端末だけ。厨房や受渡の端末が
+    // 「前は受付だった」記憶で席を占めると、受付が 1 台使えなくなる。
+    if(document.body.dataset.tab === 'order'
+       && remembered && DESKS.some(d=>d.id===remembered) && !deskTaken(remembered)){
+      claimDesk(remembered, true).then(ok=>{ if(!ok) ensureDesk(); });
+      return;
+    }
+  }
+  paintDesks();
+  ensureDesk();
+}
+
+/* 名乗りが届かないまま始まることもある（通信が遅い・DB が読めない）。
+   それでも受付機は選ばせる。重なりはトランザクションが弾く。 */
+setTimeout(()=>{ desksKnown = true; ensureDesk(); }, 2500);
+
+/* 名乗りの時刻を書き直す。onDisconnect が届かなかった席を
+   管理画面で「応答なし」として見分けられるようにするため。 */
+setInterval(()=>{
+  if(!myDesk) return;
+  update(ref(db,'desks/'+myDesk), { at: Date.now() }).catch(()=>{});
+}, 60000);
+
+$('desk-pick')?.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-desk]');
+  if(!b || b.disabled) return;
+  claimDesk(b.dataset.desk);
+});
+$('desk-chip')?.addEventListener('click', ()=>{
+  desksKnown = true;
+  openModal('m-desk', ()=>{ setTimeout(ensureDesk, 0); });
+});
+$('desk-cancel')?.addEventListener('click', closeModal);
 
 /* ---------- 確認 ---------- */
 function cartItems(){
@@ -499,6 +729,9 @@ $('pad-keys')?.addEventListener('click', e=>{
 $('submit-btn').addEventListener('click', ()=>{
   const items = cartItems();
   if(!items.length) return;
+  // 受付機を名乗っていない端末に受付をさせない。名乗りが届いていなくても、
+  // ここまで来たなら選ばせる（選ばないまま注文が立つほうが困る）。
+  if(!myDesk){ desksKnown = true; ensureDesk(); return; }
   $('recap-items').innerHTML = items.map(i=>`
     <div class="recap-item">
       <img src="${MARK[i.key]||''}" alt="">
@@ -879,7 +1112,7 @@ onValue(ref(db,'config/session'), snap=>{
    いなければ読み取り自体が拒否される。値ではなく「読めるかどうか」で版を測る。
    互換性を壊す変更をしたら、ここと database.rules.json の両方を上げる
    （食い違いは test/dom_wiring_test.mjs が落とす）。 */
-const RULES_VERSION = 'v6';
+const RULES_VERSION = 'v7';
 (async ()=>{
   try{
     await get(ref(db, 'rulesVersion/' + RULES_VERSION));
@@ -926,6 +1159,15 @@ onValue(ref(db,'config/prices'), snap=>{
   const v = snap.val();
   if(v){ prices = v; syncCart(); }
 }, ()=>toast('単価を読み込めません。通信を確かめてください。'));
+
+/* 受付機の名乗り。どの端末が起動しているかを全台で共有する。
+   これが届くまでは「どの席が空いているか」が分からないので、選ばせない。 */
+onValue(ref(db,'desks'), snap=>{
+  desksOnline = snap.val() || {};
+  desksKnown = true;
+  paintDesks();
+  reconcileDesk();
+}, ()=>{ desksKnown = true; ensureDesk(); });
 
 onValue(ref(db,'config/useTags'), snap=>{
   const v = snap.val();
@@ -1088,47 +1330,116 @@ function paintList(el, html){
   if(back) back.focus();
 }
 
+/* 受渡に出す注文の絞り込み。既定は「すべて」。
+   受渡口は「いま渡す 1 件」を探す場所であると同時に、
+   いま店が何件抱えているかを見る場所でもある。 */
+let readyFilter = 'all';
+$('ready-filter')?.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-rf]');
+  if(!b) return;
+  readyFilter = b.dataset.rf;
+  renderReady();
+});
+// お渡し待ち → ご用意中 → お渡し済み。押す対象が必ず上に来る。
+const READY_RANK = { ready:0, pending:1, completed:2 };
+// 絞り込みで 1 件も無いときは文言を差し替える。既定の文は作り直せるよう覚えておく。
+const READY_EMPTY_HTML = $('ready-empty')?.innerHTML || '';
+
 function renderReady(){
-  const list = orders.filter(o=>o.status==='ready').sort(byOrder);
-  const unpaid = list.filter(o=>!o.paid);
+  // 受付で確定した時点から出す。厨房が用意し終えるまで受渡口に何も出ないと、
+  // いま何件来ているのかが分からず、人の配りどころも釣銭の用意も決められない。
+  const all = orders.filter(o=>o.status!=='cancelled');
+  const count = { all: all.length, ready:0, pending:0, completed:0 };
+  for(const o of all) if(o.status in count) count[o.status]++;
+
+  const list = all
+    .filter(o => readyFilter === 'all' || o.status === readyFilter)
+    .sort((a,b)=> (READY_RANK[a.status] - READY_RANK[b.status]) || byOrder(a,b));
+
+  // 未収＝まだ代金をもらっていない注文。中止以外のすべてを数える。
+  const unpaid = all.filter(o=>!o.paid);
 
   paintList($('ready-list'), list.map(o=>{
-    const sec = elapsedSec(o.createdMs);
-    const due = !o.paid;
+    const sec  = elapsedSec(o.createdMs);
+    const due  = !o.paid;
+    const prep = o.status === 'pending';
+    const done = o.status === 'completed';
+    // 渡したのに未払い＝取りはぐれ。支払い口と同じく赤く出し、ここでも回収できるようにする。
+    const lost = done && due;
+    const amount = yen(o.price||0);
+    // 時計の色は「まだ渡していない注文」にだけ意味がある。
+    const age = done ? 'ok' : ageOf(sec);
+    const state = prep ? 'ご用意中' : done ? (lost ? 'お渡し済み・未払い' : 'お渡し済み') : '';
+
+    // 押すところはカード 1 枚につき 1 つ。状態ごとに「普通の道」だけを大きく出す。
+    const actions = prep
+      // ご用意中は見るだけ。厨房が「用意した」を押すまで渡せない。
+      ? ''
+      : done
+        ? `${lost ? `<button type="button" class="ops-do" data-kind="cash" data-act="takepaid" data-id="${o.id}" data-num="${numOf(o)}"
+                   aria-label="${numOf(o)} の ${amount}円 を受け取る">${amount}円 受け取る</button>` : ''}
+           <div class="ops-row">
+             <button type="button" class="ops-sub" data-act="move" data-id="${o.id}"
+                     data-status="completed" data-to="ready" data-num="${numOf(o)}"
+                     aria-label="${numOf(o)} をお渡し待ちに戻す">お渡し待ちに戻す</button>
+           </div>`
+        : due
+          // 未払いの注文は「受け取って渡す」が普通の道。1 タップで済ませる。
+          // 以前はどちらも「渡した」から確認ダイアログを通していたが、
+          // 行列のなかで毎回 2 タップになり、急ぐと「そのまま渡す」を押してしまう。
+          ? `<button type="button" class="ops-do" data-kind="cash" data-act="handpaid" data-id="${o.id}"
+                     aria-label="${numOf(o)} の代金 ${amount}円 を受け取って渡す">
+               ${amount}円 受け取って渡した</button>
+             <div class="ops-row">
+               ${o.number ? `<button type="button" class="ops-sub" data-act="flash" data-id="${o.id}">呼ぶ</button>` : ''}
+               <button type="button" class="ops-sub" data-act="done" data-id="${o.id}">未払いのまま渡す</button>
+             </div>`
+          : `<button type="button" class="ops-do" data-act="done" data-id="${o.id}"
+                     aria-label="${numOf(o)} を渡した">渡した</button>
+             ${o.number ? `<div class="ops-row">
+               <button type="button" class="ops-sub" data-act="flash" data-id="${o.id}">呼ぶ</button>
+             </div>` : ''}`;
+
     return `
-    <article class="ops-card" id="rc-${o.id}" data-ms="${o.createdMs||0}" data-age="${ageOf(sec)}"
-             aria-label="${numOf(o)}${due ? ` 未収 ${yen(o.price||0)}円` : ''}">
+    <article class="ops-card" id="rc-${o.id}" data-state="${o.status}" data-lost="${lost}"
+             data-ms="${o.createdMs||0}" data-age="${age}" data-wait="${!done}"
+             aria-label="${numOf(o)}${state ? ' ' + state : ''}${due ? ` 未収 ${amount}円` : ''}">
       <div class="ops-head">
         <span class="ops-num">${numOf(o)}</span>
-        <span class="ops-timer">${o.createdMs ? mmss(sec) : '—'}</span>
+        ${done
+          ? `<span class="ops-state" data-kind="done">${state}</span>`
+          : `<span class="ops-timer">${o.createdMs ? mmss(sec) : '—'}</span>`}
       </div>
+      ${prep ? '<span class="ops-state" data-kind="prep">ご用意中</span>' : ''}
       ${opsLines(o)}
-      ${due ? `<p class="ops-amount">${yen(o.price||0)}<small>円</small></p>` : ''}
-      ${due
-        // 未払いの注文は「受け取って渡す」が普通の道。1 タップで済ませる。
-        // 以前はどちらも「渡した」から確認ダイアログを通していたが、
-        // 行列のなかで毎回 2 タップになり、急ぐと「そのまま渡す」を押してしまう。
-        ? `<button type="button" class="ops-do" data-kind="cash" data-act="handpaid" data-id="${o.id}"
-                   aria-label="${numOf(o)} の代金 ${yen(o.price||0)}円 を受け取って渡す">
-             ${yen(o.price||0)}円 受け取って渡した</button>
-           <div class="ops-row">
-             ${o.number ? `<button type="button" class="ops-sub" data-act="flash" data-id="${o.id}">呼ぶ</button>` : ''}
-             <button type="button" class="ops-sub" data-act="done" data-id="${o.id}">未払いのまま渡す</button>
-           </div>`
-        : `<button type="button" class="ops-do" data-act="done" data-id="${o.id}"
-                   aria-label="${numOf(o)} を渡した">渡した</button>
-           ${o.number ? `<div class="ops-row">
-             <button type="button" class="ops-sub" data-act="flash" data-id="${o.id}">呼ぶ</button>
-           </div>` : ''}`}
+      ${due ? `<p class="ops-amount">${amount}<small>円</small></p>` : ''}
+      ${actions}
     </article>`;
   }).join(''));
 
-  $('ready-empty').classList.toggle('hidden', list.length>0);
-  $('ready-count').textContent = list.length;
-  // 未収は「まだ代金をもらっていない品物が手元にある」件数。0 のときは出さない。
-  const due = $('ready-due');
-  if(due){
-    due.hidden = unpaid.length === 0;
+  // 絞り込みの札。件数も出す（押さなくても全体の内訳が読める）。
+  document.querySelectorAll('#ready-filter [data-rf]').forEach(b=>{
+    b.setAttribute('aria-pressed', String(b.dataset.rf === readyFilter));
+    const n = $('rf-' + b.dataset.rf);
+    if(n) n.textContent = count[b.dataset.rf] ?? 0;
+  });
+
+  const empty = $('ready-empty');
+  if(empty){
+    empty.classList.toggle('hidden', list.length > 0);
+    // 「注文が無い」と「絞り込みに当てはまらない」は別の話。取り違えると、
+    // 絞ったままの画面を見て「注文が来ていない」と読んでしまう。
+    const html = count.all === 0
+      ? READY_EMPTY_HTML
+      : '<b>この絞り込みに当てはまる注文はありません</b>「すべて」を押すと、この回の注文がすべて出ます。';
+    if(empty.innerHTML !== html) empty.innerHTML = html;
+  }
+  $('ready-count').textContent = count.ready;
+  $('ready-prep').textContent  = count.pending;
+  // 未収は他の端末の操作で増減する。0 のときは出さない。
+  const dueBadge = $('ready-due');
+  if(dueBadge){
+    dueBadge.hidden = unpaid.length === 0;
     $('ready-unpaid').textContent = unpaid.length;
   }
   tickReady();
@@ -1137,7 +1448,7 @@ function renderReady(){
 /* 毎秒ここだけを書き換える。全体を描き直すとスクロール位置が飛ぶ。 */
 function tickReady(){
   let oldest = -1;
-  document.querySelectorAll('#ready-list .ops-card[data-ms]').forEach(el=>{
+  document.querySelectorAll('#ready-list .ops-card[data-ms][data-wait="true"]').forEach(el=>{
     const ms = Number(el.dataset.ms);
     if(!ms) return;
     const sec = elapsedSec(ms);
@@ -1687,6 +1998,27 @@ document.addEventListener('click', e=>{
       });
       break;
     }
+    // 管理画面から受付機を空ける。電池切れなどで onDisconnect が届かず、
+    // 「起動中」のまま残った席を手で戻すための逃げ道。
+    case 'deskfree': {
+      const d = DESKS.find(x=>x.id===id);
+      const mine = desksOnline[id]?.client === clientId;
+      ask({
+        title: `${d?.label||''} を空けますか？`,
+        sub: 'その受付機がまだ使われている場合、受付の途中で選び直すことになります。',
+        warn: mine ? 'これはこの端末です。空けると、この端末でもう一度選び直します。' : '',
+        onYes: async ()=>{
+          await releaseDesk(id, true);
+          if(mine){
+            myDesk = null;
+            try{ localStorage.removeItem('deskNo'); }catch(e){}
+            paintDesks();
+            ensureDesk();
+          }
+        }
+      });
+      break;
+    }
     case 'flash':
       // 以前は自分の画面のカードを光らせるだけで、お客様には何も届いていなかった。
       // 呼び出し表示を別端末で出す運用なので、時刻を注文に書いて全端末で共有する。
@@ -1902,7 +2234,7 @@ async function nextSeq(){
      そのまま=受付 / #kitchen=厨房 / #ready=受渡 / #pay=支払い口 / #records=記録・売上
      #call=呼び出し表示 / #amount=金額表示（#pay:2 のように口の番号を足せる）
    受付の画面はお客様に向くため、ナビゲーションは画面上に常設しない。 */
-const VIEWS = ['order','kitchen','ready','pay','amount','records','call'];
+const VIEWS = ['order','kitchen','ready','pay','amount','records','call','control'];
 function switchTab(t){
   if(!VIEWS.includes(t)) t = 'order';
   VIEWS.forEach(n=>{
@@ -1912,6 +2244,9 @@ function switchTab(t){
   });
   document.body.dataset.tab = t;
   closeNav();
+  // 受付機を訊くのは受付の画面だけ。他の画面（厨房・受渡・表示）は名乗らない。
+  if(t === 'order') ensureDesk();
+  else if(openEl?.id === 'm-desk') closeModal();
 }
 function viewFromHash(){
   // #pay:2 のように支払い口の番号が付くことがある。画面名だけを取り出す。
@@ -1954,3 +2289,4 @@ renderKitchen();
 renderReady();
 renderRows();
 renderFigures();
+paintDesks();   // 名乗りが届く前でも「受付機を選ぶ」とだけは出しておく

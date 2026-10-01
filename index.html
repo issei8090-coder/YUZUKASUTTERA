@@ -175,6 +175,14 @@ body[data-tags="false"] #confirm-now{font-family:var(--serif);font-size:clamp(19
 body[data-tags="false"] #lane-note{color:var(--brown-soft)}
 .lane-note{margin:0;font-size:13px;letter-spacing:.06em;color:var(--brown-soft);text-align:right}
 .lane-note[data-warn="true"]{color:var(--red);font-weight:700;text-align:center}
+/* この端末がどの受付機か。受付の画面はお客様に向くので、主張させない。
+   押すと選び直せる（起動中の受付機は選べない）。 */
+.deskchip{
+  min-height:40px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:13px;letter-spacing:.06em;border:1px dashed var(--gold);background:transparent;color:var(--brown-soft);
+}
+.deskchip[data-set="true"]{border-style:solid;background:var(--lift);color:var(--brown);font-weight:700}
+.deskchip[data-set="false"]{color:var(--red);border-color:var(--red);font-weight:700}
 .item-stock{margin:10px 0 0;font-size:14px;letter-spacing:.06em}
 .item-stock[data-state="low"]{color:#8A6A1E;font-weight:700}
 .item-stock[data-state="out"]{color:var(--red);font-weight:700}
@@ -644,6 +652,30 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .ops-row{display:flex;gap:10px}
 .ops-row .ops-sub{width:auto;flex:1}
 
+/* 受渡の絞り込み。受渡は「いま渡す 1 件」を探す画面であると同時に、
+   いま店に何件あるかを見る画面でもある。既定は「すべて」で、
+   お渡し待ち → ご用意中 → お渡し済み の順に積む（押す対象が必ず上に来る）。 */
+.ops-chips{display:flex;gap:8px;flex-wrap:wrap}
+.ops-chip{min-height:48px;padding:0 20px;border-radius:999px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim);
+  font-size:clamp(16px,2.2vh,19px);letter-spacing:.06em}
+.ops-chip:hover{color:#F2ECE0;border-color:var(--dim)}
+.ops-chip[aria-pressed="true"]{background:#2F2922;border-color:var(--dim);color:#F2ECE0;font-weight:700}
+.ops-chip b{font-variant-numeric:tabular-nums;margin-left:6px;color:inherit}
+
+/* まだ厨房が用意している最中の注文。渡す操作は無い＝見るだけの 1 枚なので、
+   押せるカードと同じ明るさにしない。 */
+.ops-card[data-state="pending"]{border-top-color:var(--dim);opacity:.82}
+.ops-card[data-state="pending"] .ops-amount{color:var(--dim)}
+/* 渡し終えた注文。記録として残すだけなので、いちばん沈める。 */
+.ops-card[data-state="completed"]{border-top-color:var(--line);opacity:.62}
+.ops-card[data-state="completed"]:hover{opacity:1}
+.ops-state[data-kind="prep"]{color:var(--dim)}
+.ops-state[data-kind="done"]{color:var(--ok)}
+/* 見るだけのカードは高さを揃えない（押すところが無いので下に余白が要らない）。 */
+.ops-card[data-state="pending"] .ops-row,
+.ops-card[data-state="completed"] .ops-row{margin-top:auto}
+
 /* 支払い済みの控え。普段は畳んでおく。 */
 .ops-fold{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0 16px}
 .ops-fold summary{min-height:56px;display:flex;align-items:center;cursor:pointer;
@@ -967,6 +999,84 @@ body:not([data-tab="call"]):not([data-tab="amount"]) .kiosk-escape{display:none}
 
 /* 自動呼び出しの状態表示 */
 .auto-note{margin:0;font-size:13px;color:var(--brown-soft);letter-spacing:.04em}
+/* ============================================================
+   管理（コントロール）
+   受付機を何台置くかが運用で変わるようになったので、店全体の決めごとを
+   1 枚にまとめる。受付の画面はお客様に向くため、そこには置けない。
+   地は記録・売上と同じ（立って一瞥する画面ではなく、座って決める画面）。
+   ============================================================ */
+.ctl-note{margin:0 0 18px;font-size:14px;line-height:1.9;color:var(--brown-soft)}
+.ctl-hint{margin:14px 0 0;font-size:13px;line-height:1.8;color:var(--brown-soft)}
+.ctl-hint[data-warn="true"]{color:var(--red);font-weight:700}
+/* 番号札の切り替えは店全体に効く。受付の小さな札と同じ見た目では軽すぎる。 */
+.ctl-switch{min-height:68px;padding:0 34px;border-radius:var(--r-ctl);cursor:pointer;
+  font-family:var(--serif);font-size:clamp(17px,2.2vw,21px);letter-spacing:.12em;
+  border:1px solid var(--gold);background:transparent;color:var(--brown-soft)}
+.ctl-switch[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
+
+/* 受付機の在席。4 台ぶんを横に並べ、空き・使用中・この端末を色で分ける。 */
+.desk-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.desk-cell{border:1px solid var(--gold-line);border-radius:var(--r-card);padding:18px 20px;
+  background:var(--lift);display:flex;flex-direction:column;gap:8px;text-align:left}
+.desk-cell[data-busy="true"]{border-color:var(--brown)}
+.desk-cell[data-mine="true"]{border-color:var(--gold);box-shadow:inset 0 0 0 2px var(--gold)}
+.desk-name{font-family:var(--serif);font-size:20px;letter-spacing:.1em;color:var(--brown);font-weight:600}
+.desk-state{font-size:14px;letter-spacing:.06em;color:var(--brown-soft)}
+.desk-cell[data-busy="true"] .desk-state{color:var(--brown);font-weight:700}
+.desk-free{align-self:flex-start;min-height:44px;padding:0 18px;border-radius:var(--r-ctl);
+  cursor:pointer;font-size:13px;letter-spacing:.06em;
+  border:1px solid var(--gold-line);background:transparent;color:var(--brown-soft)}
+.desk-free:hover{background:var(--card)}
+.desk-free[disabled]{opacity:.35;cursor:not-allowed}
+
+/* 受付機を選ぶ画面。起動して最初に出る 1 枚なので、押すところだけを大きく出す。
+   既に起動している受付機は押せない（同じ番号で 2 台立てると、受付係が
+   どちらの端末の注文か分からなくなる）。 */
+.desk-pick{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-top:22px}
+.desk-pick button{min-height:104px;border-radius:var(--r-ctl);cursor:pointer;
+  font-family:var(--serif);font-size:clamp(19px,2.4vw,24px);letter-spacing:.1em;
+  background:var(--brown);border:1px solid var(--brown);color:var(--lift);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.desk-pick button small{font-family:var(--sans);font-size:13px;letter-spacing:.06em;opacity:.8}
+.desk-pick button:hover{background:#4E3120}
+.desk-pick button[disabled]{background:#D8CBB4;border-color:#D8CBB4;color:#7C6A52;cursor:not-allowed}
+
+/* 管理はスマートフォンから触る。番号札の切り替えも、受付機を空けるのも、
+   受付の列に並んでいる人の横で片手で済ませたい操作なので、
+   幅が狭いときは押すところを画面いっぱいに広げ、指の下に寸法を残す。 */
+@media (max-width:620px){
+  /* 飾りの見出しは、画面の上半分を使ってしまう。管理のときだけ畳む。 */
+  body[data-tab="control"] .masthead{padding:18px 0 12px}
+  body[data-tab="control"] .masthead .rule,
+  body[data-tab="control"] .masthead .tagline,
+  body[data-tab="control"] .masthead .romaji{display:none}
+  body[data-tab="control"] .brand{font-size:24px}
+
+  .ctl-note{font-size:13px;line-height:1.95}
+  /* 切り替えは、画面のどこを押しても当たる大きさにする。 */
+  .ctl-switch{width:100%;justify-content:center;text-align:center;padding:0 16px;
+    min-height:var(--tap);font-size:17px;letter-spacing:.08em}
+  /* 在席は 1 台 1 行。横に並べると、名前・状態・ボタンの三つとも折り返して読めなくなる。 */
+  .desk-grid{grid-template-columns:1fr;gap:10px}
+  .desk-cell{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:14px 16px}
+  .desk-name{font-size:18px}
+  .desk-state{margin-left:auto}
+  .desk-free{width:100%;align-self:stretch;text-align:center}
+
+  /* 受付機を選ぶ画面。4 台ぶんを縦に積んで、どれも 1 画面に収める。 */
+  .desk-pick{grid-template-columns:1fr;gap:10px;margin-top:16px}
+  .desk-pick button{min-height:72px;font-size:19px;flex-direction:row;gap:12px}
+  .desk-pick button small{font-size:12px}
+  .sheet{padding:26px 20px;border-radius:20px}
+  .modal{padding:14px}
+}
+/* 画面が低い電話（横向き・小型）では、選ぶ一覧だけを巻けるようにする。
+   覆いごと巻くと、押したい「やめる」が下に流れて見つからない。 */
+@media (max-height:520px){
+  #m-desk .desk-pick button{min-height:60px}
+  #m-desk .sheet{padding:18px 20px}
+}
+
 </style>
 
 <!-- 接続設定。module より先に評価される古典スクリプト。CI が生成する。 -->
@@ -1026,7 +1136,10 @@ if (location.protocol === 'file:') {
     <!-- ===== 受付 ===== -->
     <section id="view-order" role="tabpanel" aria-labelledby="tab-order">
       <div class="order-top">
-        <button type="button" class="tagmode" id="tagmode-toggle" aria-pressed="true">番号札を使っています</button>
+        <!-- この端末がどの受付機か。押すと選び直せる。
+             番号札を使うかどうかは店全体の決めごとなので、ここではなく管理画面で切り替える
+             （受付の画面はお客様に向くため、お客様の手の届くところに置けない）。 -->
+        <button type="button" class="deskchip" id="desk-chip" data-set="false">受付機を選ぶ</button>
         <p class="lane-note" id="lane-note"></p>
       </div>
       <div class="menu" id="menu"></div>
@@ -1098,6 +1211,8 @@ if (location.protocol === 'file:') {
       <header class="kds-bar">
         <span class="kds-label">受渡</span>
         <span class="kds-stat"><b id="ready-count">0</b> 件 お渡し待ち</span>
+        <!-- 受付で確定した時点からここに出る。厨房が用意し終えるのを待っている数。 -->
+        <span class="kds-stat"><b id="ready-prep">0</b> 件 ご用意中</span>
         <span class="kds-stat">最長待ち <b id="ready-oldest">—</b></span>
         <!-- 未収は他の端末の操作で増減する。読み上げは「未収 3 件」の形で
              一度に伝える（数字だけを読み上げると何の数か分からない）。
@@ -1106,11 +1221,20 @@ if (location.protocol === 'file:') {
               role="status" aria-atomic="true">未収 <b id="ready-unpaid">0</b> 件</span>
       </header>
 
+      <!-- 受渡口は「いま渡す 1 件」を探す場所であると同時に、
+           いま店に何件抱えているかを見る場所でもある。既定は「すべて」。 -->
+      <div class="ops-chips" id="ready-filter" role="group" aria-label="受渡に出す注文を絞り込む">
+        <button type="button" class="ops-chip" data-rf="all" aria-pressed="true">すべて<b id="rf-all">0</b></button>
+        <button type="button" class="ops-chip" data-rf="ready" aria-pressed="false">お渡し待ち<b id="rf-ready">0</b></button>
+        <button type="button" class="ops-chip" data-rf="pending" aria-pressed="false">ご用意中<b id="rf-pending">0</b></button>
+        <button type="button" class="ops-chip" data-rf="completed" aria-pressed="false">お渡し済み<b id="rf-completed">0</b></button>
+      </div>
+
       <div class="kds-grid" id="ready-list"></div>
       <p class="kds-empty hidden" id="ready-empty">
-        <b>お渡しする注文はありません</b>
-        厨房が「用意した」を押すと、ここに出ます。<br>
-        番号札を使わない注文は、受付で確定した時点でここに出ます。
+        <b>この回の注文はまだありません</b>
+        受付で注文が確定すると、その時点でここに「ご用意中」として出ます。<br>
+        厨房が「用意した」を押すと「お渡し待ち」に変わります。
       </p>
     </section>
 
@@ -1143,6 +1267,34 @@ if (location.protocol === 'file:') {
         <div class="ops-paid-list" id="paid-list"></div>
         <p class="ops-note hidden" id="paid-empty">まだ支払い済みの注文はありません。</p>
       </details>
+    </section>
+
+    <!-- ===== 管理（コントロール） =====
+         受付機が複数になったので、店全体の決めごとと在席をここ 1 枚に集める。
+         受付の画面はお客様に向くため、そちらには置かない。 -->
+    <section id="view-control" role="tabpanel" aria-labelledby="tab-control" class="hidden">
+      <div class="panel">
+        <h2 class="sec-title">番号札を使うかどうか</h2>
+        <p class="ctl-note">
+          店全体の決めごとです。切り替えると、すべての受付機にすぐ反映されます。<br>
+          <b>使う</b>：受付で札を渡し、厨房を通して、呼び出してからお渡しします。<br>
+          <b>使わない</b>：厨房を通さず、受渡口でお品物と代金をその場でお渡しします（空いている時間帯向け）。
+        </p>
+        <button type="button" class="ctl-switch" id="tagmode-toggle" aria-pressed="true">番号札を使っています</button>
+        <p class="ctl-hint" id="tagmode-hint"></p>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
+          <h2 class="sec-title" style="margin:0">受付機</h2>
+          <p class="tags-count" id="desk-count"></p>
+        </div>
+        <div class="desk-grid" id="desk-admin" style="margin-top:20px"></div>
+        <p class="ctl-hint">
+          受付機は起動したときに名乗り、画面を閉じると自動で空きに戻ります。
+          電池切れなどで「使用中」のまま残ってしまったときだけ、「空ける」で手で戻してください。
+        </p>
+      </div>
     </section>
 
     <!-- ===== 受渡・記録 ===== -->
@@ -1208,6 +1360,7 @@ if (location.protocol === 'file:') {
     <button type="button" role="tab" id="tab-amount"  aria-controls="view-amount"  data-go="amount">金額表示</button>
     <button type="button" role="tab" id="tab-ready"   aria-controls="view-ready"   data-go="ready">受渡</button>
     <button type="button" role="tab" id="tab-records" aria-controls="view-records" data-go="records">記録・売上</button>
+    <button type="button" role="tab" id="tab-control" aria-controls="view-control" data-go="control">管理</button>
     <button type="button" role="tab" id="tab-call"    aria-controls="view-call"    data-go="call">呼び出し表示</button>
   </div>
 </div>
@@ -1216,6 +1369,23 @@ if (location.protocol === 'file:') {
         aria-label="スタッフ用：画面を切り替える"></button>
 
 <div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- 受付機を選ぶ。起動して最初に出る 1 枚。
+     既に起動している受付機は押せない。同じ番号で 2 台立てると、受付係も
+     受渡口も「どちらの端末の注文か」を追えなくなるため。
+     選ぶまで受付は使えない（この 1 枚が受付の画面を覆う）。 -->
+<div class="modal" id="m-desk" role="dialog" aria-modal="true" aria-labelledby="desk-h">
+  <div class="sheet" style="max-width:640px">
+    <h2 id="desk-h">この端末はどの受付機ですか？</h2>
+    <p class="sheet-sub" id="desk-sub" style="margin:10px 0 0">起動している受付機は選べません。</p>
+    <div class="desk-pick" id="desk-pick"></div>
+    <p class="err" id="desk-err"></p>
+    <!-- 選び直しをやめる道。まだ名乗っていない端末には出さない（選ばないと受付は使えない）。 -->
+    <div class="cta-row" style="justify-content:center">
+      <button type="button" class="cta-ghost" id="desk-cancel" hidden>やめる</button>
+    </div>
+  </div>
+</div>
 
 <!-- 確認 -->
 <!-- 受付。テンキーの「決定」は押し間違えやすく、そのまま注文が立つ。最後に一度だけ確かめる。 -->
