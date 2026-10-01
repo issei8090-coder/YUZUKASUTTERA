@@ -11,7 +11,7 @@ import * as audio from "./lib/audio.js";
 import { countUp, bloom, nudge, reduced } from "./lib/motion.js";
 import {
   soldOf as pureSold, remainingOf as pureRemaining, headroomOf as pureHeadroom,
-  tagsInUse as pureTagsInUse, nextFreeTag, fallbackBuild, normalize, inSession, DEFAULT_SESSION,
+  tagsInUse as pureTagsInUse, fallbackBuild, normalize, inSession, DEFAULT_SESSION,
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines
 } from "./lib/pure.js";
@@ -1313,22 +1313,21 @@ function padRender(){
   d.dataset.empty = String(padValue === '');
   $('pad-ok').disabled = padValue === '';
 }
-/* 次に使える札を先に入れておく。受付係が実際に取った札と違えば打ち直せる。
-   毎回ゼロから打たせるより速く、打ち間違いも減る。 */
+/* 空から打たせる。
+
+   以前は「次に使える札」を先に入れていた。毎回ゼロから打つより速く、
+   打ち間違いも減るという理由だったが、速さと引き換えに、画面の数字が
+   手元の札と無関係に決まっていた。入っている数字をそのまま確定すれば、
+   札をケースから取らなくても注文が立つ（画面では出ていることになるのに、
+   お客様は何も持っていない）。
+
+   空にすると、打つ人は必ず手元の札を見る。番号の出どころが実物になるので、
+   取らずに確定する道がふさがる。1 件あたり数秒遅くなるが、
+   当日その場で直せない種類の事故を 1 つ減らすほうを採る。 */
 function padReset(){
-  const suggest = nextFreeTag(lastIssuedTag(), tagCount(), tagsInUse(orders));
-  padValue = suggest > 0 ? String(suggest) : '';
+  padValue = '';
   padErr('');
   padRender();
-}
-
-// 直近に出した札。次の提案はこの続きから探す。
-function lastIssuedTag(){
-  let last = 0, newest = -1;
-  for(const o of orders){
-    if(o.tag > 0 && (o.createdMs || 0) > newest){ newest = o.createdMs || 0; last = o.tag; }
-  }
-  return last;
 }
 
 function padSubmit(){
