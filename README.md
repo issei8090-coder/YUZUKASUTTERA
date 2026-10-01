@@ -252,6 +252,29 @@ Blueprint を使うなら **New → Blueprint → このリポジトリ → `mai
 `yuzukastera-xxxx.onrender.com` のような名前になるので、**表示された URL を
 そのまま端末に入れてください**（推測しない）。
 
+#### Render と GitHub のアカウントが別のとき
+
+**Render のログイン用メールが GitHub と違っているだけなら、何もしなくてよいです。**
+Render → Account Settings → GitHub → Connect でこのリポジトリの持ち主
+（`issei8090-coder`）を繋げば済みます。両者が一致している必要はありません。
+
+Render が既に別の GitHub アカウントと繋がっていて外せない場合は、どちらかを選びます。
+
+1. **リポジトリの持ち主の GitHub で Render に新しくサインアップする。**
+   無料なので増やしても費用はかからず、連携は自動で終わります。
+2. **公開リポジトリとして URL で繋ぐ。** 作成画面の「Public Git repository」に
+   `https://github.com/issei8090-coder/YUZUKASUTTERA` を貼ります。
+   この形だと Render 側が webhook を張れないので push に自動では気づきません。
+   そこは Deploy Hook で埋めます:
+
+   - Render → そのサイト → Settings → **Deploy Hook** の URL を写す
+   - GitHub → Settings → Secrets and variables → Actions → **Secrets** に
+     `RENDER_DEPLOY_HOOK` として貼る（URL に鍵が入っているので Variables ではなく Secrets）
+
+   以後、`main` に push するとワークフローがこの URL を叩いて配り直させます。
+   **GitHub 連携を入れた場合はこの secret を設定しないこと**
+   （両方あると 1 回の push で 2 回配り直します）。未設定なら手順は何もしません。
+
 ### 2. Firebase 側に新しいドメインを教える
 
 配信元が変わります。ここを忘れると**画面は出るのに注文が通らない**形で出ます。

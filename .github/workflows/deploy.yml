@@ -171,6 +171,31 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "render ブランチを更新しました。Render が自動で配り直します（1〜2 分）。" >> "$GITHUB_STEP_SUMMARY"
 
+      # Render の GitHub 連携を入れていない場合の経路（Render と GitHub の
+      # アカウントが別で、繋げられなかったときなど）。公開リポジトリを URL で
+      # 繋いだサイトには Render 側が webhook を張れないため、push に自動では
+      # 気づかない。そこを Render の Deploy Hook を叩いて埋める。
+      #
+      # secret RENDER_DEPLOY_HOOK が未設定なら何もしない。GitHub 連携を
+      # 入れたなら Render が自分で気づくので、その場合は設定しないこと
+      # （両方あると 1 回の push で 2 回配り直す）。
+      - name: Render に配り直しを知らせる（Deploy Hook）
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "${HOOK:-}" ]; then
+            echo "RENDER_DEPLOY_HOOK は未設定。Render 側の GitHub 連携に任せます。"
+            exit 0
+          fi
+          # ここが通らなくても配信物は render ブランチに入っている
+          # （Render の画面から手で Deploy できる）。全体は落とさない。
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$HOOK" || echo 000)
+          echo "Deploy Hook -> HTTP $code"
+          if [ "$code" != "200" ] && [ "$code" != "201" ]; then
+            echo "::warning::Render への通知が通りませんでした（HTTP $code）。Render の画面から手動 Deploy してください。"
+          fi
+
   deploy:
     name: GitHub Pages へデプロイ
     # PR ではデプロイしない（ビルドとテストまで）。
