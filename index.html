@@ -55,9 +55,15 @@
 }
 
 *,*::before,*::after{box-sizing:border-box}
-html{touch-action:manipulation;-webkit-text-size-adjust:100%}
+/* 引っ張りすぎ（オーバースクロール）を止める。
+   iPad は端で引っ張ると画面全体がゴムのように動き、position:fixed の覆いは
+   一緒に動かないので、上に地の色の帯が覗く。「全画面のはずなのに上に少し余白」は
+   これ。html にも地の色を置いて、万一覗いても同じ色にしておく。 */
+html{touch-action:manipulation;-webkit-text-size-adjust:100%;
+  background:var(--cream);overscroll-behavior:none}
 body{
   margin:0;background:var(--cream);color:var(--brown-soft);
+  overscroll-behavior:none;
   font-family:var(--sans);font-size:16px;line-height:1.75;
   -webkit-font-smoothing:antialiased;
   padding-bottom:env(safe-area-inset-bottom);
@@ -91,14 +97,12 @@ body[data-tab="records"] .deco{opacity:.35}
 .rule{display:flex;align-items:center;justify-content:center;gap:14px;margin:18px auto 0;max-width:640px}
 .rule::before,.rule::after{content:"";height:1px;background:var(--gold-line);flex:1}
 .rule img{width:42px}
-.tagline{font-size:clamp(14px,1.6vw,17px);color:var(--brown-soft);margin:14px 0 0;letter-spacing:.08em}
 
 /* 厨房・受渡では表札を畳んで作業領域を広く取る */
 body[data-tab="kitchen"] .masthead,
 body[data-tab="records"] .masthead{padding:22px 0 14px}
 body[data-tab="kitchen"] .romaji, body[data-tab="records"] .romaji,
 body[data-tab="kitchen"] .rule,   body[data-tab="records"] .rule,
-body[data-tab="kitchen"] .tagline,body[data-tab="records"] .tagline{display:none}
 body[data-tab="kitchen"] .brand,  body[data-tab="records"] .brand{font-size:clamp(22px,3vw,30px)}
 
 /* --- 画面切替（設営時のみ使う控えめなもの。受付はお客様に向くため前面に出さない） --- */
@@ -136,37 +140,93 @@ body[data-tab="kitchen"] .brand,  body[data-tab="records"] .brand{font-size:clam
 /* --- 商品カード --- */
 /* 1fr は min-width:auto を含むため、中身の最小幅がトラックを押し広げて
    カードが溢れる。minmax(0,1fr) で「縮んでよい」ことを明示する。 */
-.menu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}
-@media (max-width:880px){ .menu{grid-template-columns:1fr} }
+/* 商品は左右に並べる。上下に積むと、2 枚目を見るのに目が下まで降りる。
+   幅が足りないときだけ 1 列に落とす。 */
+.menu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(12px,1.8vw,24px)}
+/* 2 品が同じ語尾のときは、その語を 2 枚の間に 1 つだけ置く。
+   「ゆず ─ カステラ ─ チョコ」で 1 つの品書きとして読める。 */
+/* 札は背丈を揃える。中央揃えにすると、縦書きの字数の違い
+   （「ゆず」2 字／「チョコ」3 字）でカードの高さが変わり、上端がずれる。
+   真ん中の語だけを中央に置く。 */
+.menu[data-shared="true"]{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  align-items:stretch;gap:clamp(8px,1.4vw,18px)}
+.menu-kind{align-self:center}
+/* 添え物として置く。主役は 2 枚の札なので、ここは目立たせない。
+   欧文は text-orientation を既定のまま（mixed）にして、字を寝かせて流す。
+   upright にすると 1 字ずつ立って和文と同じ強さになり、添え物でなくなる。 */
+.menu-kind{margin:0;font-family:var(--serif);color:var(--brown-soft);font-weight:400;
+  font-size:clamp(10px,1.15vw,14px);letter-spacing:.42em;line-height:1;opacity:.7;
+  writing-mode:vertical-rl;white-space:nowrap}
+@media (max-width:620px){
+  .menu,.menu[data-shared="true"]{grid-template-columns:1fr}
+  /* 縦に積むときは、間の語を横書きに戻す（縦書きのまま挟むと行が間延びする）。 */
+  .menu-kind{writing-mode:horizontal-tb;text-align:center;letter-spacing:.42em}
+}
 
 /* 行の高さが中身より大きいとき、余りは下に溜まる。ステッパーが文字の
    すぐ下に貼り付いて、カードの底だけが空く形になる。両端に寄せて、
    余白をカードの真ん中（説明とステッパーの間）に置く。 */
-.item{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:26px;display:flex;flex-direction:column;justify-content:space-between;gap:20px;min-width:0}
+/* 1 枚を味の色で塗り潰す。上に縦書きの名前と絵、下に値段と増減。
+   色と縦書きで、文字を読む前にどちらかが分かる。
+
+   地は木の色。柚子色（パステル）に白文字は 1.45:1 で読めず、色相を保ったまま
+   白が乗る濃さまで落とすと、もう柚子色ではなくなる。木なら白文字が乗る。
+   味ごとの色は商品の鍵で引く。鍵が増えたら既定（クリーム地に茶文字）に落ちる。 */
+.item{
+  --tile:var(--card); --ink:var(--brown); --sub:var(--brown-soft);
+  --pad:var(--lift);  --btn:#fff;        --btn-ink:var(--brown);
+  background:var(--tile);color:var(--ink);
+  border:1px solid rgba(0,0,0,.08);border-radius:var(--r-card);
+  padding:clamp(14px,2vh,24px) clamp(14px,1.8vw,24px);min-width:0;
+  display:flex;flex-direction:column;justify-content:space-between;gap:clamp(10px,1.6vh,20px);
+  box-shadow:0 2px 10px rgba(70,48,30,.10)}
+/* 胡桃。白文字 6.14、補足 5.36、操作盤の数字 7.87。 */
+.item[data-key="plain"]{--tile:#7C5B3C;--ink:#fff;--sub:rgba(255,255,255,.90);
+  --pad:rgba(0,0,0,.16);--btn:#fff;--btn-ink:#5A4028}
+/* チョコ。白文字 12.35。木との明度差 2.01 倍で、並べて別物に見える。 */
+.item[data-key="flavor_b"]{--tile:#4A2E1E;--ink:#fff;--sub:rgba(255,255,255,.90);
+  --pad:rgba(0,0,0,.16);--btn:#fff;--btn-ink:#4A2E1E}
+
+/* 上段：縦書きの味の名前（左）と絵（右）。 */
+.item-top{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:clamp(8px,1.2vw,16px);flex:1 1 auto;min-height:0}
+/* 下段：値段と増減。 */
+.item-foot{display:flex;flex-direction:column;gap:clamp(8px,1.2vh,14px);flex:none}
 /* 絵が縦長だった頃は絵のほうが背が高く、上端揃えが自然だった。
    横長の水彩になって文字のほうが高くなったので、上端で止めると
    絵の下に空白が居座る。中央で揃える。 */
 /* 行が高くなったぶんの余白は、ここが受け取って上下に散らす。
    .item 側の space-between だけだと、余りが全部「説明とステッパーの間」に
    溜まり、カードの真ん中に穴が空く。 */
-.item-head{display:flex;gap:22px;align-items:center;flex:1 1 auto}
+
 /* 水彩画は透過。枠に嵌めると紙の余白が切れて質感が死ぬので、額を付けず地に置く。 */
 /* 絵の比率は商品ごとに違う（ゆず 240x141＝1.70・カカオ 240x175＝1.37）。
    高さを絵任せにすると 2 枚のカードで画像の高さがずれ、左右対称が崩れる。
    4:3 の枠を決めて中央に収める（2 枚ともちょうど入る比率）。
    正方形にすると上下に無駄な空きが出て、1 画面の高さを食う。 */
-.item-photo{width:164px;flex:none;aspect-ratio:4/3;display:grid;place-items:center}
+.item-photo{width:clamp(88px,12vw,160px);flex:none;aspect-ratio:4/3;display:grid;place-items:center}
 .item-photo img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
-.item-body{min-width:0;flex:1}
-.item-name{font-family:var(--serif);font-weight:600;color:var(--brown);font-size:clamp(25px,3vw,32px);letter-spacing:.08em;line-height:1.25;margin:0}
-.item-name::after{content:"";display:block;width:52px;height:1px;background:var(--gold);margin:12px 0 14px}
-.item-note{font-size:14px;line-height:1.85;margin:0;max-width:34ch}
-.price-row{display:flex;align-items:baseline;justify-content:flex-start;gap:14px;margin:18px 0 0}
+/* 味の名前は縦書き。横組みの画面の中で 1 か所だけ縦にすると、そこが先に目に入る。
+
+   字数が少ないほど大きくする。縦書きでは字数が柱の長さになるので、
+   同じ級数だと「ゆず」(2 字) が「チョコ」(3 字) より軽く見える。
+   鍵で決め打ちにすると 2 字の味が増えたときに効かないので、字数で決める。 */
+.item-name{margin:0;font-family:var(--serif);font-weight:600;color:var(--ink);
+  font-size:clamp(30px,5vw,52px);letter-spacing:.14em;line-height:1.1}
+.item-name[data-len="2"]{font-size:clamp(36px,6vw,62px)}
+.item-flavor{writing-mode:vertical-rl;text-orientation:upright;white-space:nowrap}
+/* 種類をカードの中に出すとき（語尾が揃わない品が入ったとき）も縦に添える。 */
+.item-kind{writing-mode:vertical-rl;text-orientation:upright;white-space:nowrap;
+  font-size:.46em;letter-spacing:.2em;color:var(--sub);margin-top:10px}
+.item-price{font-family:var(--serif);color:var(--ink);font-size:clamp(22px,2.6vw,30px);
+  font-weight:500;margin:0;letter-spacing:.04em;line-height:1.2}
+.item-price small{font-size:.55em;margin-left:2px}
+.item-per{display:block;font-family:var(--sans);font-size:13px;line-height:1.5;
+  color:var(--sub);letter-spacing:.04em;margin-top:4px}
+/* 商品の説明は出さない。読まれないまま高さだけを食っていた
+   （絵と名前で何かは分かる）。.item-note は廃止。 */
 /* .item-mark は水彩を主役に据えたため廃止（同じ絵を 1 枚の中に 2 回出さない）。 */
-.item-price{font-family:var(--serif);color:var(--brown);font-size:32px;font-weight:500;margin:0;letter-spacing:.04em;line-height:1.2}
-.item-price small{font-size:17px;margin-left:2px}
-.item-per{display:block;font-family:var(--sans);font-size:13px;line-height:1.5;color:var(--brown-soft);letter-spacing:.04em;margin-top:4px}
-.order-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:0 0 10px}
+.order-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 clamp(8px,1.2vh,14px)}
 .tagmode{
   min-height:40px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
   font-size:13px;letter-spacing:.06em;border:1px solid var(--gold);background:transparent;color:var(--brown-soft);
@@ -181,7 +241,8 @@ body[data-tags="false"] #lane-note{color:var(--brown-soft)}
 /* この端末がどの受付機か。受付の画面はお客様に向くので、主張させない。
    押すと選び直せる（起動中の受付機は選べない）。 */
 .deskchip{
-  min-height:40px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
+  /* 押す頻度は低いが、押すところではある。iOS の目安 44pt を下回らせない。 */
+  min-height:44px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
   font-size:13px;letter-spacing:.06em;border:1px dashed var(--gold);background:transparent;color:var(--brown-soft);
 }
 .deskchip[data-set="true"]{border-style:solid;background:var(--lift);color:var(--brown);font-weight:700}
@@ -192,27 +253,62 @@ body[data-tags="false"] #lane-note{color:var(--brown-soft)}
 .item[data-soldout="true"] .item-photo{filter:grayscale(1);opacity:.42}
 .item[data-soldout="true"] .stepper{opacity:.45}
 .item[data-soldout="true"] .item-name,
-.item[data-soldout="true"] .item-price{opacity:.55}
+.item[data-soldout="true"] .item-price{opacity:.6}
 
 /* --- ステッパー --- */
 /* min-width:0 が無いと、中の最小幅（ボタン 2 つ＋数量欄）がそのまま
    この箱の最小幅になり、カードより広くなった分が外へ出る。 */
-.stepper{display:flex;align-items:center;justify-content:space-between;gap:16px;background:var(--lift);border-radius:var(--r-ctl);padding:10px 14px;min-width:0}
+/* カードの幅いっぱい。両端に寄せ、数字が真ん中に来る。
+   min-width:0 を忘れると、中身の最小幅が枠を押し広げてはみ出す
+   （以前これで、カードの下枠がステッパーの真ん中を横切っていた）。 */
+/* 値段の行。右端にアレルギーの丸を置く。 */
+/* 値段と「i」を 1 行に。下端で揃えると、丸が「1カップ（6個入り）」の
+   行と目線に乗り、値段の付属物として読める。 */
+.item-meta{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+/* アレルギーの丸。値段の右に置く。主役ではないので枠線だけにする。
+   ただし押すところなので、iOS の目安 44pt は下回らせない。 */
+.item-allergy{width:44px;height:44px;flex:none;border-radius:50%;cursor:pointer;
+  border:1.5px solid var(--sub);background:transparent;color:var(--sub);
+  display:grid;place-items:center;transition:background .2s ease}
+.item-allergy:hover{background:rgba(255,255,255,.14)}
+.item-allergy:active{transform:scale(.94)}
+.item-allergy svg{width:26px;height:26px}
+
+/* ポップアップの中身。絵と名前を対にして並べる。 */
+.allergy-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(14px,3vw,34px);
+  margin:22px 0 4px}
+.allergy-item{display:flex;flex-direction:column;align-items:center;gap:10px;min-width:96px}
+.allergy-item svg{width:clamp(52px,9vw,72px);height:auto;color:var(--brown)}
+.allergy-name{font-family:var(--serif);color:var(--brown);font-size:clamp(16px,2.2vw,20px);
+  letter-spacing:.1em}
+/* 但し書き。読み落とされると表示した意味が無いので、枠で囲って残す。 */
+.allergy-note{margin:22px 0 0;padding:16px 18px;border-radius:var(--r-card);
+  background:var(--lift);border:1px solid var(--gold-line);
+  font-size:14px;line-height:1.9;color:var(--brown-soft);text-align:left}
+
+/* 操作盤は地より「暗く」重ねる。明るく重ねると、白い数字が乗らなくなる。 */
+.stepper{flex:none;display:flex;align-items:center;justify-content:space-between;
+  gap:clamp(6px,1vw,14px);background:var(--pad);border-radius:var(--r-ctl);
+  padding:10px clamp(10px,1.2vw,16px);min-width:0;width:100%}
 .step{
   width:var(--tap);height:var(--tap);flex:none;border-radius:50%;border:none;
-  background:var(--yellow);color:var(--brown);cursor:pointer;
+  background:var(--btn);color:var(--btn-ink);cursor:pointer;
   display:grid;place-items:center;transition:transform .15s ease,background .15s ease;
 }
-.step:hover{background:#EDBF4C}
+.step:hover{filter:brightness(.94)}
 .step:active{transform:scale(.93)}
-.step[disabled]{background:var(--yellow-soft);color:#8B7550;cursor:not-allowed}
+.step[disabled]{opacity:.42;cursor:not-allowed}
 .step svg{width:24px;height:24px}
 /* 3.2em は「0 → 10」で数字の位置が動かないための幅。
    ただし固定の下限にすると狭い画面で溢れるので、縮める余地を残す。 */
-.qty{font-family:var(--serif);color:var(--brown);font-size:34px;font-weight:500;
+/* 「0 → 10」で数字の位置が動かない幅。ただし固定の下限にすると
+   狭い画面で溢れるので、縮める余地を残す。 */
+.qty{font-family:var(--serif);color:var(--ink);font-size:clamp(24px,3.2vh,34px);font-weight:500;
   flex:1 1 auto;min-width:0;width:3.2em;text-align:center;white-space:nowrap}
 .qty small{font-size:17px;margin-left:3px}
-.qty[data-zero="true"]{color:#A8916B}
+/* 0 のときは控えめにする。ただし地が木とチョコに変わったので、
+   クリーム地のころの茶色では沈む。地色に応じた薄い白にする。 */
+.qty[data-zero="true"]{color:var(--sub);opacity:.72}
 
 /* --- 合計・CTA --- */
 .total-row{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap;margin:34px 0 0}
@@ -236,6 +332,10 @@ body[data-tags="false"] #lane-note{color:var(--brown-soft)}
   display:inline-flex;align-items:center;gap:20px;transition:background .2s ease;
 }
 .cta:hover{background:#4E3120}
+/* 押した手応え。沈んで、離すと戻る。無反応だと二度押しされる。 */
+.cta:active:not([disabled]){transform:scale(.975)}
+.cta{transition:background .2s ease, transform .12s ease}
+.cta-ghost:active{transform:scale(.975)}
 .cta[disabled]{background:#D8CBB4;border-color:#D8CBB4;color:#7C6A52;box-shadow:none;cursor:not-allowed}
 .cta-ghost{
   font-family:var(--serif);font-size:19px;letter-spacing:.14em;min-height:68px;padding:0 42px;
@@ -403,11 +503,45 @@ tbody tr:hover{background:var(--lift)}
 .mini-stop:hover{background:#FBF0EE}
 
 /* --- モーダル --- */
-.modal{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(70,48,30,.42);backdrop-filter:blur(3px)}
-.modal.open{display:flex}
-.sheet{background:var(--cream);border:1px solid var(--gold);border-radius:28px;padding:40px;max-width:760px;width:100%;max-height:90vh;overflow:auto;text-align:center;position:relative}
+/* ---- 確認の紙が出入りする動き ----
+   display:none → flex で出すと、紙が一瞬で現れる。押した結果が
+   「画面が入れ替わった」としか読めず、受付でいちばん気を遣う場面
+   （内容を確かめて確定する）がいちばん雑に見えていた。
+
+   display を切り替えるとどんな遷移も効かないので、visibility で出し入れする。
+   こうすると出入りの両方が JS 無しで動く（閉じる側は JS で遅らせる必要がない）。
+
+   出るのは 0.26 秒、引くのは 0.16 秒。出るときより引くときを速くするのは、
+   済んだものを見せ続けないため。 */
+.modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:rgba(70,48,30,.42);
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .16s ease, visibility 0s linear .16s}
+.modal.open{opacity:1;visibility:visible;pointer-events:auto;backdrop-filter:blur(3px);
+  transition:opacity .26s ease, visibility 0s}
+
+.sheet{background:var(--cream);border:1px solid var(--gold);border-radius:28px;padding:40px;
+  max-width:760px;width:100%;max-height:90vh;overflow:auto;text-align:center;position:relative;
+  /* 下から起き上がり、わずかに大きくなりながら止まる。 */
+  transform:translateY(22px) scale(.97);opacity:0;
+  transition:transform .16s ease-in, opacity .16s ease-in}
+.modal.open .sheet{transform:none;opacity:1;
+  transition:transform .38s cubic-bezier(.22,1,.36,1), opacity .22s ease-out}
 .sheet h2{font-family:var(--serif);color:var(--brown);font-size:clamp(23px,3vw,31px);letter-spacing:.1em;margin:0 0 8px;font-weight:600}
 .sheet-sub{font-size:15px;margin:0 0 26px}
+/* 紙が止まったころに中身が続く。紙だけ動いて中身が貼り付いていると、
+   「板が出た」で終わってしまう。 */
+.modal.open .sheet > *{animation:sheet-in .46s cubic-bezier(.22,1,.36,1) both}
+.modal.open .sheet > *:nth-child(1){animation-delay:.10s}
+.modal.open .sheet > *:nth-child(2){animation-delay:.15s}
+.modal.open .sheet > *:nth-child(3){animation-delay:.20s}
+.modal.open .sheet > *:nth-child(4){animation-delay:.25s}
+.modal.open .sheet > *:nth-child(5){animation-delay:.30s}
+@keyframes sheet-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+/* 番号札の数字だけは専用の動きを残す。ここが受付のいちばん大事な一瞬で、
+   他と同じ立ち上がり方にすると、ただの 1 行になってしまう。 */
+.modal.open .sheet > .done-num{animation:num-in .62s cubic-bezier(.22,1,.36,1) both;animation-delay:.16s}
+
 .recap{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:26px}
 .recap-items{display:flex;flex-wrap:wrap;gap:22px;justify-content:center}
 .recap-item{display:flex;gap:16px;align-items:center;text-align:left;min-width:230px}
@@ -424,9 +558,45 @@ tbody tr:hover{background:var(--lift)}
 /* 完了オーバーレイ */
 .done{background:var(--cream)}
 .done .sheet{max-width:600px;cursor:pointer}
+/* 確認の絵。文字の上に置かず、文言のすぐ下に添える。 */
+.place-ill{display:block;width:min(240px,62%);height:auto;margin:18px auto 4px;
+  color:var(--brown);opacity:.9}
+/* 取る向きだけが引かれる。止まった絵だと「何をするところか」が伝わらない。 */
+.place-arrow{stroke-dasharray:100;stroke-dashoffset:100;
+  animation:guide-draw 2.4s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){ .place-arrow{animation:none;stroke-dashoffset:0} }
+
+.place-amount{display:inline-block;margin-top:10px;font-size:.92em;color:var(--brown-soft)}
 .done-label{font-size:17px;letter-spacing:.16em;margin:0}
 .done-num{font-family:var(--serif);color:var(--brown);font-size:clamp(84px,17vw,150px);line-height:1;margin:14px 0 6px;letter-spacing:.03em}
-.done-meta{font-size:17px;margin:0 0 26px}
+.done-meta{font-size:17px;margin:0 0 20px}
+/* 次にすることの案内。番号札の数字の次に目が行く位置に置く。
+   枠で囲って「ここから先の話」だと分かるようにする。 */
+.done-guide{border-top:1px solid var(--gold-line);margin-top:4px;padding-top:22px;
+  display:flex;flex-direction:column;align-items:center;gap:12px}
+.guide-ill{width:min(340px,88%);height:auto;color:var(--brown);opacity:.92}
+/* 矢印だけが引かれていく。止まった絵だと向きを読み落とされる。
+   pathLength を 100 に正規化してあるので、長さを変えても速さは変わらない。
+   軸を引き切ってから矢じりへ移る（1 本の path の中で順に描かれる）。 */
+.guide-arrow{stroke-width:2.8;stroke-dasharray:100;stroke-dashoffset:100;
+  animation:guide-draw 2.6s ease-in-out infinite}
+@keyframes guide-draw{
+  0%  {stroke-dashoffset:100;opacity:0}
+  8%  {stroke-dashoffset:92; opacity:1}
+  52% {stroke-dashoffset:0;  opacity:1}
+  86% {stroke-dashoffset:0;  opacity:1}
+  100%{stroke-dashoffset:0;  opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .guide-arrow{animation:none;stroke-dashoffset:0}
+}
+/* 出し分けは親の data-mode で行う。
+   SVG 要素に hidden を代入しても属性にならず（hidden は HTML 要素の性質）、
+   CSS が反応しない。実際これで札なしのときに札の絵が出たままになっていた。 */
+.done-guide[data-mode="tag"]   #guide-notag{display:none}
+.done-guide[data-mode="notag"] #guide-tag{display:none}
+.done-next{margin:0;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(18px,2.6vw,25px);letter-spacing:.1em;line-height:1.6}
 
 /* 単価設定 */
 .field{text-align:left;margin-bottom:18px}
@@ -804,13 +974,33 @@ body[data-tab="amount"] .masthead{display:none}
   .item-head{flex-direction:column;align-items:center;text-align:center}
   .item-photo{width:min(100%,186px)}
   .item-name::after{margin-left:auto;margin-right:auto}
-  .item-note{max-width:none}
-  .price-row{justify-content:center}
   .item-stock{text-align:center}
   .cta{width:100%;justify-content:center;padding:0 24px}
   .cta-ghost{width:100%;justify-content:center}
   .recap-item{min-width:0;width:100%}
 }
+/* ============================================================
+   iPad 縦向き（受付はこちらを主に使う）
+   受付はお客様に向ける画面なので、巻かせずに 1 画面へ収める。
+   巻かせると「注文を確定する」が画面の外に出て、確定できない人が出る。
+   カードを横 1 行にして説明を落としたぶん、縦なら余裕を持って収まる。
+   ============================================================ */
+@media (orientation:portrait) and (min-width:700px){
+  body{overflow:hidden}
+  .wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+    padding-bottom:calc(env(safe-area-inset-bottom) + clamp(12px,2vh,26px))}
+  main{flex:1;min-height:0;display:flex;flex-direction:column}
+  /* 表札は飾り。詰めたぶんがそのままカードの余裕になる。 */
+  .masthead{padding:clamp(10px,2.2vh,30px) 0 clamp(6px,1.4vh,18px)}
+  .brand{font-size:clamp(26px,4.4vh,46px)}
+  .romaji{font-size:clamp(11px,1.3vh,15px)}
+
+  #view-order{flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(10px,1.8vh,22px)}
+  .order-top,.total-row,.tally,.cta-row{flex:none}
+  /* 余った高さはカードに渡す。足りないときだけ、ここが最後の砦として巻く。 */
+  .menu{flex:0 1 auto;min-height:0;overflow-y:auto}
+}
+
 /* ============================================================
    iPad 横向き（および低い横長画面）向けの収まり調整
    受付はお客様に向ける画面なので、スクロールせず 1 画面に収める。
@@ -824,7 +1014,6 @@ body[data-tab="amount"] .masthead{display:none}
   body:has(.net-state:not([hidden])) .wrap{padding-top:38px}
   body:has(.net-state:not([hidden])) .romaji,
   body:has(.net-state:not([hidden])) .rule,
-  body:has(.net-state:not([hidden])) .tagline{display:none}
   .wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;
     padding-bottom:calc(env(safe-area-inset-bottom) + clamp(10px,1.7vh,22px))}
   main{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -837,7 +1026,6 @@ body[data-tab="amount"] .masthead{display:none}
   .romaji{font-size:clamp(10px,1.15vh,14px);margin-top:clamp(2px,.5vh,8px)}
   .rule{margin-top:clamp(4px,.8vh,12px)}
   .rule img{width:clamp(20px,2.8vh,36px)}
-  .tagline{font-size:clamp(11px,1.5vh,16px);margin-top:clamp(4px,.8vh,11px)}
 
   /* ---- 受付：1 画面に収める ---- */
   /* 余った高さは全部メニュー（＝カード）に渡す。justify-content:center で
@@ -858,11 +1046,9 @@ body[data-tab="amount"] .masthead{display:none}
   .item-head{gap:clamp(12px,1.6vw,22px)}
   /* 正方形なので、幅を決めると高さも決まる。1 画面の高さ配分に直結する。 */
   .item-photo{width:clamp(76px,14vh,164px)}
-  .item-name{font-size:clamp(19px,3.84vh,34px)}
+  .item-name{font-size:clamp(22px,4.4vh,40px)}
+  .item-name[data-len="2"]{font-size:clamp(26px,5.3vh,48px)}
   .item-name::after{margin:clamp(6px,1vh,12px) 0 clamp(7px,1.1vh,14px)}
-  .item-note{font-size:clamp(11px,1.7vh,15px);line-height:1.75}
-  .price-row{margin-top:clamp(8px,1.4vh,18px)}
-  .item-price{font-size:clamp(19px,3.6vh,34px)}
   .stepper{padding:clamp(6px,1vh,10px) clamp(10px,1.2vw,14px)}
   .step{width:clamp(44px,7.8vh,60px);height:clamp(44px,7.8vh,60px)}
   .qty{font-size:clamp(20px,3.8vh,36px)}
@@ -897,8 +1083,6 @@ body[data-tab="amount"] .masthead{display:none}
 /* 画面が特に低いとき（Safari のツールバーが出た 1024x768 など）は説明文を省いて確実に収める */
 @media (orientation:landscape) and (min-width:700px) and (max-height:730px){
   body[data-tab="order"] .romaji,
-  body[data-tab="order"] .tagline{display:none}
-  .item-note{display:none}
   /* ここまで低いと数え札を置く余地がない。合計の数字だけで伝える。
      確定ボタンが画面外に出るほうが、手応えを失うより悪い。 */
   .tally{display:none}
@@ -949,6 +1133,8 @@ body[data-tab="amount"] .masthead{display:none}
 
 @media (prefers-reduced-motion:reduce){
   .tally-mark[data-in="true"],.tally-mark[data-out="true"],.done-num{animation:none}
+  .sheet,.modal.open .sheet{transform:none;transition:none}
+  .modal.open .sheet > *{animation:none}
   .total-row[data-lit="true"] .total-yen{background:none;color:var(--brown);-webkit-text-fill-color:currentColor}
 }
 
@@ -1069,7 +1255,6 @@ body:not([data-tab="call"]):not([data-tab="amount"]) .kiosk-escape{display:none}
   /* 飾りの見出しは、画面の上半分を使ってしまう。管理のときだけ畳む。 */
   body[data-tab="control"] .masthead{padding:18px 0 12px}
   body[data-tab="control"] .masthead .rule,
-  body[data-tab="control"] .masthead .tagline,
   body[data-tab="control"] .masthead .romaji{display:none}
   body[data-tab="control"] .brand{font-size:24px}
 
@@ -1116,13 +1301,18 @@ body:not([data-tab="order"]) .helpwait{display:none}
    「この窓口」であって店ではない、と分かるようにするため。 */
 .standby{
   position:fixed;inset:0;z-index:54;   /* 門 (52) より上。両方出るときは待機が勝つ */
-  background:rgba(178,34,34,.70);
+  /* #B22222 の 70% だと、副文（小さいほう）が白で 3.95:1 しか出ない。
+     透過は指定どおり 70% のまま、元の赤を深くして 4.70:1 にする。 */
+  background:rgba(142,27,27,.70);
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
   padding:24px;text-align:center;color:#fff;
   /* 覆いの下は触らせない。CSS だけに頼らず app.js でも受付を止めている。 */
   cursor:not-allowed;
 }
 .standby[hidden]{display:none}
+/* 省エネ中の待機。幕を重ねる代わりに、赤そのものを暗くする。
+   画面は暗くなり、白文字は白のままなので 13.6:1 を保てる。 */
+body[data-saver="true"] .standby{background:rgba(66,10,10,.92)}
 .standby-main{margin:0;font-family:var(--serif);font-weight:600;
   font-size:clamp(38px,8vw,88px);letter-spacing:.1em;line-height:1.35;
   text-shadow:0 2px 18px rgba(0,0,0,.28)}
@@ -1131,29 +1321,36 @@ body:not([data-tab="order"]) .helpwait{display:none}
 /* 店員を呼ぶ。右上の角に大きな丸を置き、左下の弧だけを見せる。
    角に逃がすことで、商品・合計・確定のどれにも被らない。
    丸の中身は見えている側（左下）に寄せる。 */
+/* 店員を呼ぶ。受付の 1 行目の右端に置く札。
+
+   角に食い込ませた円はやめた。円は position:fixed で流れの外に居るので、
+   どう寸法を詰めても商品カードに被る余地が残る。流れの中の札にすれば、
+   重なりようがない。目立たせるのは位置ではなく色（琥珀）と脈で受け持つ。
+
+   色は葉の緑。水彩の葉と同系なので意匠に溶け込む。
+   琥珀は山吹色の「＋」と同じ系統で並ぶと紛れ、地との差も 2.22 倍しか
+   なかった。葡萄は 9.10 倍で逆に強すぎた。葉の緑は 5.44 倍で、
+   探せば必ず見つかるが、画面の主役を奪わない。白文字とは 6.03:1。
+
+   飾りは付けない。脈・影・グラデーションを重ねると、
+   押すところが 1 つしかない画面で、そこだけが騒がしくなる。
+   目立たせるのは色と位置だけで足りる。 */
 .helpcall{
-  --hc:clamp(230px,30vw,340px);
-  position:fixed;z-index:58;
-  /* 円の中心を画面の外へ逃がし、左下の弧だけを見せる。 */
-  top:calc(var(--hc) * -0.38);right:calc(var(--hc) * -0.38);
-  width:var(--hc);height:var(--hc);border-radius:50%;
+  position:relative;margin-left:auto;
+  display:inline-flex;align-items:center;gap:10px;
+  min-height:52px;padding:0 clamp(18px,2.2vw,26px);border-radius:999px;
   border:0;cursor:pointer;
-  background:var(--brown);color:var(--lift);
-  box-shadow:0 6px 26px rgba(70,48,30,.34);
-  display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;
-  gap:2px;
-  /* 中身は見えている弧の内側に収める。弧は下へ行くほど細くなるので、
-     下に寄せすぎると文字が円からはみ出す。寸法はこの比率で釣り合っている。 */
-  padding:0 0 calc(var(--hc) * 0.17) calc(var(--hc) * 0.14);
-  text-align:left;
+  background:#4A6B46;
+  color:#fff;
 }
-.helpcall:hover{background:#4E3120}
+.helpcall:hover{background:#3E5C3C}
 .helpcall:active{transform:scale(.97)}
-.helpcall-q{font-family:var(--serif);font-weight:600;line-height:1;
-  font-size:calc(var(--hc) * 0.22)}
-.helpcall-t{font-size:calc(var(--hc) * 0.065);letter-spacing:.06em;white-space:nowrap;font-weight:700}
+.helpcall-q{font-family:var(--serif);font-weight:700;line-height:1;font-size:26px}
+.helpcall-t{font-size:17px;letter-spacing:.06em;white-space:nowrap;font-weight:700}
+
+.helpcall{transition:background .2s ease, transform .12s ease}
 /* 呼び出し中は押し直させない。押しても何も起きないことを色で示す。 */
-.helpcall[data-called="true"]{background:#8A6410;cursor:default}
+.helpcall[data-called="true"]{background:#6E5A33;color:#fff;cursor:default}
 
 /* 押したあとの受け。届いたことを返さないと、何度も押される。 */
 .helpwait{
@@ -1208,7 +1405,6 @@ body:not([data-tab="order"]) .helpwait{display:none}
   .callboard-done{width:100%;margin-left:0}
   .callbar-notice{margin-left:0;width:100%}
   /* 丸は角に食い込ませたまま、寸法だけ落とす。指は十分に当たる。 */
-  .helpcall{--hc:clamp(190px,50vw,240px)}
 }
 /* 押すところが減る指示は入れない。動きだけ止める。 */
 @media (prefers-reduced-motion:reduce){
@@ -1218,58 +1414,131 @@ body:not([data-tab="order"]) .helpwait{display:none}
 /* ============================================================
    受付の門（いらっしゃいませ ／ ありがとうございました）
    ============================================================ */
+/* 受付の門。
+
+   色が意味を持つ。緑＝この窓口は開いています、赤＝閉じています。
+   数メートル離れて立っている人が、文字を読む前に色だけで判断できることを
+   いちばん上に置く。だから地は塗り潰し、文字は大きく、白で抜く。
+   会場は明るく、画面は斜めから見られる。淡い色は飛んで読めなくなる。 */
 .gate{
   position:fixed;inset:0;z-index:52;cursor:pointer;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:clamp(14px,3vh,34px);padding:24px;text-align:center;
-  background:var(--cream);
+  gap:clamp(12px,2.6vh,30px);padding:24px;text-align:center;color:#fff;
+  /* 中心をわずかに明るくして、平らな一色より奥行きを出す。 */
+  background:radial-gradient(ellipse at 50% 42%, #17A054 0%, #0E7A3D 52%, #0A5E2F 100%);
   animation:gate-in .34s cubic-bezier(.22,1,.36,1) both;
 }
 .gate[hidden]{display:none}
-/* 確定の直後。前の人が済んだことを、言葉より先に色で返す。 */
-.gate[data-state="thanks"]{background:#1F7A4D;color:#fff}
-@keyframes gate-in{from{opacity:0}to{opacity:1}}
 
-.gate-top{margin:0;font-family:var(--serif);font-weight:600;letter-spacing:.18em;
-  font-size:clamp(28px,6vh,62px);color:var(--brown)}
-.gate[data-state="thanks"] .gate-top{color:#fff}
+/* 覆いの裏が巻けているのが、上に余白が出る正体。
+   overflow:hidden だけでは iOS の慣性スクロールは止まらない。
+   body ごと固定して、裏の面を動かせなくする。受付の門の裏には
+   戻るべき位置が無い（商品の一覧は毎回いちばん上から）ので、
+   固定を解いたときに巻き位置が消えても困らない。 */
+body[data-tab="order"][data-ordering="false"]{
+  overflow:hidden;position:fixed;inset:0;width:100%;
+}
+/* 覆いの上での指の動きを、裏へ渡さない。 */
+.gate,.standby{overscroll-behavior:contain;touch-action:none}
+/* 確定の直後。同じ緑のまま、文言と◯の描かれ方だけが変わる。
+   色まで変えると「窓口が開いている」という一本の意味が切れる。 */
+.gate[data-state="thanks"]{animation:gate-flash .5s ease-out both}
+@keyframes gate-in{from{opacity:0}to{opacity:1}}
+@keyframes gate-flash{
+  0%  {background:radial-gradient(ellipse at 50% 42%, #2ACB73 0%, #17A054 52%, #0E7A3D 100%)}
+  100%{background:radial-gradient(ellipse at 50% 42%, #17A054 0%, #0E7A3D 52%, #0A5E2F 100%)}
+}
+
+/* 円を角から外したので、左右に逃げを作る必要がなくなった。 */
+.gate-top{margin:0;font-family:var(--serif);font-weight:600;letter-spacing:.08em;
+  font-size:clamp(28px,min(7.4vh,6vw),92px);line-height:1.25;padding:0 24px;
+  text-shadow:0 3px 22px rgba(0,0,0,.26)}
 
 /* ◯。確定のときだけ線が一周描かれる。描き切るまでが「受け付けた」の合図。 */
-.gate-ring{position:relative;width:clamp(130px,26vh,260px);aspect-ratio:1;display:grid;place-items:center}
+.gate-ring{position:relative;width:clamp(150px,30vh,320px);aspect-ratio:1;display:grid;place-items:center}
 .gate-svg{width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
-.gate-track,.gate-draw{fill:none;stroke-width:7;stroke-linecap:round}
-.gate-track{stroke:var(--gold-line)}
-.gate-draw{stroke:var(--gold);stroke-dasharray:327;stroke-dashoffset:0}
-.gate[data-state="thanks"] .gate-track{stroke:rgba(255,255,255,.26)}
-.gate[data-state="thanks"] .gate-draw{stroke:#fff;animation:gate-draw .72s cubic-bezier(.22,1,.36,1) both}
+.gate-track,.gate-draw{fill:none;stroke-width:8;stroke-linecap:round}
+.gate-track{stroke:rgba(255,255,255,.22)}
+.gate-draw{stroke:#fff;stroke-dasharray:327;stroke-dashoffset:0;
+  filter:drop-shadow(0 2px 14px rgba(0,0,0,.22))}
+.gate[data-state="thanks"] .gate-draw{animation:gate-draw .72s cubic-bezier(.22,1,.36,1) both}
 @keyframes gate-draw{from{stroke-dashoffset:327}to{stroke-dashoffset:0}}
 
-/* 待っている間、そっと脈を打たせる。「押せる」ことを言葉以外でも伝える。 */
-.gate-pulse{position:absolute;inset:0;border-radius:50%;border:2px solid var(--gold);
+/* 待っている間、輪が外へ広がり続ける。動いているものは遠くからでも目に入る。 */
+.gate-pulse{position:absolute;inset:0;border-radius:50%;border:3px solid rgba(255,255,255,.9);
   opacity:0;pointer-events:none}
-.gate[data-state="welcome"] .gate-pulse{animation:gate-pulse 2.6s ease-out infinite}
+.gate[data-state="welcome"] .gate-pulse{animation:gate-pulse 2.4s ease-out infinite}
 @keyframes gate-pulse{
-  0%  {transform:scale(1);   opacity:.55}
-  70% {transform:scale(1.26);opacity:0}
-  100%{transform:scale(1.26);opacity:0}
+  0%  {transform:scale(1);   opacity:.7}
+  75% {transform:scale(1.34);opacity:0}
+  100%{transform:scale(1.34);opacity:0}
 }
 
-.gate-sub{margin:0;font-size:clamp(14px,2.2vh,21px);letter-spacing:.12em;color:var(--brown-soft);min-height:1.4em}
-.gate[data-state="thanks"] .gate-sub{color:rgba(255,255,255,.92)}
+.gate-sub{margin:0;font-size:clamp(16px,2.8vh,30px);letter-spacing:.14em;
+  color:rgba(255,255,255,.92);min-height:1.4em}
 
-/* 押すところ。門のどこを触っても始まるが、どこを押せばよいかは明示する。 */
+/* 押すところ。白で抜いて、地の緑といちばん強い差を作る。
+   上下に動かして「ここを押す」ことを言葉以外でも伝える。 */
 .gate-start{
-  font-family:var(--serif);font-size:clamp(18px,3vh,27px);letter-spacing:.16em;
-  min-height:var(--tap);padding:0 clamp(28px,5vw,58px);border-radius:var(--r-ctl);cursor:pointer;
-  background:var(--brown);color:var(--lift);border:1px solid var(--brown);
-  box-shadow:inset 0 0 0 1px rgba(241,202,99,.55);
-  animation:gate-rise 2.6s ease-in-out infinite;
+  font-family:var(--serif);font-size:clamp(21px,3.8vh,40px);letter-spacing:.16em;
+  min-height:clamp(64px,10vh,112px);padding:0 clamp(32px,6vw,78px);
+  border-radius:999px;cursor:pointer;
+  background:#fff;color:#0A5E2F;border:0;font-weight:600;
+  box-shadow:0 10px 34px rgba(0,0,0,.26);
+  animation:gate-rise 2.4s ease-in-out infinite;
 }
-.gate[data-state="thanks"] .gate-start{background:#fff;color:#1F7A4D;border-color:#fff;box-shadow:none}
-@keyframes gate-rise{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes gate-rise{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+
+/* ---- 門が引き、受付の面が立ち上がる ----
+   門をぱっと消すと「画面が切り替わった」になる。わずかに迫り出しながら
+   抜いていくと「開いた」になる。時間は 0.46 秒。これより長いと、
+   行列のなかでは待たされたと感じる。
+
+   曲線は ease-out 寄りにする（最初に速く動いて、終わりで静かに止まる）。
+   等速や ease-in-out だと機械が動いた感じが残る。 */
+.gate[data-leaving="true"]{
+  animation:gate-out .46s cubic-bezier(.32,.72,0,1) both;
+  pointer-events:none;
+}
+@keyframes gate-out{
+  0%  {opacity:1;transform:scale(1)}
+  60% {opacity:.52}
+  100%{opacity:0;transform:scale(1.07)}
+}
+/* ◯ は門の主役。抜けるときだけ、わずかに先に開いていく。 */
+.gate[data-leaving="true"] .gate-ring{animation:ring-out .46s cubic-bezier(.32,.72,0,1) both}
+@keyframes ring-out{to{transform:scale(1.22);opacity:0}}
+
+/* 門の裏で、受付の面が下から順に起き上がる。
+   いっせいに出すと 1 枚の絵が差し替わっただけに見える。
+   少しずつ遅らせると、組み上がっていくように読める。 */
+body[data-entering="true"] #view-order > *,
+body[data-entering="true"] .menu > .item{
+  animation:rise-in .58s cubic-bezier(.22,1,.36,1) both;
+}
+body[data-entering="true"] .order-top      {animation-delay:.10s}
+body[data-entering="true"] .menu           {animation:none}
+body[data-entering="true"] .menu > .item:nth-child(1){animation-delay:.17s}
+body[data-entering="true"] .menu > .item:nth-child(2){animation-delay:.25s}
+body[data-entering="true"] .menu > .item:nth-child(3){animation-delay:.33s}
+body[data-entering="true"] .total-row      {animation-delay:.36s}
+body[data-entering="true"] .tally          {animation-delay:.40s}
+body[data-entering="true"] .cta-row        {animation-delay:.44s}
+@keyframes rise-in{
+  from{opacity:0;transform:translateY(18px)}
+  to  {opacity:1;transform:none}
+}
+
+/* 押した手応え。沈んでから戻る。 */
+.gate-start:active{transform:scale(.96)}
+.step:active{transform:scale(.92)}
 
 @media (prefers-reduced-motion:reduce){
-  .gate,.gate-start,.gate-pulse,.gate[data-state="thanks"] .gate-draw{animation:none}
+  .gate,.gate-start,.gate-pulse,.gate[data-state="thanks"],
+  .gate[data-state="thanks"] .gate-draw,
+  .gate[data-leaving="true"],.gate[data-leaving="true"] .gate-ring,
+  body[data-entering="true"] #view-order > *,
+  body[data-entering="true"] .menu > .item{animation:none}
   .gate-draw{stroke-dashoffset:0}
 }
 
@@ -1283,8 +1552,16 @@ body:not([data-tab="order"]) .helpwait{display:none}
   display:flex;align-items:flex-end;justify-content:center;padding:0 0 42px;
   animation:saver-in .8s ease both}
 .saver[hidden]{display:none}
+/* 受付の画面では幕を使わない。
+   幕は文字の上にも乗るので、白文字まで灰色に落ちる。待機の赤に重ねたときは
+   文字 #737373 / 地 #4E2927 の 2.65:1 になり、肝心の「他の注文窓口を
+   ご利用ください」が読めなくなっていた。
+   受付は覆いそのものを暗くして省エネにする（下の .standby）。 */
+body[data-tab="order"] .saver{display:none}
 @keyframes saver-in{from{background:rgba(0,0,0,0)}to{background:rgba(0,0,0,.55)}}
-.saver-note{margin:0;font-size:14px;letter-spacing:.14em;color:rgba(255,255,255,.62)}
+/* 幕は薄暗いままでよいが、この一行だけは読めないと「タップで戻る」が伝わらない。
+   62% では 3.09:1 で不足。95% で 4.86:1。 */
+.saver-note{margin:0;font-size:14px;letter-spacing:.14em;color:rgba(255,255,255,.95)}
 /* 幕が下りている間は動きを止める。点滅し続けるものが残ると意味が薄れる。 */
 body[data-saver="true"] .gate-start,
 body[data-saver="true"] .gate-pulse,
@@ -1339,7 +1616,7 @@ if (location.protocol === 'file:') {
     <h1 class="brand">ゆず香ステラ</h1>
     <p class="romaji">YUZUKA STELLA</p>
     <div class="rule"><img src="art/divider-yuzu.png" alt="" aria-hidden="true"></div>
-    <p class="tagline">やさしい甘さ、香るゆず</p>
+
   </header>
 
 
@@ -1355,6 +1632,13 @@ if (location.protocol === 'file:') {
              （受付の画面はお客様に向くため、お客様の手の届くところに置けない）。 -->
         <button type="button" class="deskchip" id="desk-chip" data-set="false">受付機を選ぶ</button>
         <p class="lane-note" id="lane-note"></p>
+        <!-- 店員を呼ぶ。角の円はカードに被るのをやめられなかったので、
+             1 行目の札にする。流れの中に置けば、重なりようがない。
+             目立たせるのは色（琥珀）と脈で受け持つ。 -->
+        <button type="button" class="helpcall" id="helpcall">
+          <span class="helpcall-q" aria-hidden="true">？</span>
+          <span class="helpcall-t">店員を呼ぶ</span>
+        </button>
       </div>
       <div class="menu" id="menu"></div>
 
@@ -1395,7 +1679,7 @@ if (location.protocol === 'file:') {
       </div>
 
       <p class="gate-sub" id="gate-sub"></p>
-      <button type="button" class="gate-start" id="gate-start">タップで注文を開始</button>
+      <button type="button" class="gate-start" id="gate-start">注文を始める</button>
     </div>
 
     <!-- 待機の覆い。この受付機を閉じているあいだ、お客様を他の窓口へ送る。
@@ -1406,12 +1690,6 @@ if (location.protocol === 'file:') {
       <p class="standby-sub">この受付機はただいま閉じています</p>
     </div>
 
-    <!-- 店員を呼ぶ。右上の角に大きな丸を置き、左下の弧だけを見せる。
-         お客様が迷ったときに最初に目が行く位置で、かつ商品や合計に被らない。 -->
-    <button type="button" class="helpcall" id="helpcall">
-      <span class="helpcall-q" aria-hidden="true">？</span>
-      <span class="helpcall-t">店員を呼ぶ</span>
-    </button>
     <!-- 押したあと。お客様に「届いた」ことを返さないと、何度も押される。 -->
     <div class="helpwait" id="helpwait" hidden role="status" aria-live="polite">
       <p class="helpwait-main">店員をお呼びしました</p>
@@ -1700,15 +1978,51 @@ if (location.protocol === 'file:') {
   </div>
 </div>
 
+<!-- アレルギー。食べ物を出す以上、出さないという選択肢が無い。
+     お客様が自分で開いて確かめられる位置に置く（受付係に口頭で訊かせない）。 -->
+<div class="modal" id="m-allergy" role="dialog" aria-modal="true" aria-labelledby="allergy-h">
+  <div class="sheet" style="max-width:560px">
+    <h2 id="allergy-h">アレルギー情報</h2>
+    <p class="sheet-sub" id="allergy-sub"></p>
+    <div class="allergy-grid" id="allergy-list"></div>
+    <p class="allergy-note">
+      すべて同じ調理場・同じ器具で作っています。<br>
+      表示のない原材料が微量に混入する可能性を、完全には防げません。
+    </p>
+    <div class="cta-row" style="justify-content:center">
+      <button type="button" class="cta" id="allergy-close">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <!-- 確認 -->
 <!-- 受付。テンキーの「決定」は押し間違えやすく、そのまま注文が立つ。最後に一度だけ確かめる。 -->
 <div class="modal" id="m-place" role="dialog" aria-modal="true" aria-labelledby="place-h">
   <div class="sheet">
-    <h2 id="place-h">注文を確定しますか？</h2>
+    <h2 id="place-h">番号札を取りましたか？</h2>
     <p class="sheet-sub" id="place-sub" style="margin:10px 0 0"></p>
+    <!-- ケースから札を 1 枚取る、という行為そのものを描く。
+         番号を読み合わせるだけでは、札がケースに残ったまま確定される事故
+         （画面では出ていることになっているのに、お客様は何も持っていない）を
+         防げない。確かめる対象を「番号」ではなく「取ったかどうか」にする。 -->
+    <svg class="place-ill" viewBox="0 0 220 104" fill="none" aria-hidden="true"
+         stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <!-- 取り上げた 1 枚 -->
+      <rect x="158" y="10" width="34" height="46" rx="7"/>
+      <circle cx="168" cy="21" r="2.6"/>
+      <path d="M170 30v18M182 30v18M164 36h24M164 43h24"/>
+      <!-- 取る向き -->
+      <path class="place-arrow" pathLength="100" d="M118 52c12-10 24-16 34-20M146 25l6 7-8 5"/>
+      <!-- ケース。札が並んで差さっている。 -->
+      <path d="M18 56h92v32a5 5 0 0 1-5 5H23a5 5 0 0 1-5-5z"/>
+      <rect x="30" y="38" width="17" height="22" rx="4"/>
+      <rect x="55" y="38" width="17" height="22" rx="4"/>
+      <rect x="80" y="38" width="17" height="22" rx="4"/>
+      <path d="M18 70h92"/>
+    </svg>
     <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
-      <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">はい、確定する</button>
-      <button type="button" class="cta-ghost" id="place-no" style="width:100%;justify-content:center">いいえ</button>
+      <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">取りました・確定する</button>
+      <button type="button" class="cta-ghost" id="place-no" style="width:100%;justify-content:center">まだです・戻る</button>
     </div>
   </div>
 </div>
@@ -1783,7 +2097,68 @@ if (location.protocol === 'file:') {
     <p class="done-label" id="done-h">ご注文ありがとうございました</p>
     <p class="done-num" id="done-num">#001</p>
     <p class="done-meta" id="done-meta"></p>
-    <p class="done-next" id="done-next"></p>
+    <!-- 次に何をすればよいかの案内。文字だけだと読まれずに立ち去られるので、
+         絵を添える。意匠に合わせて細い線で描く（写真やアイコン集は使わない）。 -->
+    <div class="done-guide" id="done-guide" data-mode="tag">
+      <!-- 番号札あり：札を持った人が、左の会計口へ進む。
+           受付機はすべて支払い口より右にあるので、矢印は必ず左を向く。
+           向きを間違えた案内は、無い案内より悪い。
+
+           構図は「物の並び」ではなく「どっちへ行くか」にしてある。
+           札と台を並べるだけでは、お客様から見て自分がどこに居るのかが
+           分からない。右端に人を置くと、自分の位置と進む先が同時に読める。 -->
+      <svg class="guide-ill" id="guide-tag" viewBox="0 0 300 96" fill="none" aria-hidden="true"
+           stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <!-- 会計口（左）。台・レジ・硬貨。
+             硬貨は台の上に乗せる（宙に浮かせると何の丸か読めない）。
+             「¥」は上の払いが要る。縦棒と横線だけだと「キ」に見える。 -->
+        <path d="M8 80h100"/>
+        <path d="M18 80V46a4 4 0 0 1 4-4h28a4 4 0 0 1 4 4v34"/>
+        <path d="M24 50h20"/>
+        <path d="M24 60h10M40 60h4"/>
+        <path d="M24 69h10M40 69h4"/>
+        <circle cx="86" cy="62" r="15"/>
+        <path d="M78 54l8 8 8-8"/>
+        <path d="M86 62v9"/>
+        <path d="M78 64.5h16M78 69h16"/>
+
+        <!-- 進む向き。ここだけが引かれていく。 -->
+        <path class="guide-arrow" pathLength="100" d="M212 56H128M139 47l-11 9 11 9"/>
+
+        <!-- いまここ。札を持って立っている人。 -->
+        <circle cx="258" cy="22" r="9"/>
+        <path d="M258 32v26"/>
+        <path d="M258 58l-9 20M258 58l9 20"/>
+        <path d="M258 40l-16 6"/>
+        <rect x="228" y="40" width="16" height="21" rx="4"/>
+        <circle cx="236" cy="46" r="1.6"/>
+        <path d="M233 52h6"/>
+      </svg>
+
+      <!-- 番号札なし：その場でお品物と会計。受渡口も同じ側（左）。 -->
+      <svg class="guide-ill" id="guide-notag" viewBox="0 0 300 96" fill="none" aria-hidden="true"
+           stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <!-- 受渡口（左）。台と、その上に置かれたカップ。 -->
+        <path d="M8 80h100"/>
+        <path d="M18 80V46a4 4 0 0 1 4-4h28a4 4 0 0 1 4 4v34"/>
+        <path d="M24 50h20"/>
+        <path d="M24 60h10M40 60h4"/>
+        <path d="M24 69h10M40 69h4"/>
+        <path d="M72 48h28l-3 24a5 5 0 0 1-5 4h-12a5 5 0 0 1-5-4z"/>
+        <path d="M69 48h34"/>
+
+        <!-- 進む向き -->
+        <path class="guide-arrow" pathLength="100" d="M212 56H128M139 47l-11 9 11 9"/>
+
+        <!-- いまここ -->
+        <circle cx="258" cy="22" r="9"/>
+        <path d="M258 32v26"/>
+        <path d="M258 58l-9 20M258 58l9 20"/>
+        <path d="M258 40l-16 6"/>
+      </svg>
+
+      <p class="done-next" id="done-next"></p>
+    </div>
     <button type="button" class="cta">閉じる</button>
   </div>
 </div>

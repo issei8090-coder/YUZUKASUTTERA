@@ -152,6 +152,10 @@ function openModal(id, cleanup){
   if(onClose){ const f = onClose; onClose = null; f(); }
   onClose = cleanup || null;
   openEl = $(id); openEl.classList.add('open');
+  // 紙は visibility で出し入れしている。class を足した直後はまだ
+  // visibility:hidden のままなので、ここで一度組み直させないと
+  // 下の focus() が黙って効かない（visibility:hidden には焦点が乗らない）。
+  void openEl.offsetWidth;
   $('main').setAttribute('aria-hidden','true');
   // 札のグリッドは「押した瞬間に確定」なので、開いた直後に乗せない。
   const first = [...openEl.querySelectorAll(FOCUSABLE)]
@@ -255,31 +259,137 @@ function applySession(){
   renderFigures(); renderCall(); renderTags(); syncCart();
 }
 
+/* 商品は左右に 2 枚並べ、1 枚を味の色で塗り潰す。
+   上に縦書きの味の名前と絵、下に値段と増減。色と縦書きで、
+   文字を読む前にどちらかが分かる。
+
+   地は木の色。柚子色（パステル）に白文字は 1.45:1 で読めず、色相を保ったまま
+   白が乗る濃さまで落とすと、もう柚子色ではなくなる。木の色なら白文字が乗る。
+   2 枚は木（胡桃）とチョコで、明度の差 2.01 倍で見分けが付く。
+
+   説明文は出さない。読まれないまま高さだけを食っていた。 */
+/* 商品名を 2 行に割る。「ゆず」を大きく、「カステラ」を下に小さく。
+   2 列にしたらカードが細くなり、「チョコカステラ」が途中で折り返していた。
+   機械の折り返しに任せると、どこで切れるかが幅ごとに変わる。
+   意味の切れ目（味／種類）で人が割っておけば、どの幅でも同じ形に収まる。
+
+   味の名前は short を正とする（厨房が使っているものと同じ）。
+   label が short で始まらない商品が来たら、割らずにそのまま出す。 */
+function flavorName(f, sharedKind){
+  const head = f.short || '';
+  const rest = head && f.label.startsWith(head) ? f.label.slice(head.length) : '';
+  if(!rest) return f.label;
+  // 種類を真ん中に 1 つ出すときは、カードからは外す（同じ語を 3 回出さない）。
+  if(sharedKind) return `<span class="item-flavor">${head}</span>`;
+  return `<span class="item-flavor">${head}</span><span class="item-kind">${rest}</span>`;
+}
+
+/* 全商品が同じ語尾なら、その語尾を返す（「ゆずカステラ」「チョコカステラ」→「カステラ」）。
+   同じ語を 2 回出す代わりに、2 枚の間に 1 つだけ置けるようにする。
+
+   使えるのは 2 品で語尾が揃っているときだけ。商品が増えたり、語尾の違う品が
+   入ったら空を返し、カードごとの表記に自動で戻る。商品マスタは Go 側が持っていて
+   ここからは変えられないので、形のほうが合わせる。 */
+/* ---------- アレルギー ----------
+   食べ物を出す以上、出さないという選択肢が無い。受付係に口頭で訊かせると、
+   並んでいるあいだ訊けないし、答えが人によってぶれる。お客様が自分で開いて
+   確かめられる位置に置く。
+
+   中身は商品ごとに持つ。いまは 2 品とも同じ生地なので同じだが、
+   品が増えて中身が変わったときに、ここだけ直せば済む形にしておく。
+   絵は線で描く（意匠に合わせる。アイコン集は持ち込まない）。 */
+const ALLERGEN_MARK = {
+  wheat: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M24 44V20"/>
+            <path d="M24 20c0-5-4-8.5-8-9.5.5 5.5 3 9 8 9.5zM24 20c0-5 4-8.5 8-9.5-.5 5.5-3 9-8 9.5z"/>
+            <path d="M24 29c0-5-4-8.5-8-9.5.5 5.5 3 9 8 9.5zM24 29c0-5 4-8.5 8-9.5-.5 5.5-3 9-8 9.5z"/>
+            <path d="M24 38c0-5-4-8.5-8-9.5.5 5.5 3 9 8 9.5zM24 38c0-5 4-8.5 8-9.5-.5 5.5-3 9-8 9.5z"/>
+          </svg>`,
+  egg: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M24 6c7.5 0 13 11.5 13 20a13 13 0 0 1-26 0C11 17.5 16.5 6 24 6z"/>
+          <path d="M18 29a6 6 0 0 0 6 6"/>
+        </svg>`,
+  milk: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+           <path d="M19 5h10v8l4.5 7V40a3 3 0 0 1-3 3h-13a3 3 0 0 1-3-3V20l4.5-7z"/>
+           <path d="M14.5 27h19"/>
+           <path d="M19 13h10"/>
+         </svg>`
+};
+const ALLERGEN_NAME = { wheat:'小麦粉', egg:'卵', milk:'牛乳' };
+// 商品ごとの中身。載っていない商品は既定を使う。
+const ALLERGENS = { _default: ['wheat', 'egg', 'milk'] };
+const allergensOf = key => ALLERGENS[key] || ALLERGENS._default;
+
+function openAllergy(key){
+  const f = FLAVORS.find(x => x.key === key);
+  $('allergy-sub').textContent = f ? f.label : '';
+  $('allergy-list').innerHTML = allergensOf(key).map(a => `
+    <div class="allergy-item">
+      ${ALLERGEN_MARK[a] || ''}
+      <span class="allergy-name">${ALLERGEN_NAME[a] || a}</span>
+    </div>`).join('');
+  openModal('m-allergy');
+}
+$('allergy-close')?.addEventListener('click', closeModal);
+
+/* 真ん中に挟む語は欧文にする。縦書きの和文 2 つに和文を挟むと 3 つ目の主役に
+   なってしまうが、欧文なら字面が変わるぶん添え物として収まる。
+   知らない語は訳さずそのまま出す（商品マスタは Go 側が持っていて増えうる）。 */
+const KIND_EN = { 'カステラ': 'CASTELLA' };
+
+function commonKind(){
+  if(FLAVORS.length !== 2) return '';
+  const rest = FLAVORS.map(f =>
+    (f.short && f.label.startsWith(f.short)) ? f.label.slice(f.short.length) : '');
+  return (rest[0] && rest[0] === rest[1]) ? rest[0] : '';
+}
+
 function renderMenu(){
-  $('menu').innerHTML = FLAVORS.map(f=>`
+  const kind = commonKind();
+  const cards = FLAVORS.map(f=>`
     <article class="item" data-key="${f.key}">
-      <div class="item-head">
+      <div class="item-top">
+        <h3 class="item-name" data-len="${(f.short || f.label).length}">${flavorName(f, kind)}</h3>
         <div class="item-photo"><img src="${MARK[f.key]||''}" alt="${f.label}"></div>
-        <div class="item-body">
-          <h3 class="item-name">${f.label}</h3>
-          <p class="item-note">${f.note||''}</p>
-          <div class="price-row">
-            <p class="item-price" data-price="${f.key}">${yen(prices[f.key]??f.defaultPrice)}<small>円</small>
-              <span class="item-per">1${f.unit}${f.pieces?`（${f.pieces}個入り）`:''}</span></p>
-          </div>
-          <p class="item-stock" data-stock="${f.key}"></p>
+      </div>
+      <div class="item-foot">
+        <div class="item-meta">
+          <p class="item-price" data-price="${f.key}">${yen(prices[f.key]??f.defaultPrice)}<small>円</small>
+            <span class="item-per">1${f.unit}${f.pieces?`（${f.pieces}個入り）`:''}</span></p>
+          <!-- 丸の中は「i」。麦の穂は小麦だけを指してしまい、卵と牛乳が
+               入っていることが読み取れない。「！」は警告に見えて、ただの
+               原材料の案内には強すぎる。ここにあるのは情報なので「i」。 -->
+          <button type="button" class="item-allergy" data-act="allergy" data-key="${f.key}"
+                  aria-label="${f.label}のアレルギー情報を見る">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                 stroke-linecap="round" aria-hidden="true">
+              <path d="M12 6.4v.1"/>
+              <path d="M12 11v7"/>
+            </svg>
+          </button>
+        </div>
+        <p class="item-stock" data-stock="${f.key}"></p>
+        <div class="stepper">
+          <button type="button" class="step" data-step="-1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}減らす">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>
+          </button>
+          <span class="qty" data-qty="${f.key}" data-zero="true" role="status" aria-label="${f.label}の数量">0<small>${f.unit}</small></span>
+          <button type="button" class="step" data-step="1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}増やす">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
         </div>
       </div>
-      <div class="stepper">
-        <button type="button" class="step" data-step="-1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}減らす">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>
-        </button>
-        <span class="qty" data-qty="${f.key}" data-zero="true" role="status" aria-label="${f.label}の数量">0<small>${f.unit}</small></span>
-        <button type="button" class="step" data-step="1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}増やす">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </div>
-    </article>`).join('');
+    </article>`);
+  const menu = $('menu');
+  menu.dataset.shared = String(!!kind);
+  // 真ん中に挟む。読み上げでは商品名が二重になるので、ここは飾りとして伏せる
+  // （増減のボタンは aria-label に正式名称を持っている）。
+  menu.innerHTML = kind
+    ? cards[0] + `<p class="menu-kind" aria-hidden="true">${KIND_EN[kind] || kind}</p>` + cards[1]
+    : cards.join('');
   syncCart();
 }
 
@@ -311,11 +421,13 @@ function syncCart(){
     const p = document.querySelector(`[data-price="${f.key}"]`);
     if(p) p.innerHTML = `${yen(prices[f.key] ?? f.defaultPrice)}<small>円</small>`
       + `<span class="item-per">1${f.unit}${f.pieces?`（${f.pieces}個入り）`:''}</span>`;
-
+    // 残りの数は出さない。お客様には要らない情報で、
+    // 「あと3つしかない」と急かす効果まで付いてくる。
+    // 売り切れだけは出す。出さないと「＋を押しても増えない」になる。
     const st = document.querySelector(`[data-stock="${f.key}"]`);
     if(st){
-      st.textContent = soldOut ? '売り切れ' : `残り ${left}${f.unit}`;
-      st.dataset.state = soldOut ? 'out' : (left <= 10 ? 'low' : 'ok');
+      st.textContent = soldOut ? '売り切れ' : '';
+      st.dataset.state = soldOut ? 'out' : 'ok';
     }
     const card = document.getElementById('card-'+f.key) || document.querySelector(`.item[data-key="${f.key}"]`);
     if(card) card.dataset.soldout = String(soldOut);
@@ -419,11 +531,13 @@ function paintTagMode(){
       : '押すと、番号札を使う運用に戻ります。いまは厨房を通さず、受渡口でお品物と代金をお渡ししています。';
     hint.dataset.warn = String(!useTags);
   }
-  // 受付には、いまどちらの運用かだけを出す。切り替えの導線は置かない。
+  // 受付の画面はお客様に向く。番号札を使っているかどうかは店の内部事情なので、
+  // 平常時は何も出さない。札なしのときだけ、受付係に向けて出す
+  // （その場で代金をいただく運用に変わるため、知らないと取り損ねる）。
   const note = $('lane-note');
   if(note){
     note.textContent = useTags
-      ? '番号札を使っています。'
+      ? ''
       : '番号札は使いません。その場でお渡しし、受付で代金をいただきます。';
     note.dataset.warn = 'false';
   }
@@ -725,6 +839,7 @@ setInterval(autoScale, 3000);
    1 件ごとの記録を DB に積むと、お客様の滞在を残すことになるうえ、
    会期中ずっと増え続ける。平均と件数があれば判断には足りる。 */
 const GATE_THANKS_MS = 4200;      // 緑を出しておく長さ
+const DONE_HOLD_MS   = 6000;      // 番号札の画面を出しておく長さ
 const GATE_IDLE_MS   = 90000;     // 触られないまま放置された接客を畳むまで
 const PACE_DEFAULT   = { ms: 45000, think: 9000, n: 0 };
 const PACE_ALPHA     = 0.3;       // 移動平均の重み。直近を厚く見る
@@ -743,27 +858,52 @@ function paintGate(){
   const standing = !!myDesk && deskMode(myDesk) === 'standby';
   // 受付機を選んでいない間も門は出さない。選ぶ画面が先に立つ。
   const show = !!myDesk && !standing && gateState !== 'open';
+  // 引いている最中は触らない。別の端末の操作で描き直されると、
+  // 動きが 1 フレームで切り落とされて「消えた」になる。
+  if(g.dataset.leaving === 'true') return;
   g.hidden = !show;
   g.dataset.state = gateState === 'thanks' ? 'thanks' : 'welcome';
+  // 注文中かどうかで、呼ぶ丸の寸法を変える。門の上では商品に被らないので
+  // 大きく出せるが、商品を選んでいる間はカードに被らせない。
+  document.body.dataset.ordering = String(gateState === 'open');
   if(!show) return;
+  // 緑は「この窓口は開いています」の一枚。前のお客様への礼ではなく、
+  // 次のお客様への呼びかけにする（礼は番号札を出す画面で済んでいる）。
   const thanks = gateState === 'thanks';
-  $('gate-top').textContent   = thanks ? 'ありがとうございました' : 'いらっしゃいませ';
-  $('gate-sub').textContent   = thanks ? '次の方、どうぞ' : '';
-  $('gate-start').textContent = thanks ? 'タップして注文を開始' : 'タップで注文を開始';
+  $('gate-top').textContent   = thanks ? '次の方どうぞ' : 'いらっしゃいませ';
+  $('gate-sub').textContent   = '';
+  $('gate-start').textContent = '注文を始める';
 }
 
 /* 門を開ける＝接客の始まり。ここから時間を計り、席を「接客中」にする。 */
+const GATE_OUT_MS = 460;   // 門が引き切るまで。CSS の gate-out と合わせる
+
 function openGate(){
   if(!myDesk) { ensureDesk(); return; }
   if(deskMode(myDesk) === 'standby') return;
+  if(gateState === 'open') return;          // 連打で二重に始めない
   clearTimeout(gateTimer);
   gateState = 'open';
   orderStartedAt = Date.now();
   firstTapAt = 0;
   lastTouchAt = orderStartedAt;
   cart = {}; syncCart();
-  paintGate();
   markBusy(orderStartedAt, 0);
+
+  const g = $('gate');
+  // 門をぱっと消すと「画面が切り替わった」になる。引かせて、
+  // その裏で受付の面を順に立ち上げると「開いた」になる。
+  if(g && !g.hidden && !reduced()){
+    g.dataset.leaving = 'true';
+    document.body.dataset.entering = 'true';
+    setTimeout(()=>{
+      delete g.dataset.leaving;
+      paintGate();
+    }, GATE_OUT_MS);
+    setTimeout(()=>{ delete document.body.dataset.entering; }, GATE_OUT_MS + 900);
+  }else{
+    paintGate();
+  }
 }
 
 /* 門を閉じる。done なら緑を出してから「いらっしゃいませ」へ戻る。 */
@@ -978,7 +1118,16 @@ setInterval(()=>{
   if(soundOn()) audio.error();
 }, 1000);
 
-$('helpcall')?.addEventListener('click', callStaff);
+$('helpcall')?.addEventListener('click', ()=>{
+  if(!myDesk || deskHelp(myDesk) > 0) return;   // 既に呼んでいるなら何もしない
+  // 押し間違いで店員が走ってくると、本当に困っている人の呼び出しが埋もれる。
+  // お客様に向けた画面なので、確認は一度だけ、短く訊く。
+  ask({
+    title: '店員をお呼びしますか？',
+    sub: 'お近くの店員がうかがいます。',
+    onYes: callStaff
+  });
+});
 $('auto-toggle')?.addEventListener('click', async ()=>{
   autoScaling = !autoScaling;
   renderDeskAdmin();
@@ -1191,7 +1340,12 @@ function padSubmit(){
   // テンキーの「決定」は押し間違えやすいので、最後に一度だけ確かめる。
   pendingPlace = t;
   const total = cartItems().reduce((sum,i)=>sum+i.qty*i.unitPrice, 0);
-  $('place-sub').innerHTML = `番号札 <b>${t}</b> 番　合計 <b>${yen(total)}</b> 円`;
+  // 確かめるのは番号ではなく「ケースから取ったか」。番号だけを読み合わせても、
+  // 札がケースに残ったまま確定される事故（画面では出ていることになっているのに、
+  // お客様は何も持っていない）は防げない。
+  $('place-sub').innerHTML =
+    `ケースから <b>${t}</b> 番の札をお取りください<br>` +
+    `<span class="place-amount">合計 <b>${yen(total)}</b> 円</span>`;
   openModal('m-place');
 }
 
@@ -1390,18 +1544,26 @@ function showThanks(o){
   num.textContent = numOf(o);
   num.hidden = false;
   $('done-meta').textContent = `${itemsText(o)}　合計 ${yen(o.price)}円`;
+  // 次に何をすればよいかを出す。ここが抜けていると、お客様は番号札を持ったまま
+  // その場に立ち止まる（実際、どこで払うのかはこの画面にしか書いていない）。
   // 札なしの注文は受渡口へ回る。代金もそこで受け取るので、受付では受け取らない。
   // ここを書かないと、受付係が現金を受け取ってしまい二重取りになる。
-  $('done-next').textContent = o.number
-    ? 'お呼び出しまで少々お待ちください。'
-    : 'お渡し口でお品物とお会計をご用意しております。';
+  const tagged = !!o.number;
+  $('done-next').textContent = tagged
+    ? '番号札を持って、会計口にお進みください'
+    : 'お渡し口で、お品物とお会計をご用意しております';
+  // SVG に hidden は効かない（HTML 要素の性質なので、代入しても属性にならない）。
+  // 親の印で出し分ける。
+  $('done-guide').dataset.mode = tagged ? 'tag' : 'notag';
   openModal('m-done');
   // 受け付けが済んだ合図。番号が出た瞬間にだけ、短く散らす。
   requestAnimationFrame(()=>bloom($('done-sheet'), 16));
+  // 6 秒。お客様が番号を読み、札を受け取り、進む向きを確かめるまでの時間。
+  // 短いと、札を手にする前に画面が変わって「何番だったか」が消える。
   setTimeout(()=>{
     if(openEl && openEl.id === 'm-done') closeModal();
     gateThanks();   // 番号札が消えてから、緑を見せる時間を数え始める
-  }, 3500);
+  }, DONE_HOLD_MS);
 }
 $('m-done').addEventListener('click', closeModal);
 
@@ -2570,6 +2732,10 @@ document.addEventListener('click', e=>{
       });
       break;
     }
+    // アレルギー。お客様が自分で開く。
+    case 'allergy':
+      openAllergy(b.dataset.key);
+      break;
     case 'flash':
       // 以前は自分の画面のカードを光らせるだけで、お客様には何も届いていなかった。
       // 呼び出し表示を別端末で出す運用なので、時刻を注文に書いて全端末で共有する。
