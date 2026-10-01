@@ -1346,6 +1346,8 @@ function padSubmit(){
   $('place-sub').innerHTML =
     `ケースから <b>${t}</b> 番の札をお取りください<br>` +
     `<span class="place-amount">合計 <b>${yen(total)}</b> 円</span>`;
+  // 絵の札にも同じ番号を入れる。手元の札と見比べる対象になる。
+  $('place-tag-num').textContent = String(t);
   openModal('m-place');
 }
 

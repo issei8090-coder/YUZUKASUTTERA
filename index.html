@@ -559,8 +559,10 @@ tbody tr:hover{background:var(--lift)}
 .done{background:var(--cream)}
 .done .sheet{max-width:600px;cursor:pointer}
 /* 確認の絵。文字の上に置かず、文言のすぐ下に添える。 */
-.place-ill{display:block;width:min(240px,62%);height:auto;margin:18px auto 4px;
-  color:var(--brown);opacity:.9}
+.place-ill{display:block;width:min(270px,68%);height:auto;margin:20px auto 6px;
+  color:var(--brown)}
+/* 札の番号。手元の札と見比べる対象なので、画面の他の数字と同じ書体にする。 */
+.place-tag-num{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:.02em}
 /* 取る向きだけが引かれる。止まった絵だと「何をするところか」が伝わらない。 */
 .place-arrow{stroke-dasharray:100;stroke-dashoffset:100;
   animation:guide-draw 2.4s ease-in-out infinite}
@@ -2004,21 +2006,52 @@ if (location.protocol === 'file:') {
     <!-- ケースから札を 1 枚取る、という行為そのものを描く。
          番号を読み合わせるだけでは、札がケースに残ったまま確定される事故
          （画面では出ていることになっているのに、お客様は何も持っていない）を
-         防げない。確かめる対象を「番号」ではなく「取ったかどうか」にする。 -->
-    <svg class="place-ill" viewBox="0 0 220 104" fill="none" aria-hidden="true"
-         stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-      <!-- 取り上げた 1 枚 -->
-      <rect x="158" y="10" width="34" height="46" rx="7"/>
-      <circle cx="168" cy="21" r="2.6"/>
-      <path d="M170 30v18M182 30v18M164 36h24M164 43h24"/>
-      <!-- 取る向き -->
-      <path class="place-arrow" pathLength="100" d="M118 52c12-10 24-16 34-20M146 25l6 7-8 5"/>
-      <!-- ケース。札が並んで差さっている。 -->
-      <path d="M18 56h92v32a5 5 0 0 1-5 5H23a5 5 0 0 1-5-5z"/>
-      <rect x="30" y="38" width="17" height="22" rx="4"/>
-      <rect x="55" y="38" width="17" height="22" rx="4"/>
-      <rect x="80" y="38" width="17" height="22" rx="4"/>
-      <path d="M18 70h92"/>
+         防げない。確かめる対象を「番号」ではなく「取ったかどうか」にする。
+
+         ケースは透明。中の札が透けて見えることで「ここから 1 枚抜く」と読める。
+         透け方は、面を薄く塗って奥の稜線を細く残すことで出す。
+         取り上げた札には実際の番号を入れる。番号が入ると、手元の札と
+         見比べる対象になり、絵が案内から確認の手がかりに変わる。 -->
+    <svg class="place-ill" viewBox="0 0 260 162" fill="none" aria-hidden="true"
+         stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+
+      <!-- 取り上げた 1 枚。わずかに傾けて、抜き上げた途中に見せる。
+           ケースから十分に離すと「抜き上げた」になる。近いと「刺さっている」に見える。 -->
+      <g transform="rotate(-9 196 40)">
+        <rect x="163" y="2" width="66" height="78" rx="12" stroke-width="2.6"/>
+        <circle cx="196" cy="17" r="4" stroke-width="2.2"/>
+        <path d="M176 28h40" stroke-width="1.4" opacity=".4"/>
+        <text class="place-tag-num" id="place-tag-num" x="196" y="62"
+              text-anchor="middle" stroke="none" fill="currentColor">0</text>
+      </g>
+
+      <!-- 抜く向き。ここだけが引かれていく。 -->
+      <path class="place-arrow" pathLength="100" stroke-width="2.6"
+            d="M104 98c16-14 34-24 50-31M150 59l12 8-8 10"/>
+
+      <!-- ケースに差さっている札（先に描いて、透明な面の下に置く）。
+           札は深く沈めず、半分以上を上に出す。沈めると箱の中身が見えない。 -->
+      <g stroke-width="2.2">
+        <rect x="26" y="68" width="22" height="40" rx="4"/>
+        <circle cx="37" cy="76" r="2.3" stroke-width="1.6"/>
+        <rect x="54" y="68" width="22" height="40" rx="4"/>
+        <circle cx="65" cy="76" r="2.3" stroke-width="1.6"/>
+        <rect x="82" y="68" width="22" height="40" rx="4"/>
+        <circle cx="93" cy="76" r="2.3" stroke-width="1.6"/>
+      </g>
+
+      <!-- 透明なケース。札立てなので浅く作る。箱にすると収納に見える。
+           面を薄く塗り、奥の稜線を細く残すことで透け方を出す。 -->
+      <g fill="currentColor" fill-opacity=".05">
+        <path d="M14 104h142v24a6 6 0 0 1-6 6H20a6 6 0 0 1-6-6z" stroke-width="2.6"/>
+        <path d="M14 104l14-13h142l-14 13z" stroke-width="2.1"/>
+        <path d="M156 104l14-13v24l-14 13z" stroke-width="2.1"/>
+      </g>
+      <!-- 奥の稜線。細くすると、手前の面の向こう側に見える。 -->
+      <path d="M28 91v24M170 91v24" stroke-width="1.1" opacity=".38"/>
+      <!-- 面の照り。2 本入れるだけでアクリルらしくなる。 -->
+      <path d="M26 130l14-22" stroke-width="1.3" opacity=".32"/>
+      <path d="M35 132l14-22" stroke-width="1.3" opacity=".18"/>
     </svg>
     <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
       <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">取りました・確定する</button>
