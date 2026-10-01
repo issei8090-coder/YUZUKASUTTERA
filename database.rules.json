@@ -45,6 +45,29 @@
         ".write": "auth != null",
         ".validate": "newData.isBoolean()"
       },
+      "notice": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "newData.isBoolean()"
+      },
+      "pace": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "ms":    { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3600000" },
+        "think": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3600000" },
+        "n":     { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 999999" },
+        "$other": { ".validate": false }
+      },
+      "auto": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "newData.isBoolean()"
+      },
+      "saver": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 120"
+      },
       "$other": {
         ".validate": false
       }
@@ -54,6 +77,12 @@
         ".read": "auth != null"
       },
       "v7": {
+        ".read": "auth != null"
+      },
+      "v8": {
+        ".read": "auth != null"
+      },
+      "v9": {
         ".read": "auth != null"
       }
     },
@@ -67,6 +96,21 @@
         },
         "at": {
           ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "mode": {
+          ".validate": "newData.isString() && newData.val().matches(/^(open|standby)$/)"
+        },
+        "help": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "busy": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "firstAt": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "auto": {
+          ".validate": "newData.isBoolean()"
         },
         "$other": {
           ".validate": false

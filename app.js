@@ -249,6 +249,8 @@ function applySession(){
 
   announce();
   arrived();
+  // 仕事が入ったら幕を上げる。暗いまま見逃すのがいちばん重い。
+  if(workCount() > 0) wakeSaver();
   renderKitchen(); renderReady(); renderPay(); renderRows();
   renderFigures(); renderCall(); renderTags(); syncCart();
 }
@@ -388,6 +390,8 @@ document.addEventListener('click', e=>{
     return;
   }
   cart[k] = next;
+  // 最初の「＋」までが迷っている時間。残り時間の見積もりに効くので記録する。
+  if(d > 0) noteFirstTap(); else lastTouchAt = Date.now();
   if(soundOn()) audio.step(d > 0, next || 1);
   syncCart();
 });
@@ -467,6 +471,7 @@ let desksOnline = {};       // DB にある名乗り（番号 → {client, at}�
 let desksKnown = false;     // 名乗りが一度でも届いたか
 let deskClaiming = false;   // 掴みに行っている最中
 let deskBooted = false;     // 起動時の取り直しを一度だけ試す
+let deskClaimedAt = 0;      // 最後に掴んだ時刻。直後の誤判定を避けるために見る
 
 const deskLabel = id => (DESKS.find(d=>d.id===id)||{}).label || '';
 // 自分以外の端末が起動している席。
@@ -480,6 +485,14 @@ const deskStale = id => {
   const d = desksOnline[id];
   return !!d && (Date.now() - (d.at || 0)) > DESK_STALE_MS;
 };
+
+/* 受付機の様子。mode は 'open'（注文受付中）か 'standby'（待機）。
+   待機は管理画面から遠隔で切り替える。help は「店員を呼ぶ」が押された時刻。 */
+const deskMode = id => (desksOnline[id]?.mode === 'standby') ? 'standby' : 'open';
+const deskHelp = id => Number(desksOnline[id]?.help || 0);
+// 呼び出しが出ている受付機。古い順に並べる（待たせている順に片づける）。
+const helpingDesks = () => DESKS.filter(d=>deskHelp(d.id) > 0)
+                                .sort((a,b)=>deskHelp(a.id) - deskHelp(b.id));
 
 function paintDesks(){
   // 受付の画面に出す札。お客様に向く画面なので主張させない。
@@ -507,7 +520,32 @@ function paintDesks(){
   // 選び直しをやめる道。名乗る前は出さない（選ばないと受付が使えない）。
   const cancel = $('desk-cancel');
   if(cancel) cancel.hidden = !myDesk;
+  paintStandby();
+  paintGate();
   renderDeskAdmin();
+  renderHelp();
+  autoScale();
+}
+
+/* 待機の覆いと「店員を呼ぶ」。受付の画面にだけ出す。
+   覆いが出ている間は注文を受けない（placeOrder でも塞いである）。 */
+function paintStandby(){
+  const standing = !!myDesk && deskMode(myDesk) === 'standby';
+  const sb = $('standby');
+  if(sb) sb.hidden = !standing;
+  document.body.dataset.standby = String(standing);
+
+  // 呼び出し中は押し直させない。押しても時刻は更新しない。
+  const called = !!myDesk && deskHelp(myDesk) > 0;
+  const hc = $('helpcall');
+  if(hc){
+    hc.dataset.called = String(called);
+    hc.setAttribute('aria-label', called
+      ? '店員をお呼びしています。少々お待ちください'
+      : '店員を呼ぶ');
+  }
+  const hw = $('helpwait');
+  if(hw) hw.hidden = !called;
 }
 
 /* 管理画面の在席表。どの受付機が起動しているかと、残ってしまった席を空ける道。 */
@@ -517,20 +555,444 @@ function renderDeskAdmin(){
   grid.innerHTML = DESKS.map(d=>{
     const on   = desksOnline[d.id];
     const mine = !!on && on.client === clientId;
+    const standby = deskMode(d.id) === 'standby';
+    const serving = deskBusy(d.id);
+    const auto = on?.auto === true;
     const state = !on ? '空いています'
-      : mine ? '起動中（この端末）'
-      : deskStale(d.id) ? '起動中（応答なし）' : '起動中';
-    return `<div class="desk-cell" data-busy="${!!on}" data-mine="${mine}">
-      <span class="desk-name">${d.label}${d.note ? `（${d.note}）` : ''}</span>
+      : standby ? '待機中（お客様には他の窓口を案内）'
+      : serving ? `接客中（${helpAgo(on.busy)}）`
+      : mine ? '注文受付中・空き（この端末）'
+      : deskStale(d.id) ? '注文受付中（応答なし）' : '注文受付中・空き';
+    return `<div class="desk-cell" data-busy="${!!on}" data-mine="${mine}"
+                 data-standby="${standby}" data-serving="${serving}">
+      <span class="desk-name">${d.label}${d.note ? `（${d.note}）` : ''}${auto ? '<small class="desk-auto">自動</small>' : ''}</span>
       <span class="desk-state">${state}</span>
+      <button type="button" class="desk-mode" data-act="deskmode" data-id="${d.id}"
+              data-to="${standby ? 'open' : 'standby'}" ${on ? '' : 'disabled'}
+              aria-pressed="${standby}"
+              aria-label="${d.label} を${standby ? '注文受付中に戻す' : '待機にする'}">
+        ${standby ? '注文受付中に戻す' : '待機にする'}</button>
       <button type="button" class="desk-free" data-act="deskfree" data-id="${d.id}"
               ${on ? '' : 'disabled'} aria-label="${d.label} を空きに戻す">空ける</button>
     </div>`;
   }).join('');
+  const at = $('auto-toggle');
+  if(at){
+    at.setAttribute('aria-pressed', String(autoScaling));
+    at.textContent = autoScaling ? '自動で台数を決めています' : '台数は手動で決めています';
+  }
+  const ph = $('pace-hint');
+  if(ph) ph.textContent = pace.n
+    ? `実測 ${pace.n}件：1件あたり ${Math.round(pace.ms/1000)}秒（うち選び始めるまで ${Math.round(pace.think/1000)}秒）`
+    : 'まだ実測がありません。1件あたり 45秒とみなして判断します。';
+  const sm = $('saver-min');
+  if(sm && document.activeElement !== sm) sm.value = String(saverMin);
+
   const busy = DESKS.filter(d=>desksOnline[d.id]).length;
+  const open = DESKS.filter(d=>desksOnline[d.id] && deskMode(d.id) === 'open').length;
   const c = $('desk-count');
-  if(c) c.textContent = `起動中 ${busy}台 ／ 空き ${DESKS.length - busy}台（全${DESKS.length}台）`;
+  if(c) c.textContent =
+    `注文受付中 ${open}台 ／ 待機 ${busy - open}台 ／ 空き ${DESKS.length - busy}台（全${DESKS.length}台）`;
 }
+
+/* ---------- 省エネ ----------
+   薄暗くするだけにする。真っ黒にすると何が起きているか読めなくなり、
+   「壊れた」と思って誰かが触りに行く。消費電力の大半は液晶のバックライトで、
+   ブラウザからは輝度を触れないので、できるのは黒を重ねて実効輝度を落とすことと、
+   動き続けるものを止めること。
+
+   入る条件は画面ごとに違う。
+     受付      … この受付機が待機になったとき（お客様の前では暗くしない）
+     受渡・支払い … 仕事が 1 件も無いまま saverMin 分たったとき
+   受渡と支払い口は、仕事が入った瞬間に自動で戻す。暗いまま見逃すのが
+   いちばん重いので、復帰は人の操作を待たない。 */
+let saverMin = 3;           // 受渡・支払い口が暗くなるまでの分（0 = 暗くしない）
+let saverOn = false;
+let busySince = Date.now(); // 最後に仕事があった時刻
+
+function workCount(){
+  const tab = document.body.dataset.tab;
+  if(tab === 'ready') return orders.filter(o=>o.status==='ready'||o.status==='pending').length;
+  if(tab === 'pay')   return orders.filter(o=>o.status!=='cancelled' && !o.paid).length;
+  return 0;
+}
+
+function setSaver(on){
+  if(saverOn === on) return;
+  saverOn = on;
+  const el = $('saver');
+  if(el) el.hidden = !on;
+  document.body.dataset.saver = String(on);
+}
+
+function tickSaver(){
+  const tab = document.body.dataset.tab;
+  // 受付は「この受付機が待機のとき」だけ。お客様の前にある画面を勝手に暗くしない。
+  if(tab === 'order'){
+    setSaver(!!myDesk && deskMode(myDesk) === 'standby' && !openEl);
+    return;
+  }
+  if(tab !== 'ready' && tab !== 'pay'){ setSaver(false); return; }
+  if(saverMin <= 0){ setSaver(false); return; }
+  if(workCount() > 0){ busySince = Date.now(); setSaver(false); return; }
+  setSaver(Date.now() - busySince >= saverMin * 60000);
+}
+setInterval(tickSaver, 2000);
+
+// どこを触っても明るさが戻る。戻したぶんの猶予を取り直す。
+function wakeSaver(){
+  busySince = Date.now();
+  setSaver(false);
+}
+$('saver')?.addEventListener('click', wakeSaver);
+['pointerdown','keydown'].forEach(ev => addEventListener(ev, ()=>{ if(saverOn) wakeSaver(); }, true));
+
+/* ---------- 受付機の台数を自動で決める ----------
+   開いている受付機が全部ふさがったら、待機している受付機を 1 台開ける。
+   ただし「もうすぐ空きそう」なときは開けない。開けた直後に全部空くと、
+   お客様から見て窓口が増えたり減ったりするだけで、何も速くならない。
+
+   残り時間は実測から見積もる。
+     ・まだ「＋」を押していない → 迷っている。残りは 1 件ぶん丸ごと
+     ・押している              → 平均から経過を引いたぶん
+   どれか 1 台でも SOON_MS 以内に空きそうなら、待って任せる。
+
+   決めるのは「待機している中でいちばん若い番号の端末」だけ。
+   全端末が同じ判断をすると、同時に何台も開いてしまう。自分のことだけを
+   書く形にすると、取り合いが起きない（自分の席にしか書き込まない）。
+
+   手動で開けた席は自動で閉じない（auto:true の席だけを戻す）。
+   人が意図して開けたものを機械が畳むと、何が起きたか分からなくなる。 */
+const SOON_MS      = 12000;    // これ以内に空きそうなら、増やさずに待つ
+const AUTO_IDLE_MS = 60000;    // 自動で開けた席を、空いたまま何秒で畳むか
+let autoScaling = true;        // 自動で増減するか（管理画面から切れる）
+let idleSince = 0;             // この席が空いたままになった時刻
+
+// 受付機の残り時間の見積もり。小さいほど早く空く。
+function remainingAt(id){
+  const d = desksOnline[id];
+  if(!d || !d.busy) return 0;
+  const elapsed = Date.now() - d.busy;
+  // まだ選び始めていない人は、ここから 1 件ぶんかかると見る。
+  if(!d.firstAt) return Math.max(pace.ms - elapsed, pace.ms * 0.6);
+  return Math.max(0, pace.ms - elapsed);
+}
+
+const deskOnlineOpen = () => DESKS.filter(d => desksOnline[d.id] && deskMode(d.id) === 'open');
+const deskBusy = id => !!desksOnline[id]?.busy;
+
+function autoScale(){
+  if(!autoScaling || !myDesk) return;
+  const open = deskOnlineOpen();
+  const busy = open.filter(d => deskBusy(d.id));
+  const free = open.length - busy.length;
+
+  // --- 増やす：自分が待機していて、待機の中でいちばん若い番号のときだけ考える
+  if(deskMode(myDesk) === 'standby'){
+    const waiting = DESKS.filter(d => desksOnline[d.id] && deskMode(d.id) === 'standby');
+    if(waiting[0]?.id !== myDesk) return;        // 開けるのは 1 台だけ
+    if(!open.length) return;                      // 1 台も開いていない＝人の判断に任せる
+    if(free > 0) return;                          // まだ空きがある
+    // もうすぐ空きそうなら増やさない。「もう終わるだろう」の予測がこれ。
+    const soonest = Math.min(...busy.map(d => remainingAt(d.id)));
+    if(soonest <= SOON_MS) return;
+    setDeskMode(myDesk, 'open');
+    update(ref(db,'desks/'+myDesk), { auto: true }).catch(()=>{});
+    return;
+  }
+
+  // --- 戻す：自動で開いた席が、空いたまま十分に経ったら待機へ返す
+  if(desksOnline[myDesk]?.auto !== true) return;  // 人が開けた席は畳まない
+  if(deskBusy(myDesk) || gateState === 'open'){ idleSince = 0; return; }
+  // 自分以外にも空いている受付機があるときだけ畳む。最後の 1 台は閉じない。
+  const othersFree = open.filter(d => d.id !== myDesk && !deskBusy(d.id)).length;
+  if(othersFree === 0){ idleSince = 0; return; }
+  if(!idleSince){ idleSince = Date.now(); return; }
+  if(Date.now() - idleSince < AUTO_IDLE_MS) return;
+  idleSince = 0;
+  setDeskMode(myDesk, 'standby');
+  update(ref(db,'desks/'+myDesk), { auto: null }).catch(()=>{});
+}
+// 判断は時間でも変わる（経過が延びれば「もうすぐ空く」が覆る）。
+setInterval(autoScale, 3000);
+
+/* ---------- 受付の門と、接客時間の計測 ----------
+   注文が始まっていない間は門を閉じておく。門を押した瞬間が接客の始まりで、
+   確定が終わり。この 2 点が取れると「1 件に何分かかるか」が実測で分かり、
+   受付機を何台開けるべきかを当て推量ではなく数字で決められる。
+
+   計測はこの端末の中で行い、結果（移動平均）だけを共有する。
+   1 件ごとの記録を DB に積むと、お客様の滞在を残すことになるうえ、
+   会期中ずっと増え続ける。平均と件数があれば判断には足りる。 */
+const GATE_THANKS_MS = 4200;      // 緑を出しておく長さ
+const GATE_IDLE_MS   = 90000;     // 触られないまま放置された接客を畳むまで
+const PACE_DEFAULT   = { ms: 45000, think: 9000, n: 0 };
+const PACE_ALPHA     = 0.3;       // 移動平均の重み。直近を厚く見る
+
+let pace = { ...PACE_DEFAULT };
+let gateState = 'welcome';        // 'welcome' | 'thanks' | 'open'（接客中）
+let gateTimer = null;
+let orderStartedAt = 0;           // 門を押した時刻
+let firstTapAt = 0;               // 最初に「＋」が押された時刻
+let lastTouchAt = 0;              // 接客中の最後の操作
+
+/* 門を描く。待機中はそもそも門を出さない（赤い覆いが前に出る）。 */
+function paintGate(){
+  const g = $('gate');
+  if(!g) return;
+  const standing = !!myDesk && deskMode(myDesk) === 'standby';
+  // 受付機を選んでいない間も門は出さない。選ぶ画面が先に立つ。
+  const show = !!myDesk && !standing && gateState !== 'open';
+  g.hidden = !show;
+  g.dataset.state = gateState === 'thanks' ? 'thanks' : 'welcome';
+  if(!show) return;
+  const thanks = gateState === 'thanks';
+  $('gate-top').textContent   = thanks ? 'ありがとうございました' : 'いらっしゃいませ';
+  $('gate-sub').textContent   = thanks ? '次の方、どうぞ' : '';
+  $('gate-start').textContent = thanks ? 'タップして注文を開始' : 'タップで注文を開始';
+}
+
+/* 門を開ける＝接客の始まり。ここから時間を計り、席を「接客中」にする。 */
+function openGate(){
+  if(!myDesk) { ensureDesk(); return; }
+  if(deskMode(myDesk) === 'standby') return;
+  clearTimeout(gateTimer);
+  gateState = 'open';
+  orderStartedAt = Date.now();
+  firstTapAt = 0;
+  lastTouchAt = orderStartedAt;
+  cart = {}; syncCart();
+  paintGate();
+  markBusy(orderStartedAt, 0);
+}
+
+/* 門を閉じる。done なら緑を出してから「いらっしゃいませ」へ戻る。 */
+function closeGate(done){
+  clearTimeout(gateTimer);
+  gateState = done ? 'thanks' : 'welcome';
+  orderStartedAt = 0; firstTapAt = 0;
+  cart = {}; syncCart();
+  paintGate();
+  markBusy(0, 0);
+  if(done){
+    thanksCued = false;
+    // 番号札のモーダルが開かなかった場合の保険。これが無いと緑のまま止まる。
+    clearTimeout(gateTimer);
+    gateTimer = setTimeout(gateThanks, 4000);
+  }
+}
+
+/* 緑が実際に見えるようになった時点で、次の方への音を鳴らして数え始める。
+
+   確定の直後は番号札を出すモーダルが 3.5 秒かぶっている。そこで鳴らすと
+   確定音と重なって潰し合い、緑もほとんど見えないまま切り替わる。
+   モーダルが閉じてから鳴らす。
+
+   保険の時計と、モーダルを閉じる時計の両方から呼ばれるので、
+   1 回の接客で一度しか鳴らないよう印で止める。 */
+let thanksCued = false;
+function gateThanks(){
+  clearTimeout(gateTimer);
+  if(gateState !== 'thanks' || thanksCued) return;
+  thanksCued = true;
+  if(soundOn()) audio.next();
+  gateTimer = setTimeout(()=>{ gateState = 'welcome'; paintGate(); }, GATE_THANKS_MS);
+}
+
+/* 席の「接客中」を共有する。台数の自動判断はこの値だけを見る。
+   何を買ったかは書かない（判断に要らないし、お客様の買い物が他の端末に出る）。 */
+function markBusy(startedMs, firstMs){
+  if(!myDesk) return;
+  update(ref(db,'desks/'+myDesk), {
+    busy: startedMs > 0 ? startedMs : null,
+    firstAt: firstMs > 0 ? firstMs : null
+  }).catch(()=>{});
+}
+
+/* 最初の「＋」。ここまでが「迷っている時間」。
+   迷いが長い人は全体も長くなるので、残り時間の見積もりに効く。 */
+function noteFirstTap(){
+  lastTouchAt = Date.now();
+  if(gateState !== 'open' || firstTapAt) return;
+  firstTapAt = Date.now();
+  markBusy(orderStartedAt, firstTapAt);
+}
+
+/* 1 件終わった。かかった時間を移動平均に混ぜて共有する。 */
+async function notePace(){
+  if(!orderStartedAt) return;
+  const total = Date.now() - orderStartedAt;
+  const think = firstTapAt ? firstTapAt - orderStartedAt : total;
+  // 置き忘れ・離席のぶんは混ぜない。平均が実態から離れると判断が狂う。
+  if(total <= 0 || total > GATE_IDLE_MS) return;
+  const n = (pace.n || 0) + 1;
+  const a = n === 1 ? 1 : PACE_ALPHA;     // 1 件目はそのまま採る
+  const next = {
+    ms:    Math.round(pace.ms    * (1 - a) + total * a),
+    think: Math.round(pace.think * (1 - a) + think * a),
+    n
+  };
+  try{
+    await authReady;
+    await update(ref(db,'config/pace'), next);
+  }catch(e){ /* 共有できなくても受付は止めない */ }
+}
+
+/* 放置された接客を畳む。お客様が去ったあと席が「接客中」のまま残ると、
+   自動の台数判断がずっと「混んでいる」と読み、要らない受付機を開け続ける。 */
+setInterval(()=>{
+  if(gateState !== 'open' || !lastTouchAt) return;
+  if(Date.now() - lastTouchAt < GATE_IDLE_MS) return;
+  closeGate(false);
+}, 5000);
+
+// 門はどこを触っても開く。お客様に「どこを押すか」を考えさせない。
+$('gate')?.addEventListener('click', openGate);
+
+/* 接客中の「触られている」判定は、画面のどこでも拾う。
+   商品の増減だけを見ていると、確定画面で番号札をゆっくり打っている間に
+   放置とみなされ、かごごと消える。 */
+addEventListener('pointerdown', ()=>{
+  if(gateState === 'open') lastTouchAt = Date.now();
+}, { passive: true, capture: true });
+
+/* ---------- 待機と、店員を呼ぶ ----------
+   待機は「この受付機だけ閉じている」状態。店が閉じているわけではないので、
+   お客様には他の窓口へ回っていただく。切り替えは管理画面から遠隔で行う。 */
+async function setDeskMode(id, to){
+  try{
+    await authReady;
+    await update(ref(db,'desks/'+id), { mode: to });
+  }catch(e){ toast(writeHint(e, '受付機の状態を変えられませんでした')); }
+}
+
+/* 店員を呼ぶ。押した受付機に時刻を書き、管理画面と受渡の画面に出す。
+
+   このとき、待機している受付機をすべて注文受付中に戻す。
+   店員が 1 台に付きっきりになるので、他が開いていないと列がそこで止まる。
+   人が気づいて戻すのを待っていては間に合わないため、ここで自動で開ける。 */
+async function callStaff(){
+  if(!myDesk) return;
+  if(deskHelp(myDesk) > 0) return;        // 既に呼んでいる。押し直させない
+  try{
+    await authReady;
+    await tracked(update(ref(db,'desks/'+myDesk), { help: Date.now() }));
+    for(const d of DESKS){
+      if(desksOnline[d.id] && deskMode(d.id) === 'standby') await setDeskMode(d.id, 'open');
+    }
+  }catch(e){
+    toast(writeHint(e, '店員を呼べませんでした'));
+  }
+}
+
+/* 呼び出しに対応した。管理画面からも受渡の画面からも解除できる。
+   解除すると、呼び出し表示の「しばらくお待ちください」も一緒に畳む
+   （出したまま忘れると、お客様は理由の分からないまま待たされる）。 */
+async function clearHelp(id){
+  try{
+    await authReady;
+    await tracked(update(ref(db,'desks/'+id), { help: null }));
+    if(helpingDesks().filter(d=>d.id !== id).length === 0) await setNotice(false);
+  }catch(e){ toast(writeHint(e, '呼び出しを解除できませんでした')); }
+}
+
+/* 呼び出し表示に出す「しばらくお待ちください」。店全体の決めごとなので共有する。 */
+let notice = false;
+async function setNotice(on){
+  try{
+    await authReady;
+    await set(ref(db,'config/notice'), on === true);
+  }catch(e){ toast(writeHint(e, '呼び出し表示の案内を切り替えられませんでした')); }
+}
+
+// 呼ばれてからの経過。待たせている時間が見えないと、どれから片づけるか決められない。
+const helpAgo = ms => mmss(Math.max(0, Math.floor((Date.now() - ms) / 1000)));
+
+function renderHelp(){
+  const list = helpingDesks();
+  const rowsBoard = list.map(d=>`
+    <div class="callboard-row">
+      <span class="callboard-num">${d.label}</span>
+      <span class="callboard-ago" data-help="${deskHelp(d.id)}">${helpAgo(deskHelp(d.id))} 経過</span>
+      <button type="button" class="callboard-done" data-act="helpdone" data-id="${d.id}"
+              aria-label="${d.label} の呼び出しに対応した">対応した</button>
+    </div>`).join('');
+  const board = $('help-board');
+  if(board){
+    board.hidden = list.length === 0;
+    $('help-list').innerHTML = rowsBoard;
+    $('help-head').textContent = list.length > 1
+      ? `店員が呼ばれています（${list.length}台）`
+      : '店員が呼ばれています';
+  }
+
+  const bar = $('ready-help');
+  if(bar){
+    bar.hidden = list.length === 0;
+    $('ready-help-list').innerHTML = list.map(d=>`
+      <div class="callbar-row">
+        <span class="callbar-num">${d.label}</span>
+        <span class="callbar-ago" data-help="${deskHelp(d.id)}">${helpAgo(deskHelp(d.id))}</span>
+        <button type="button" class="callbar-done" data-act="helpdone" data-id="${d.id}"
+                aria-label="${d.label} の呼び出しに対応した">対応した</button>
+      </div>`).join('');
+    $('ready-help-head').textContent = list.length > 1
+      ? `店員が呼ばれています（${list.length}台）`
+      : '店員が呼ばれています';
+  }
+
+  const a = $('notice-toggle'), b = $('ready-notice-toggle');
+  if(a) a.checked = notice;
+  if(b) b.checked = notice;
+  const cn = $('call-notice');
+  if(cn) cn.hidden = !notice;
+
+  // 鳴らすのは管理と受渡の画面だけ。受付の端末で鳴らすとお客様の前で鳴る。
+  const ids = new Set(list.map(d=>d.id));
+  const tab = document.body.dataset.tab;
+  if(announceReady && (tab === 'control' || tab === 'ready')){
+    for(const id of ids) if(!knownHelp.has(id)){
+      if(soundOn()) audio.error();
+      lastHelpChime = Date.now();
+      break;
+    }
+  }
+  knownHelp = ids;
+}
+let knownHelp = new Set();
+
+// 経過だけを毎秒書き換える。全体を描き直すと「対応した」が押せなくなる瞬間ができる。
+let lastHelpChime = 0;
+const HELP_REPEAT_MS = 30000;
+setInterval(()=>{
+  document.querySelectorAll('[data-help]').forEach(el=>{
+    const ms = Number(el.dataset.help);
+    if(ms) el.textContent = el.closest('.callboard-row') ? `${helpAgo(ms)} 経過` : helpAgo(ms);
+  });
+  // 一度きりだと聞き逃す。対応されるまで鳴らし直す。
+  // お客様はその間ずっと立って待っているので、気づかないのがいちばん重い。
+  const tab = document.body.dataset.tab;
+  if(!helpingDesks().length || (tab !== 'control' && tab !== 'ready')) return;
+  if(Date.now() - lastHelpChime < HELP_REPEAT_MS) return;
+  lastHelpChime = Date.now();
+  if(soundOn()) audio.error();
+}, 1000);
+
+$('helpcall')?.addEventListener('click', callStaff);
+$('auto-toggle')?.addEventListener('click', async ()=>{
+  autoScaling = !autoScaling;
+  renderDeskAdmin();
+  try{ await authReady; await set(ref(db,'config/auto'), autoScaling); }
+  catch(e){ toast(writeHint(e, '自動の設定を共有できませんでした')); }
+});
+$('saver-min')?.addEventListener('change', async e=>{
+  const v = Math.max(0, Math.min(120, parseInt(e.target.value, 10) || 0));
+  e.target.value = String(v);
+  try{ await authReady; await set(ref(db,'config/saver'), v); }
+  catch(err){ toast(writeHint(err, '省エネの設定を共有できませんでした')); }
+});
+$('notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
+$('ready-notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
 
 /* 「切れたら消す」の予約を外す。外し忘れると、別の端末がその席を取った後に
    こちらの回線が切れた瞬間、他人の名乗りを消してしまう。 */
@@ -566,7 +1028,9 @@ async function claimDesk(id, quiet){
     const r = ref(db, 'desks/' + id);
     const tx = await runTransaction(r, cur=>{
       if(cur && cur.client && cur.client !== clientId) return;   // 起動中 → 中止
-      return { client: clientId, at: Date.now() };
+      // 丸ごと置き換えると、管理画面から設定された待機と呼び出しが消える。
+      // リロードを挟んだだけで待機が勝手に解けるのは事故なので、残す。
+      return { ...(cur || {}), client: clientId, at: Date.now() };
     });
     if(!tx.committed){
       say(`${deskLabel(id)} は別の端末が起動しています。ほかの受付機を選んでください。`);
@@ -576,6 +1040,7 @@ async function claimDesk(id, quiet){
     try{ await onDisconnect(r).remove(); }catch(e){}
     if(prev && prev !== id) await releaseDesk(prev);
     myDesk = id;
+    deskClaimedAt = Date.now();
     try{ localStorage.setItem('deskNo', id); }catch(e){}
     if(err){ err.textContent = ''; err.classList.remove('show'); }
     paintDesks();
@@ -603,12 +1068,23 @@ function reconcileDesk(){
   if(myDesk){
     const on = desksOnline[myDesk];
     if(on && on.client === clientId) return;     // そのまま
-    // 管理画面から空けられた／別の端末に取られた。名乗りを捨てて選び直させる。
+    // 掴んだ直後は判定しない。自分の書き込みが返る前に「消された」と読んでしまう。
+    if(Date.now() - deskClaimedAt < 5000) return;
+    // オフライン中は判定しない。手元の値が欠けているだけのことがある。
+    if(!online) return;
+    if(!on){
+      // 席が消えているだけ。回線が切れて onDisconnect が実行された場合がこれで、
+      // 受付の途中で選び直させるのは重すぎる。黙って取り直す。
+      // 他の端末のものになっていた場合（下）だけ、本当に明け渡す。
+      rearmDesk();
+      return;
+    }
+    // 別の端末がこの席を名乗った。明け渡して選び直させる。
     dropDisconnect(myDesk);
     myDesk = null;
     try{ localStorage.removeItem('deskNo'); }catch(e){}
     paintDesks();
-    toast('この端末の受付機が空きに戻されました。もう一度選んでください。');
+    toast('この受付機は別の端末が使い始めました。もう一度選んでください。');
     ensureDesk();
     return;
   }
@@ -634,12 +1110,30 @@ function reconcileDesk(){
    それでも受付機は選ばせる。重なりはトランザクションが弾く。 */
 setTimeout(()=>{ desksKnown = true; ensureDesk(); }, 2500);
 
-/* 名乗りの時刻を書き直す。onDisconnect が届かなかった席を
-   管理画面で「応答なし」として見分けられるようにするため。 */
-setInterval(()=>{
+/* 名乗りを張り直す。
+
+   onDisconnect は「予約した時につながっていた 1 本の接続」に結び付く。
+   回線が一瞬でも切れると、サーバーはその予約を実行して席を消す。
+   RTDB は裏で勝手に繋ぎ直す（最初の接続方式の切り替えでも一度切れる）ので、
+   張り直さないと「選んだはずなのに、しばらくして戻される」が起きる。
+   Firebase の在席検知が .info/connected を見て毎回書き直す形なのはこのため。
+
+   ついでに at も新しくなるので、管理画面の「応答なし」判定もここで保たれる。 */
+function rearmDesk(){
   if(!myDesk) return;
-  update(ref(db,'desks/'+myDesk), { at: Date.now() }).catch(()=>{});
-}, 60000);
+  const id = myDesk;
+  const r = ref(db, 'desks/' + id);
+  runTransaction(r, cur=>{
+    // 他の端末のものになっていたら触らない。取り返しに行かない。
+    if(cur && cur.client && cur.client !== clientId) return;
+    // 遠隔で設定された待機と呼び出しは残す。
+    return { ...(cur || {}), client: clientId, at: Date.now() };
+  }).then(tx=>{
+    if(tx.committed) onDisconnect(r).remove().catch(()=>{});
+  }).catch(()=>{});
+}
+// 取りこぼしても 1 分で自分で直る。接続の立ち上がりだけに頼らない。
+setInterval(rearmDesk, 60000);
 
 $('desk-pick')?.addEventListener('click', e=>{
   const b = e.target.closest('button[data-desk]');
@@ -732,6 +1226,8 @@ $('submit-btn').addEventListener('click', ()=>{
   // 受付機を名乗っていない端末に受付をさせない。名乗りが届いていなくても、
   // ここまで来たなら選ばせる（選ばないまま注文が立つほうが困る）。
   if(!myDesk){ desksKnown = true; ensureDesk(); return; }
+  // 待機中は受けない。覆いが CSS の 1 行で消えても事故にしない。
+  if(deskMode(myDesk) === 'standby') return;
   $('recap-items').innerHTML = items.map(i=>`
     <div class="recap-item">
       <img src="${MARK[i.key]||''}" alt="">
@@ -778,6 +1274,12 @@ async function placeOrder(immediate, pickedTag){
   // だけで事故が戻る。ここでも塞ぐ。
   if(immediate && useTags){
     toast('番号札を入力してから確定してください。');
+    return;
+  }
+  // 確定を開いている間に遠隔で待機へ切り替わることがある。ここでも断つ。
+  if(myDesk && deskMode(myDesk) === 'standby'){
+    closeModal();
+    toast('この受付機は待機中です。他の窓口でお受けします。');
     return;
   }
   const w = watchStart('注文確定');
@@ -851,7 +1353,9 @@ async function placeOrder(immediate, pickedTag){
     closeModal();
     if(soundOn()) audio.confirm();
     showThanks(built.order);
-    cart = {}; syncCart();
+    // 1 件ぶんの実測を平均に混ぜてから門を閉じる（閉じると起点が消える）。
+    notePace();
+    closeGate(true);
   }catch(err){
     closeModal();
     if(soundOn()) audio.error();
@@ -894,7 +1398,10 @@ function showThanks(o){
   openModal('m-done');
   // 受け付けが済んだ合図。番号が出た瞬間にだけ、短く散らす。
   requestAnimationFrame(()=>bloom($('done-sheet'), 16));
-  setTimeout(()=>{ if(openEl && openEl.id === 'm-done') closeModal(); }, 3500);
+  setTimeout(()=>{
+    if(openEl && openEl.id === 'm-done') closeModal();
+    gateThanks();   // 番号札が消えてから、緑を見せる時間を数え始める
+  }, 3500);
 }
 $('m-done').addEventListener('click', closeModal);
 
@@ -971,6 +1478,11 @@ async function keepAwake(){
     wakeLock.addEventListener?.('release', () => { wakeLock = null; });
   }catch(e){ /* 電池が少ない等で断られる。運用は続ける */ }
 }
+// 取り直す機会を増やす。OS は通話・通知・低電力で黙って解除するので、
+// visibilitychange だけに頼ると、置きっぱなしの端末からいつの間にか効果が消える。
+setInterval(keepAwake, 30000);
+['pointerdown','keydown','touchstart'].forEach(ev =>
+  addEventListener(ev, keepAwake, { passive: true }));
 document.addEventListener('visibilitychange', () => {
   if(document.visibilityState === 'visible') keepAwake();
 });
@@ -1035,9 +1547,13 @@ function paintNet(){
 }
 /* .info/connected は認証不要。authReady の内側に置くと、
    オフラインでサインインが返らない間オフライン表示まで出なくなる。 */
+let wasConnected = false;
 onValue(ref(db,'.info/connected'), snap=>{
   online = snap.val() === true;
   paintNet();
+  // 繋がり直したら名乗りを張り直す。切れている間にサーバーが席を消しているため。
+  if(online && !wasConnected) rearmDesk();
+  wasConnected = online;
 });
 
 /* ---------- 金額表示 ----------
@@ -1112,7 +1628,7 @@ onValue(ref(db,'config/session'), snap=>{
    いなければ読み取り自体が拒否される。値ではなく「読めるかどうか」で版を測る。
    互換性を壊す変更をしたら、ここと database.rules.json の両方を上げる
    （食い違いは test/dom_wiring_test.mjs が落とす）。 */
-const RULES_VERSION = 'v7';
+const RULES_VERSION = 'v9';
 (async ()=>{
   try{
     await get(ref(db, 'rulesVersion/' + RULES_VERSION));
@@ -1168,6 +1684,32 @@ onValue(ref(db,'desks'), snap=>{
   paintDesks();
   reconcileDesk();
 }, ()=>{ desksKnown = true; ensureDesk(); });
+
+/* 1 件にかかる時間の見積もり。台数の自動判断が唯一これを見る。 */
+onValue(ref(db,'config/pace'), snap=>{
+  const v = snap.val();
+  if(v) pace = { ms: v.ms || PACE_DEFAULT.ms, think: v.think || PACE_DEFAULT.think, n: v.n || 0 };
+  renderDeskAdmin();
+}, ()=>{});
+
+onValue(ref(db,'config/auto'), snap=>{
+  const v = snap.val();
+  autoScaling = (v === null || v === undefined) ? true : v === true;
+  renderDeskAdmin();
+}, ()=>{});
+
+onValue(ref(db,'config/saver'), snap=>{
+  const v = snap.val();
+  saverMin = Number.isFinite(v) ? v : 3;
+  renderDeskAdmin();
+  tickSaver();
+}, ()=>{});
+
+/* 呼び出し表示に出す「しばらくお待ちください」。対応中だけ出す。 */
+onValue(ref(db,'config/notice'), snap=>{
+  notice = snap.val() === true;
+  renderHelp();
+}, ()=>{});
 
 onValue(ref(db,'config/useTags'), snap=>{
   const v = snap.val();
@@ -2000,6 +2542,15 @@ document.addEventListener('click', e=>{
     }
     // 管理画面から受付機を空ける。電池切れなどで onDisconnect が届かず、
     // 「起動中」のまま残った席を手で戻すための逃げ道。
+    // 受付機を待機にする／注文受付中に戻す。遠隔で切り替えるので確認は挟まない
+    // （待機は押し間違えてもすぐ戻せるし、止めると行列の捌きが遅れる）。
+    case 'deskmode':
+      setDeskMode(id, b.dataset.to);
+      break;
+    // 呼び出しに対応した。管理画面と受渡の画面の両方から解除できる。
+    case 'helpdone':
+      clearHelp(id);
+      break;
     case 'deskfree': {
       const d = DESKS.find(x=>x.id===id);
       const mine = desksOnline[id]?.client === clientId;
@@ -2247,6 +2798,11 @@ function switchTab(t){
   // 受付機を訊くのは受付の画面だけ。他の画面（厨房・受渡・表示）は名乗らない。
   if(t === 'order') ensureDesk();
   else if(openEl?.id === 'm-desk') closeModal();
+  // 画面ごとに省エネの条件が違う。切り替えたら必ず取り直す。
+  busySince = Date.now();
+  setSaver(false);
+  tickSaver();
+  paintGate();
 }
 function viewFromHash(){
   // #pay:2 のように支払い口の番号が付くことがある。画面名だけを取り出す。
@@ -2290,3 +2846,5 @@ renderReady();
 renderRows();
 renderFigures();
 paintDesks();   // 名乗りが届く前でも「受付機を選ぶ」とだけは出しておく
+paintGate();
+tickSaver();

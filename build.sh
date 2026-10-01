@@ -23,6 +23,7 @@ node test/pure_logic_test.mjs   >/dev/null
 node test/dom_wiring_test.mjs   >/dev/null
 node test/pure_parity_test.mjs  >/dev/null
 node test/wasm_contract_test.mjs >/dev/null
+node test/audio_smoke_test.mjs  >/dev/null
 echo "    すべて通りました"
 
 if [ ! -d vendor/firebase ]; then
