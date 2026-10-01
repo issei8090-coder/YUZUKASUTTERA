@@ -155,14 +155,14 @@ body[data-tab="kitchen"] .brand,  body[data-tab="records"] .brand{font-size:clam
 .item-photo{width:164px;flex:none;aspect-ratio:4/3;display:grid;place-items:center}
 .item-photo img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
 .item-body{min-width:0;flex:1}
-.item-name{font-family:var(--serif);font-weight:600;color:var(--brown);font-size:clamp(25px,3vw,32px);letter-spacing:.08em;margin:0}
+.item-name{font-family:var(--serif);font-weight:600;color:var(--brown);font-size:clamp(25px,3vw,32px);letter-spacing:.08em;line-height:1.25;margin:0}
 .item-name::after{content:"";display:block;width:52px;height:1px;background:var(--gold);margin:12px 0 14px}
 .item-note{font-size:14px;line-height:1.85;margin:0;max-width:34ch}
 .price-row{display:flex;align-items:baseline;justify-content:flex-start;gap:14px;margin:18px 0 0}
 /* .item-mark は水彩を主役に据えたため廃止（同じ絵を 1 枚の中に 2 回出さない）。 */
-.item-price{font-family:var(--serif);color:var(--brown);font-size:32px;font-weight:500;margin:0;letter-spacing:.04em}
+.item-price{font-family:var(--serif);color:var(--brown);font-size:32px;font-weight:500;margin:0;letter-spacing:.04em;line-height:1.2}
 .item-price small{font-size:17px;margin-left:2px}
-.item-per{display:block;font-family:var(--sans);font-size:13px;color:var(--brown-soft);letter-spacing:.04em;margin-top:2px}
+.item-per{display:block;font-family:var(--sans);font-size:13px;line-height:1.5;color:var(--brown-soft);letter-spacing:.04em;margin-top:4px}
 .order-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:0 0 10px}
 .tagmode{
   min-height:40px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
@@ -206,7 +206,9 @@ body[data-tags="false"] #lane-note{color:var(--brown-soft)}
 /* --- 合計・CTA --- */
 .total-row{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap;margin:34px 0 0}
 .total-label{font-size:17px;letter-spacing:.14em}
-.total-yen{font-family:var(--serif);color:var(--brown);font-size:clamp(38px,5.6vw,56px);font-weight:500;letter-spacing:.03em}
+/* 大きな字に本文用の行間（1.75）が付くと、字の上下に見えない余白が積もる。
+   合計は 1 行しか出ないので、行箱を字に寄せる。見た目は変わらず高さだけ減る。 */
+.total-yen{font-family:var(--serif);color:var(--brown);font-size:clamp(38px,5.6vw,56px);font-weight:500;letter-spacing:.03em;line-height:1.05}
 .total-yen small{font-size:.45em;margin-left:4px}
 
 .cta-row{display:flex;align-items:center;justify-content:center;gap:18px;margin:26px 0 0;flex-wrap:wrap}
@@ -833,7 +835,7 @@ body[data-tab="amount"] .masthead{display:none}
   .total-yen{font-size:clamp(24px,5vh,52px)}
   /* 数え札は後から足した行。1 画面の高さ配分に入っていなかったので、
      ここで上限を抑えないと確定ボタンが画面外へ押し出される。 */
-  .tally{margin-top:clamp(3px,.6vh,10px);min-height:clamp(18px,2.8vh,34px);gap:clamp(5px,.8vw,10px)}
+  .tally{margin-top:clamp(2px,.4vh,8px);min-height:clamp(14px,2.2vh,28px);gap:clamp(5px,.8vw,10px)}
   .tally-mark{width:clamp(20px,3.2vh,38px)}
   .cta-row{margin:0}
   .cta{min-height:clamp(50px,7.8vh,70px);font-size:clamp(16px,2.7vh,25px);padding:0 clamp(28px,4vw,54px)}
