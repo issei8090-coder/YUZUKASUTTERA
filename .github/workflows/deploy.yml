@@ -61,6 +61,11 @@ jobs:
     name: 配信物のビルド
     needs: test
     runs-on: ubuntu-latest
+    # render ブランチへ配信物を押すので、この job だけ contents に書き込む。
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -135,6 +140,36 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
+
+      # 会場の端末の設定で *.github.io が開けないため、Render（静的サイト・無料）
+      # にも同じものを出す。Render 側ではビルドを何もせず、この枝の中身を
+      # そのまま配らせる（設定は render.yaml）。向こうに Go も Node も要らない
+      # ので、ここを通った配信物がそのまま本番になる。
+      #
+      # 履歴は持たない。戻すときは main を直して出し直す（Pages と同じ）。
+      - name: 配信物を render ブランチへ押す
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          work=$(mktemp -d)
+          # public/ の中身だけを移す。.nojekyll のようなドットファイルも含める。
+          cp -a public/. "$work/"
+          cd "$work"
+          git init -q -b render
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # main.wasm と firebase-config.js は main では .gitignore 済みだが、
+          # ここは別のリポジトリとして作り直しているので無関係に入る。
+          # どちらも公開前提のもの（API キーの扱いは README の「セキュリティ」）。
+          git add -A
+          git commit -qm "配信物 ${GITHUB_SHA::7}"
+          git push -q --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            render:render
+          echo "### Render へ出しました" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "render ブランチを更新しました。Render が自動で配り直します（1〜2 分）。" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: GitHub Pages へデプロイ

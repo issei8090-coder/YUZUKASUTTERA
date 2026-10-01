@@ -42,7 +42,8 @@ Go言語 (WebAssembly) と Firebase Realtime Database を使用して構築さ�
 | `docs/FLOW.md` | 注文の一生と、場合分けの一覧（コードから起こしたもの） |
 | `docs/ISSUES.md` | 見つかっている問題と、直したもの |
 | `build.sh` | ローカル用のビルド & 配信スクリプト（`public/` も組むので手動デプロイに使える） |
-| `.github/workflows/deploy.yml` | テスト → ビルド → GitHub Pages へデプロイ |
+| `render.yaml` | Render（静的サイト・無料）の設定。`render` ブランチの中身をそのまま配る |
+| `.github/workflows/deploy.yml` | テスト → ビルド → GitHub Pages と Render へデプロイ |
 
 `main.wasm` / `wasm_exec.js` / `firebase-config.js` は生成物のため Git 管理外です。
 
@@ -129,12 +130,16 @@ CI では両方に加えて `gofmt` / `go vet` が走ります。
 
 ---
 
-## 🚀 デプロイ（GitHub Actions → GitHub Pages）
+## 🚀 デプロイ（GitHub Actions → GitHub Pages / Render）
 
 `main` に push すると、GitHub Actions が
 テスト → WASM ビルド → `firebase-config.js` 生成 → 配信物の参照チェック →
-GitHub Pages へのデプロイまで流します。
-公開先は `https://<ユーザー名>.github.io/<リポジトリ名>/` です。
+**GitHub Pages と Render の両方**へのデプロイまで流します。
+公開先は `https://<ユーザー名>.github.io/<リポジトリ名>/` と
+`https://<サイト名>.onrender.com` です。
+
+**当日に使うのは Render 側です。** 会場の端末の設定で `*.github.io` が開けないため。
+設置手順は「Render（onrender.com）へも出す」の節にあります。
 
 **出るのは画面だけです。** `database.rules.json` は CI では反映されないので、
 変えたときは人が貼ります（「セキュリティ」の節）。忘れると全書き込みが拒否され、
@@ -203,6 +208,77 @@ HTTP キャッシュが古い応答を返すと network-first が効かず、**�
 終わり、通信量はほとんど増えません。`.wasm` には `application/wasm` を明示しています
 （`instantiateStreaming` が MIME を見るため。外れても `app.js` が読み込み直すので
 落ちはしませんが、起動が遅くなります）。
+
+---
+
+## 🌐 Render（onrender.com）へも出す
+
+**なぜ。** 会場で使う端末の設定で `*.github.io` が開けない。`onrender.com` は開ける。
+そこで**当日の正を `https://<サイト名>.onrender.com` にします**。Pages への配信は
+止めていません（片方が開けなくなったときの逃げ道として両方残します）。
+
+**仕組み。** Render ではビルドを何もしません。`main` に push すると、いつもの
+テスト → WASM ビルド → 参照チェックを通った `public/` そのものが `render`
+ブランチに押され、Render がその中身をそのまま配ります。
+Render 側に Go も Node も要らないので、**向こうで組み立てに失敗する経路がありません**。
+
+### 1. Render にサイトを作る（一度だけ）
+
+無料です。クレジットカードも要りません。
+
+最初は `render` ブランチがまだ無いので、**先に `main` へ一度 push**
+（または Actions を手動実行）してブランチを作ってから、Render の設定に進みます。
+
+その前に **Settings → Actions → General → Workflow permissions** を
+**「Read and write permissions」**にしてください。ここが読み取り専用だと、
+ワークフローが `render` ブランチへ押す所で `403` で落ちます
+（job 側で `contents: write` を宣言していても、リポジトリ設定が上限になります）。
+
+Blueprint を使うなら **New → Blueprint → このリポジトリ → `main`** を選ぶだけで、
+`render.yaml` の通りに作られます。手で作る場合は:
+
+| 項目 | 値 |
+|---|---|
+| 種類 | **Static Site**（Web Service ではない） |
+| Branch | `render` |
+| Build Command | 空（または `echo ok`） |
+| Publish Directory | `.` |
+
+**種類を間違えないこと。** 無料の Web Service は 15 分アクセスが無いと停止し、
+次に開いた人が数十秒待たされます。Static Site は停止せず、稼働時間の上限も
+ありません（帯域 100GB/月）。2 日間の運用なら余ります。
+
+公開 URL は Render の画面に出ます。`yuzukastera` が他で使われていると
+`yuzukastera-xxxx.onrender.com` のような名前になるので、**表示された URL を
+そのまま端末に入れてください**（推測しない）。
+
+### 2. Firebase 側に新しいドメインを教える
+
+配信元が変わります。ここを忘れると**画面は出るのに注文が通らない**形で出ます。
+
+- **Firebase コンソール → Authentication → Settings → 承認済みドメイン**
+  に `<サイト名>.onrender.com` を追加します。匿名ログイン（`signInAnonymously`）の
+  入口がここです。
+- Google Cloud 側で Web API キーに **HTTP リファラー制限**をかけている場合は、
+  そこにも `https://<サイト名>.onrender.com/*` を追加します。
+  かけていなければ何もしなくてよいです。
+
+`database.rules.json` は配信元に依存しないので、貼り直しは要りません。
+
+### 3. 端末を入れ直すときの注意
+
+`#pay:2` のような支払い口の指定は localStorage に残りますが、**配信元ごとに別です**。
+github.io で設定した端末を onrender.com に切り替えたら、
+**もう一度 `https://<サイト名>.onrender.com/#pay:2` の形で開いてください**。
+開き直さないと、その端末は `main`（1 番目の口）として振る舞います。
+
+匿名ログインのセッションも配信元ごとなので、各端末で一度オンラインにする必要があります。
+`sw.js` のキャッシュも配信元ごとなので、github.io 側に残った古い画面は干渉しません。
+
+### 4. 戻し方
+
+Render の **Deploys → 前の成功した配信 → Rollback** で戻せます。ビルドが無いので
+数秒で終わります。Pages にはこの導線が無いので、当日はこちらのほうが速いです。
 
 ---
 

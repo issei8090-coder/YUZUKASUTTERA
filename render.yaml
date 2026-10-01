@@ -1,0 +1,31 @@
+# Render の「静的サイト」（無料）へ出すための設定。
+#
+# なぜ要るか: 会場の端末の設定で *.github.io が開けない。onrender.com は開ける。
+# 当日の正は https://<サイト名>.onrender.com にする。GitHub Pages への配信も
+# 今まで通り続ける（どちらかが開けなくなったときの逃げ道として両方残す）。
+#
+# ビルドはここでは何もしない。GitHub Actions 側でテスト → WASM ビルド →
+# 参照チェックを通した配信物そのものを `render` ブランチに押しているので、
+# Render はその中身をそのまま配るだけ。Render 側に Go も Node も要らないので、
+# 「ローカルでは動くのに配信先だけ壊れる」経路がここには無い。
+#
+# ★ type を間違えないこと。無料の Web Service は 15 分アクセスが無いと停止し、
+#   次に開いた人が数十秒待たされる。静的サイト (runtime: static) は停止しない。
+services:
+  - type: web
+    name: yuzukastera
+    runtime: static
+    branch: render
+    # render ブランチには配信物しか入っていない。組む作業は残っていない。
+    buildCommand: echo "ビルド済みの配信物をそのまま配ります"
+    staticPublishPath: .
+    # プルリクエストごとの仮サイトは要らない（当日の URL を増やさない）。
+    pullRequestPreviewsEnabled: false
+    headers:
+      # firebase.json と同じ扱い。会期中に出した修正を端末へ行き渡らせるため、
+      # 「保存はするが毎回確認する」にする。変更が無ければ 304 で終わるので
+      # 通信量はほとんど増えない。これを緩めると sw.js の network-first が
+      # 手前の HTTP キャッシュに潰され、端末が古いまま動き続ける。
+      - path: /*
+        name: Cache-Control
+        value: no-cache
