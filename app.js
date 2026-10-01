@@ -678,8 +678,35 @@ const soundOn = () => $('sound') ? $('sound').checked : true;
 function ping(){ if(soundOn()) audio.newOrder(); }
 
 // 画面のどこを触っても音を起こす。受付はお客様の前で必ず触るので確実に通る。
-['pointerdown','keydown','touchstart'].forEach(ev =>
-  addEventListener(ev, () => audio.unlock(), { once: true, passive: true }));
+//
+// once:true だと「1 回目の操作では起こせなかった」場合に二度と試さない。
+// iOS の resume() は非同期なので 1 回目で起き切らないことがあり、さらに
+// 他アプリへ移る・画面を消す・通話が入ると context は止まる。
+// 起きるまで（止まったらまた）何度でも試す形にする。
+const WAKE_EVENTS = ['pointerdown','keydown','touchstart'];
+function wakeAudio(){
+  audio.unlock();
+  if(audio.ready()) WAKE_EVENTS.forEach(ev => removeEventListener(ev, wakeAudio));
+}
+WAKE_EVENTS.forEach(ev => addEventListener(ev, wakeAudio, { passive: true }));
+
+/* 音が止まっていることを画面に出す。
+   iOS は「一度も触られていない端末」では音を出せない。厨房・呼び出し・金額表示は
+   誰も触らない端末なので、ここが無いと注文が来ても鳴らないまま誰も気づけない
+   （鳴らない理由が画面のどこにも出ない）。押す操作そのものが解錠になる。 */
+const audioWake = $('audio-wake');
+function refreshAudioWake(){
+  if(!audioWake) return;
+  audioWake.hidden = !soundOn() || audio.ready();
+}
+audioWake?.addEventListener('click', () => {
+  audio.unlock();
+  // resume() は非同期。起きたかどうかは少し待ってから見る。
+  setTimeout(refreshAudioWake, 400);
+});
+// 画面を離れると iOS は context を止める。止まったらまた出す。
+setInterval(refreshAudioWake, 1000);
+refreshAudioWake();
 $('sound')?.addEventListener('change', e => {
   audio.setEnabled(e.target.checked);
   if(e.target.checked) audio.unlock();

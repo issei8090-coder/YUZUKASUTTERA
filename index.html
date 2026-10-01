@@ -696,6 +696,23 @@ body[data-tab="amount"] .masthead{display:none}
 .call-foot{font-size:clamp(13px,1.8vh,17px);color:var(--brown-soft);margin:0;letter-spacing:.08em}
 .call-foot b{font-family:var(--serif);color:var(--brown);font-size:1.5em;margin-right:2px}
 
+/* --- 音を起こすボタン --- */
+/* iOS は操作を経ていない AudioContext を鳴らさない。厨房・呼び出し・金額表示は
+   誰も触らない端末なので、放っておくと「注文が来ても鳴らない」まま気づけない。
+   音が止まっている間だけ出し、押せばその操作そのものが解錠になる。
+   ナビは右下にいるので左下に置く。 */
+.audio-wake{
+  position:fixed;z-index:95;
+  left:calc(14px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));
+  min-height:var(--tap);padding:0 20px;border-radius:var(--r-ctl);cursor:pointer;
+  background:var(--lift);border:1px solid var(--gold);color:var(--brown);
+  font-size:14px;letter-spacing:.06em;
+  display:flex;align-items:center;gap:10px;
+  box-shadow:0 6px 20px rgba(122,94,56,.16);
+}
+.audio-wake:hover{background:var(--card)}
+.audio-wake svg{width:20px;height:20px;flex:none}
+
 /* --- 接続状態の警告帯 --- */
 .net-state{
   position:sticky;top:0;z-index:90;
@@ -779,8 +796,13 @@ body[data-tab="amount"] .masthead{display:none}
 
   /* ---- 受付：1 画面に収める ---- */
   #view-order{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;gap:clamp(8px,1.7vh,24px)}
-  .menu{gap:clamp(12px,1.6vw,24px);min-height:0}
-  .item{padding:clamp(12px,2.1vh,26px);gap:clamp(8px,1.5vh,20px);min-height:0}
+  /* カードに min-height:0 を置くと、グリッド行の最小寸法が 0 になる。高さが
+     足りないとき、行はカードの中身を無視してどこまでも縮み、カードの箱だけが
+     潰れる。中身（特にステッパー）はこれ以上縮めないので、枠の外へはみ出す。
+     実機 iPad では、下枠がステッパーの真ん中を横切る形で出ていた。
+     カードは中身より小さくしない。足りないぶんはメニュー側を送る。 */
+  .menu{gap:clamp(12px,1.6vw,24px);min-height:0;overflow-y:auto}
+  .item{padding:clamp(12px,2.1vh,26px);gap:clamp(8px,1.5vh,20px);min-height:auto}
   .item-head{gap:clamp(12px,1.6vw,22px)}
   /* 正方形なので、幅を決めると高さも決まる。1 画面の高さ配分に直結する。 */
   .item-photo{width:clamp(76px,14vh,164px)}
@@ -956,6 +978,14 @@ if (location.protocol === 'file:') {
 <body data-tab="order">
 
 <div id="net-state" class="net-state" role="status" hidden></div>
+
+<!-- 音が止まっているときだけ出る。押す操作そのものが iOS の解錠条件を満たす。 -->
+<button type="button" class="audio-wake" id="audio-wake" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>
+  </svg>
+  タップして音を出す
+</button>
 
 <img class="deco deco-tl" src="art/tl.png" alt="" aria-hidden="true">
 <img class="deco deco-tr" src="art/tr.png" alt="" aria-hidden="true">
