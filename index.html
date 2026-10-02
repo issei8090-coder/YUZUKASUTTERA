@@ -645,6 +645,14 @@ tbody tr:hover{background:var(--lift)}
    受付はお客様に向ける「見せる画面」だが、厨房は離れた位置から
    何度も見て手を動かす「捌く画面」。用途が違うので意匠も分ける。
    暗い地・装飾なし・サンセリフ・太い数字で、グレアと視認距離に耐えさせる。
+
+   厨房の画面は壁に立てかけて置く「掲示板」で、誰も触らない。
+   生地と油を扱う手で画面を押させられないため、「用意できた」の打ち返しは
+   受渡口に移した（受渡が品物を受け取った時点で打つ）。
+   その結果この画面には押すところが 1 つも無いので、
+     ・ボタンに取っていた高さを、離れて読む文字寸法に回す
+     ・手でめくれないので、画面に入り切る枚数だけ出す（溢れは枚数で添える）
+   の 2 つが要る。立てかけた板に出す情報の量は、画面の高さが決める。
    ============================================================ */
 /* 厨房・受渡・支払い口は「置いて立って使う」同じ性格の画面なので、地も揃える。
    ばらばらだと、担当を交代したときに毎回読み直すことになる。 */
@@ -698,9 +706,14 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .kds-batch-cell[data-zero="true"]{border-left-color:var(--late)}
 .kds-batch-cell[data-zero="true"] .kds-batch-left{color:var(--late-text);font-weight:700}
 
-/* 伝票 */
+/* 伝票。溢れた分は app.js 側で枚数に畳んでいる（この画面は誰も送れない）。
+   overflow-y はそれでも入り切らない端末のための逃げ道で、常用はしない。 */
 .kds-grid{flex:1;min-height:0;overflow-y:auto;display:grid;gap:12px;align-content:start;
   grid-template-columns:repeat(auto-fill,minmax(318px,1fr));padding-bottom:4px}
+/* 厨房だけ列を細くする。2 枚目以降が小さい控えなので、受渡・支払い口の
+   カード（金額とボタンを 1 行で持つ）と同じ幅を取らせる理由がない。
+   ここを共通で細くすると、受渡の「N円 受け取って渡した」が切れる。 */
+#kitchen-list{grid-template-columns:repeat(auto-fill,minmax(232px,1fr))}
 /* 次に用意する 1 枚だけを大きくする。
    全部が同じ大きさだと、7 枚並んだときに「次どれ」を毎回探すことになる。
    受付順に左上から並ぶので、探さなくても目が最初にここへ行く形にする。 */
@@ -708,10 +721,20 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 @media (max-width:620px){ .kds-ticket[data-next="true"]{grid-column:span 1;grid-row:auto} }
 .kds-ticket[data-next="true"] .kds-num{font-size:clamp(60px,11vh,102px)}
 .kds-ticket[data-next="true"] .kds-timer{font-size:clamp(33px,5.4vh,45px)}
-.kds-ticket[data-next="true"] .kds-qty{font-size:clamp(48px,8.1vh,72px)}
-.kds-ticket[data-next="true"] .kds-name{font-size:clamp(22px,3.6vh,30px)}
-.kds-ticket[data-next="true"] .kds-bump{min-height:clamp(74px,11.5vh,100px);font-size:clamp(27px,4.5vh,36px)}
+.kds-ticket[data-next="true"] .kds-qty{font-size:clamp(56px,9.4vh,84px)}
+.kds-ticket[data-next="true"] .kds-name{font-size:clamp(24px,3.9vh,32px)}
 .kds-next-tag{font-size:18px;letter-spacing:.2em;color:var(--ok);font-weight:700}
+/* 2 枚目以降は「このあとの控え」。次の 1 枚が 2 段ぶんを占めるので、
+   その脇に 2 段積めるところまで詰める。詰めた結果、1024×768 でも
+   次の 1 枚＋控え 4 枚が同時に出る（送れない画面なので、出ている枚数が全て）。 */
+.kds-ticket:not([data-next="true"]){padding:10px 12px;gap:6px}
+.kds-ticket:not([data-next="true"]) .kds-num{font-size:clamp(30px,4.4vh,40px)}
+.kds-ticket:not([data-next="true"]) .kds-timer{font-size:clamp(19px,2.6vh,23px)}
+/* 控えの明細は横に並べる。縦に積むと 1 枚で 2 段ぶんの高さを食う。 */
+.kds-ticket:not([data-next="true"]) .kds-lines{flex-direction:row;flex-wrap:wrap;
+  column-gap:16px;row-gap:2px;padding-top:6px}
+.kds-ticket:not([data-next="true"]) .kds-qty{font-size:clamp(26px,3.6vh,32px);min-width:0}
+.kds-ticket:not([data-next="true"]) .kds-name{font-size:clamp(16px,2.2vh,19px)}
 .kds-ticket{background:var(--panel);border:1px solid var(--line);border-top:7px solid var(--ok);
   border-radius:10px;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
 .kds-ticket[data-age="warn"]{border-top-color:var(--warn)}
@@ -726,19 +749,24 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .kds-lines{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);padding-top:8px;
   display:flex;flex-direction:column;gap:4px}
 .kds-lines li{display:flex;align-items:baseline;gap:10px}
-.kds-qty{font-size:clamp(36px,5.4vh,48px);font-weight:800;line-height:1.1;min-width:1.5em;
+.kds-qty{font-size:clamp(40px,6.2vh,56px);font-weight:800;line-height:1.1;min-width:1.5em;
   font-variant-numeric:tabular-nums}
-.kds-name{font-size:clamp(20px,2.9vh,24px);color:#D8CFBF}
+.kds-name{font-size:clamp(22px,3.2vh,27px);color:#D8CFBF}
+/* 押すところが無いので、明細が伝票の残りを使う（下に余白を溜めない）。 */
+.kds-lines{flex:1}
 
-/* 打ち返しボタン。伝票の幅いっぱい・確認なし（誤操作は受渡側から戻せる） */
-.kds-bump{margin-top:auto;width:100%;min-height:clamp(62px,8.8vh,76px);border-radius:8px;cursor:pointer;
-  background:#2E7D55;border:1px solid #3E9D6C;color:#fff;font-size:clamp(24px,3.6vh,29px);font-weight:700;
-  letter-spacing:.08em}
-.kds-bump:hover{background:#369564}
-.kds-bump:active{transform:scale(.98)}
-/* 打ち返しボタンは常に同色。このアプリでは赤＝中止なので、
-   急ぎの伝票でもボタンを赤くすると「取り消し」に見えてしまう。
-   緊急度は伝票の枠とタイマーの色だけで伝える。 */
+/* 画面に入り切らなかった伝票は出さず、枚数だけを下の 1 行に出す。
+   立てかけた画面では誰も下まで送れないので、隠れた分があること自体を伝える。 */
+.kds-more{flex:none;margin:0;background:var(--panel);border:1px dashed var(--line);
+  border-radius:10px;padding:8px 18px;text-align:center;
+  font-size:clamp(16px,2.2vh,20px);color:var(--dim);letter-spacing:.04em}
+.kds-more b{font-size:1.6em;font-weight:800;color:#F2ECE0;
+  font-variant-numeric:tabular-nums;margin-right:4px}
+/* 下にはみ出した伝票。出したままだと、読めない行が画面の端に残る。 */
+.kds-ticket[data-over="true"]{display:none}
+
+/* 触らない画面であることを、上のバーで先に言う。 */
+.kds-board{font-size:17px;color:var(--dim);letter-spacing:.04em;line-height:1.4}
 
 .kds-empty{margin:0;padding:48px 20px;text-align:center;font-size:28px;color:var(--dim);
   background:var(--panel);border:1px dashed var(--line);border-radius:10px;line-height:1.9}
@@ -859,17 +887,19 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .ops-chip[aria-pressed="true"]{background:#2F2922;border-color:var(--dim);color:#F2ECE0;font-weight:700}
 .ops-chip b{font-variant-numeric:tabular-nums;margin-left:6px;color:inherit}
 
-/* まだ厨房が用意している最中の注文。渡す操作は無い＝見るだけの 1 枚なので、
-   押せるカードと同じ明るさにしない。 */
-.ops-card[data-state="pending"]{border-top-color:var(--dim);opacity:.82}
+/* まだ厨房が焼いている注文。厨房は手が汚れていて画面を押せないので、
+   「用意できた」はこの画面で打つ＝ご用意中も押せるカードになった。
+   以前は見るだけだったので opacity で沈めていたが、押すカードを沈めると
+   手が止まる。枠の色と「ご用意中」の札だけで、お渡し待ちと区別する。 */
+.ops-card[data-state="pending"]{border-top-color:var(--dim)}
+/* 金額はまだ受け取る場面ではない（渡すときに受け取る）ので、ここだけ沈める。 */
 .ops-card[data-state="pending"] .ops-amount{color:var(--dim)}
 /* 渡し終えた注文。記録として残すだけなので、いちばん沈める。 */
 .ops-card[data-state="completed"]{border-top-color:var(--line);opacity:.62}
 .ops-card[data-state="completed"]:hover{opacity:1}
 .ops-state[data-kind="prep"]{color:var(--dim)}
 .ops-state[data-kind="done"]{color:var(--ok)}
-/* 見るだけのカードは高さを揃えない（押すところが無いので下に余白が要らない）。 */
-.ops-card[data-state="pending"] .ops-row,
+/* 渡し終えたカードは押すところが弱い 1 つだけなので、下に余白を溜めない。 */
 .ops-card[data-state="completed"] .ops-row{margin-top:auto}
 
 /* 支払い済みの控え。普段は畳んでおく。 */
@@ -1113,6 +1143,15 @@ body[data-tab="amount"] .masthead{display:none}
   #view-records .sec-title{margin:0 0 14px}
   .panel{padding:clamp(14px,2.2vh,30px)}
   .queue-n{font-size:clamp(30px,5.6vh,52px)}
+
+  /* ---- 厨房は「立てかけて見るだけの板」なので、高さの配分を決め直す ----
+     1024×768 の横向きでは、バーと焼き待ちの帯を引いて伝票に残るのは 300px 前後。
+     誰も送れない以上、入り切らない伝票は出ないのと同じなので、
+     焼き待ちの数字を少し抑えて、その分を伝票の段に回す。 */
+  body[data-tab="kitchen"] .kds-batch-n{font-size:clamp(52px,10vh,96px)}
+  body[data-tab="kitchen"] .kds-batch-cell{padding:8px 16px}
+  /* 次の 1 枚は 2 段ぶん。脇の控えがちょうど 2 枚積まれる高さになる。 */
+  .kds-ticket[data-next="true"]{grid-column:span 2;grid-row:span 2}
 }
 
 /* 画面が特に低いとき（Safari のツールバーが出た 1024x768 など）は説明文を省いて確実に収める */
@@ -1737,6 +1776,9 @@ if (location.protocol === 'file:') {
         <span class="kds-label">厨房</span>
         <span class="kds-stat"><b id="kds-tickets">0</b> 件 未処理</span>
         <span class="kds-stat">最長待ち <b id="kds-oldest">—</b></span>
+        <!-- 手が汚れている場所なので、この画面は触らせない。
+             押すところが無いことを先に言っておかないと、押せる何かを探される。 -->
+        <span class="kds-board">見るだけの画面です。用意できた分は受渡口が打ちます</span>
         <label class="kds-sound">
           <input type="checkbox" id="sound" checked>
           <span>通知音</span>
@@ -1746,9 +1788,11 @@ if (location.protocol === 'file:') {
       <div class="kds-batch" id="queue"></div>
 
       <div class="kds-grid" id="kitchen-list"></div>
+      <!-- 立てかけた画面は誰も送れない。入り切らなかった枚数は必ずここに出す。 -->
+      <p class="kds-more hidden" id="kitchen-more" aria-live="off"></p>
       <p class="kds-empty hidden" id="kitchen-empty">
         <b>用意する注文はありません</b>
-        受付で注文が入ると、ここに伝票が出ます。<br>
+        受付で注文が入ると、ここに伝票が出ます。押すところはありません。<br>
         いまのうちに焼き足しておくと、混んだときに待たせずに済みます。
       </p>
     </section>
@@ -1817,7 +1861,7 @@ if (location.protocol === 'file:') {
       <p class="kds-empty hidden" id="ready-empty">
         <b>この回の注文はまだありません</b>
         受付で注文が確定すると、その時点でここに「ご用意中」として出ます。<br>
-        厨房が「用意した」を押すと「お渡し待ち」に変わります。
+        厨房から品物を受け取ったら「用意できた」を押します（お呼び出しも始まります）。
       </p>
     </section>
 

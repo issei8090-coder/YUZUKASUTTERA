@@ -117,7 +117,7 @@ const headroomOf  = key => pureHeadroom(orders, limits, cart, FLAVORS, key);
 /* ---------- トースト ---------- */
 let toastT;
 /* undo を渡すと「戻す」が付く。
-   厨房の「用意した」のように、止めると行列が詰まるが押し間違いもある操作は、
+   受渡の「用意できた」のように、止めると行列が詰まるが押し間違いもある操作は、
    確認ダイアログで止めるのではなく、後から取り消せるようにする。 */
 function toast(msg, kind='error', undo=null, ms=5200){
   const t = $('toast');
@@ -1953,7 +1953,13 @@ setInterval(renderReady, 15000);   // 厨房は tickKitchen が毎秒更新す�
 /* ---------- 厨房（キッチンディスプレイ） ----------
    伝票は受付順に左から並べ、経過時間で色を変える。
    しきい値はファストフードの KDS に合わせて 3 分・6 分。
-   「困ってから」ではなく「困る前」に気づける位置に置いている。 */
+   「困ってから」ではなく「困る前」に気づける位置に置いている。
+
+   この画面は壁に立てかけて置くだけで、誰も触らない（生地と油を扱う手では
+   画面を押せないし、押させるべきでもない）。だから
+     ・押すところを置かない。「用意できた」は受渡口が打つ
+     ・手で送れないので、画面に入り切る枚数だけ出す
+   の 2 つを守る。隠れた伝票は、この画面では永遠にめくられない。 */
 
 // 直前の描画に出ていた伝票。差分が新着で、そこだけ立ち上げる。
 let seenTickets = new Set();
@@ -1978,14 +1984,13 @@ function renderKitchen(){
       <ul class="kds-lines">
         ${(o.items||[]).map(i=>`<li><span class="kds-qty">${i.quantity}</span><span class="kds-name">${shortLabel(i.flavor)}</span></li>`).join('')}
       </ul>
-      <button type="button" class="kds-bump" data-act="ready" data-id="${o.id}"
-        aria-label="${numOf(o)} を受渡待ちにする">用意した</button>
     </article>`;
   }).join('');
 
   seenTickets = new Set(list.map(o => o.id));
   $('kitchen-list').classList.toggle('hidden', list.length === 0);
   $('kitchen-empty').classList.toggle('hidden', list.length > 0);
+  fitBoard();
 
   // 調理者が最初に見るべきは「いま用意する数」。
   // 以前ここに出していた「残り」は、まだ売れる数＝受付側の都合で、
@@ -2020,6 +2025,43 @@ function renderKitchen(){
   }
 }
 
+/* 立てかけた画面は誰も送れないので、下にはみ出した伝票は永遠に見られない。
+   入り切らなかった枚数を、画面の下に 1 行で必ず出す。
+   何枚入るかは端末の高さと列数で決まるため、描いたあとに測って決める。
+
+   下の 1 行は注文が 1 件でもあれば常に出す（「控えはありません」も出す）。
+   あるときだけ出すと一覧の高さが変わり、測り直しが要る形になる。 */
+function fitBoard(){
+  const grid = $('kitchen-list'), foot = $('kitchen-more');
+  if(!grid || !foot) return;
+  const cards = Array.from(grid.querySelectorAll('.kds-ticket'));
+  cards.forEach(el => el.removeAttribute('data-over'));   // 測る前に必ず戻す
+  foot.classList.toggle('hidden', cards.length === 0);
+  const base = grid.getBoundingClientRect().top;
+  // 横向きの 1 画面組みでは一覧自身の高さが上限になる。縦向きでは一覧が
+  // 伸びて画面の下へ出ていくので、画面の下端のほうが上限になる。低いほうを採る。
+  const room = Math.min(grid.clientHeight, innerHeight - base - 16);
+  // 厨房を開いていない端末では高さが測れない（display:none で 0 になる）。
+  // そのときは 1 枚も隠さず、開いた時点で測り直す（switchTab から呼ぶ）。
+  if(document.body.dataset.tab !== 'kitchen' || room < 80){
+    foot.textContent = '';
+    return;
+  }
+  let over = 0;
+  // 先頭＝「次に用意する」1 枚は、はみ出していても必ず残す。
+  // 伝票が 1 枚も出ない板は、ただの黒い画面になる。
+  for(let i = 1; i < cards.length; i++){
+    // 2px は端末ごとの端数。1px の差で 1 枚落とすほうが害が大きい。
+    if(cards[i].getBoundingClientRect().bottom - base <= room + 2) continue;
+    over = cards.length - i;
+    for(let j = i; j < cards.length; j++) cards[j].dataset.over = 'true';
+    break;
+  }
+  foot.innerHTML = over > 0
+    ? `<b>${over}</b>件 このあとに控えています（上の焼き待ちの数には入っています）`
+    : 'このあとに控えている注文はありません';
+}
+
 /* 毎秒ここだけを書き換える。1 秒ごとに全体を描き直すと
    スクロール位置とボタンの押下状態が飛んで、かえって使えなくなる。 */
 function tickKitchen(){
@@ -2038,6 +2080,8 @@ function tickKitchen(){
   if(el) el.textContent = oldest >= 0 ? mmss(oldest) : '—';
 }
 setInterval(()=>{ tickKitchen(); tickReady(); tickCall(); }, 1000);
+// 立てかけた端末でも、向きが変われば入る枚数は変わる。描き直さず測り直すだけ。
+addEventListener('resize', fitBoard);
 
 /* ---------- 受渡 ----------
    お渡し口に置く端末。厨房と同じ性格の画面なので、同じ地・同じ寸法で組む。
@@ -2124,8 +2168,11 @@ function renderReady(){
 
     // 押すところはカード 1 枚につき 1 つ。状態ごとに「普通の道」だけを大きく出す。
     const actions = prep
-      // ご用意中は見るだけ。厨房が「用意した」を押すまで渡せない。
-      ? ''
+      // 厨房は手が汚れていて画面を押せない（衛生上、押させない）。
+      // 焼き上がった品物を受け取ったこちらで「用意できた」を打つ。
+      // 押すと呼び出しも同時に始まる（changeStatus が calledAt を書く）。
+      ? `<button type="button" class="ops-do" data-act="ready" data-id="${o.id}"
+                 aria-label="${numOf(o)} の用意ができた">用意できた</button>`
       : done
         ? `${lost ? `<button type="button" class="ops-do" data-kind="cash" data-act="takepaid" data-id="${o.id}" data-num="${numOf(o)}"
                    aria-label="${numOf(o)} の ${amount}円 を受け取る">${amount}円 受け取る</button>` : ''}
@@ -2218,6 +2265,10 @@ function tickReady(){
    通らず受渡待ちで生まれるので、そのままだと受渡口には何の合図も出ない。
    置きっぱなしの端末で、お客様が来ているのに誰も気づかない、が起きる。
 
+   受渡待ちは、この端末が「用意できた」を押しても増える。自分の操作で鳴っても
+   合図にならないので、押した注文は knownReady に先に入れて鳴らさない
+   （下の 'ready' の打ち返しがそれを行う）。
+
    鳴らすのは受渡の画面を開いている端末だけ。全端末で鳴らすと重なって
    何も聞き取れなくなる（呼び出し表示と同じ理由）。 */
 // 起動直後の一括読み込みで、既にある受渡待ちを全部鳴らしてしまわないよう一度見送る。
@@ -2236,7 +2287,7 @@ function arrived(){
 }
 
 /* ---------- 自動のお呼び出し ----------
-   厨房が「用意した」を押すと自動で呼び出しになる（changeStatus が calledAt を
+   受渡が「用意できた」を押すと自動で呼び出しになる（changeStatus が calledAt を
    書く）。ここはその音を鳴らす側で、呼び出し表示を開いている端末だけが鳴らす。
    全端末で鳴らすと重なって何も聞き取れなくなる。
 
@@ -2666,7 +2717,7 @@ async function changeStatus(id, from, to){
       cur.status = to;
       // 受渡待ちになった時点で呼び出しも済ませる。別に「呼ぶ」を押させると、
       // 焼き上げてから呼ぶまでの間が人の気づき待ちになる。
-      // ここで書けば writer は「用意した」を押した 1 台だけで、書き込みも 1 回。
+      // ここで書けば writer は「用意できた」を押した 1 台だけで、書き込みも 1 回。
       if(to === 'ready' && !cur.calledAt) cur.calledAt = Date.now();
       cur.updatedMs = Date.now();
       return cur;
@@ -2684,12 +2735,18 @@ document.addEventListener('click', e=>{
   if(!b) return;
   const id = b.dataset.id;
   switch(b.dataset.act){
+    // 「用意できた」。厨房の画面は立てかけてあるだけで触れないので、
+    // 品物を受け取った受渡口がここを打つ（呼び出しも同時に始まる）。
     case 'ready': {
       const o = orders.find(x=>x.id===id);
+      // 自分が押した分で受渡の着信音を鳴らさない。鳴っても合図にならず、
+      // 「別の注文が来た」と取り違える。
+      knownReady.add(id);
       changeStatus(id,'pending','ready');
       // 確認で止めると行列が詰まる。止めずに、後から取り消せるようにする。
       // 取り消せないと、押し間違いを直すために別の画面まで行く必要があった。
-      toast(`${numOf(o)} を受渡待ちにしました`, 'info',
+      toast(`${numOf(o)} をお渡し待ちにしました`
+            + (o?.number ? '・お呼び出しを始めました' : ''), 'info',
             ()=>changeStatus(id,'ready','pending'), 7000);
       break;
     }
@@ -3011,6 +3068,8 @@ function switchTab(t){
   // 受付機を訊くのは受付の画面だけ。他の画面（厨房・受渡・表示）は名乗らない。
   if(t === 'order') ensureDesk();
   else if(openEl?.id === 'm-desk') closeModal();
+  // 厨房は display:none の間は高さが測れない。開いた時点で測り直す。
+  if(t === 'kitchen') fitBoard();
   // 画面ごとに省エネの条件が違う。切り替えたら必ず取り直す。
   busySince = Date.now();
   setSaver(false);
