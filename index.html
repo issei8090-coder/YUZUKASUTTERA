@@ -129,6 +129,27 @@ body[data-tab="kitchen"] .brand,  body[data-tab="records"] .brand{font-size:clam
 .nav-menu button:hover{background:var(--card)}
 .nav-menu button[aria-current="page"]{background:var(--brown);color:var(--lift)}
 
+/* 受付の画面では、在ることは変えずに、探さなければ見えない濃さまで落とす。
+   お客様に向く 1 枚なので、金の丸が右下に浮いていると押させてしまう。
+   スタッフは位置を覚えているので、触れば（押せば）そこで出てくる。
+   枠と地を消すのは、薄い丸が「押せる何か」として残るのを避けるため。 */
+body[data-tab="order"] .nav-toggle{
+  opacity:.07;background:transparent;border-color:transparent;box-shadow:none}
+body[data-tab="order"] .nav-toggle:hover,
+body[data-tab="order"] .nav-toggle:focus-visible,
+body[data-tab="order"] .nav-toggle[aria-expanded="true"]{
+  opacity:1;background:var(--lift);border-color:var(--gold-line)}
+
+/* 受付機を訊いている 1 枚の上だけは、はっきり出してモーダル (60) より前に置く。
+   この紙は受付機を選ぶまで閉じない。起動して最初に出るのがこれなので、
+   ここで切り替えを塞ぐと、厨房・受渡・管理のどの端末も立ち上げられない
+   （受付機を 1 台名乗らせてから選び直す、という遠回りしか残らなかった）。
+   data-modal は openModal が付ける。:has() を使わないのは、
+   会場の古い iPad（iPadOS 16.4 未満）でも必ず効かせるため。 */
+body[data-modal="m-desk"] .nav-mini{z-index:61}
+body[data-modal="m-desk"] .nav-toggle{
+  opacity:1;background:var(--lift);border-color:var(--gold-line)}
+
 /* --- 面 --- */
 .panel{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:30px}
 .panel + .panel{margin-top:26px}
@@ -935,6 +956,10 @@ body[data-tab="amount"] .masthead{display:none}
   padding:10px 20px;text-align:center;font-size:15px;font-weight:700;
   letter-spacing:.04em;
 }
+/* 送信中は異常ではない。赤（中止・取消の色）は、繋がっていないときのために
+   取っておく。ここを赤で出していたせいで、上端の赤い帯が見慣れた風景になり、
+   本当に送れていないときの赤と区別が付かなくなっていた。 */
+.net-state[data-kind="busy"]{background:var(--brown)}
 
 /* --- トースト --- */
 .toast{
@@ -1014,8 +1039,11 @@ body[data-tab="amount"] .masthead{display:none}
   .net-state{position:fixed;left:0;right:0;top:0;padding:8px 20px;font-size:14px;z-index:95}
   /* 警告帯が出ている間は表札の装飾行を畳み、帯のぶんの高さを相殺する */
   body:has(.net-state:not([hidden])) .wrap{padding-top:38px}
+  /* 畳むのはこの 2 行だけ。ここで宣言を閉じずに次の .wrap と繋げていたため、
+     帯が出ている間だけ .romaji と .rule にも 100dvh と flex が当たり、
+     表札が画面 1 枚ぶんに伸びていた。 */
   body:has(.net-state:not([hidden])) .romaji,
-  body:has(.net-state:not([hidden])) .rule,
+  body:has(.net-state:not([hidden])) .rule{display:none}
   .wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;
     padding-bottom:calc(env(safe-area-inset-bottom) + clamp(10px,1.7vh,22px))}
   main{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -1075,8 +1103,13 @@ body[data-tab="amount"] .masthead{display:none}
   #kitchen-list, #ready-list, #pay-list{overflow-y:auto;min-height:0;padding-bottom:6px}
   /* 支払い済みの控えは畳んである。一覧の送りに巻き込まない。 */
   #view-pay .ops-fold{flex:none}
-  /* 記録は読む画面なので、こちらは画面ごと送ってよい。 */
-  #view-records{flex:1;min-height:0;overflow-y:auto}
+  /* 記録と管理は座って読む画面なので、こちらは画面ごと送ってよい。
+     管理をここに入れ忘れていたため、.wrap{overflow:hidden} に切り落とされ、
+     iPad 横向きでは「省エネ」より下の面に一切手が届かなかった。
+     最後の面が右下の切り替えボタンに隠れないよう、下に逃げを取る。 */
+  #view-records,#view-control{flex:1;min-height:0;overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    padding-bottom:calc(var(--tap) + 24px)}
   #view-records .sec-title{margin:0 0 14px}
   .panel{padding:clamp(14px,2.2vh,30px)}
   .queue-n{font-size:clamp(30px,5.6vh,52px)}

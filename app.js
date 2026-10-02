@@ -152,6 +152,9 @@ function openModal(id, cleanup){
   if(onClose){ const f = onClose; onClose = null; f(); }
   onClose = cleanup || null;
   openEl = $(id); openEl.classList.add('open');
+  // どの紙が出ているかを body に残す。受付機を訊く 1 枚の上だけ、
+  // 右下の切り替えを前に出すために CSS から見分ける必要がある。
+  document.body.dataset.modal = id;
   // 紙は visibility で出し入れしている。class を足した直後はまだ
   // visibility:hidden のままなので、ここで一度組み直させないと
   // 下の focus() が黙って効かない（visibility:hidden には焦点が乗らない）。
@@ -166,6 +169,7 @@ function closeModal(){
   if(!openEl) return;
   if(onClose){ const f = onClose; onClose = null; f(); }
   openEl.classList.remove('open'); openEl = null;
+  delete document.body.dataset.modal;
   $('main').removeAttribute('aria-hidden');
   if(lastFocus && document.contains(lastFocus)) lastFocus.focus();
 }
@@ -1700,19 +1704,61 @@ async function tracked(promise){
   try{ return await promise; }
   finally{ inFlight--; paintNet(); }
 }
+/* 帯を出すまでの待ち。
+   .info/connected は購読した瞬間に必ず一度 false を返すので、待ちを置かないと
+   読み込みのたびに全端末の上端で赤い帯が焚かれる。繋ぎ直しの瞬きも同じ。
+   赤はこの配色では「中止・取消」の色なので、常時出していると、
+   本当に送れていないときに誰も読まなくなる。
+   出すのは「読んで手を動かす必要があるとき」だけに絞る。 */
+const NET_OFFLINE_GRACE = 4000;   // これより短い切断は黙って通す
+const NET_SENDING_GRACE = 6000;   // 書き込みは普通 1 秒で終わる。遅いときだけ知らせる
+let offlineSince = 0, sendingSince = 0, netTimer = null;
+
 function paintNet(){
   const el = $('net-state');
   if(!el) return;
-  el.hidden = online && inFlight === 0;
-  el.innerHTML = online
-    ? `送信中の操作が <b>${inFlight}</b> 件あります。`
-    : `オフライン：未送信 <b>${inFlight}</b> 件。送信が済むまでページを閉じないでください。`;
+  const now = Date.now();
+  if(netTimer){ clearTimeout(netTimer); netTimer = null; }
+
+  // 溜まり始めた時刻。0 件に戻ったら忘れる。
+  if(inFlight > 0){ if(!sendingSince) sendingSince = now; }
+  else sendingSince = 0;
+
+  let kind = '', html = '', waitUntil = 0;
+  if(!online){
+    // 繋がっていない。この状態でリロードすると溜めた書き込みは消えるので、
+    // 件数があるかどうかに関わらず伝える必要がある。ここだけ赤。
+    if(offlineSince && now - offlineSince >= NET_OFFLINE_GRACE){
+      kind = 'offline';
+      html = inFlight > 0
+        ? `オフライン：未送信 <b>${inFlight}</b> 件。送信が済むまでページを閉じないでください。`
+        : 'オフライン：ほかの端末と繋がっていません。';
+    }else{
+      waitUntil = (offlineSince || now) + NET_OFFLINE_GRACE;
+    }
+  }else if(sendingSince){
+    // 繋がったまま送っている最中。異常ではないので赤では出さない。
+    if(now - sendingSince >= NET_SENDING_GRACE){
+      kind = 'busy';
+      html = `送信中の操作が <b>${inFlight}</b> 件あります。ページを閉じないでください。`;
+    }else{
+      waitUntil = sendingSince + NET_SENDING_GRACE;
+    }
+  }
+
+  el.hidden = !kind;
+  if(kind){ el.dataset.kind = kind; el.innerHTML = html; }
+  // 待ちが明けた時点で描き直す。これが無いと、黙ったまま二度と出ない。
+  if(waitUntil) netTimer = setTimeout(paintNet, Math.max(250, waitUntil - now));
 }
 /* .info/connected は認証不要。authReady の内側に置くと、
    オフラインでサインインが返らない間オフライン表示まで出なくなる。 */
 let wasConnected = false;
 onValue(ref(db,'.info/connected'), snap=>{
   online = snap.val() === true;
+  // 切れていた長さで帯を出すか決める。繋がったら起点を捨てる。
+  if(online) offlineSince = 0;
+  else if(!offlineSince) offlineSince = Date.now();
   paintNet();
   // 繋がり直したら名乗りを張り直す。切れている間にサーバーが席を消しているため。
   if(online && !wasConnected) rearmDesk();
