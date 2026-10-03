@@ -15,7 +15,7 @@ import {
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines,
   madeOf, backlogCups, oldestWaitMin, measuredRate, planDeal, dealDemand,
-  voidedOf, wantOf, netPriceOf, netQtyOf,
+  voidedOf, wantOf, netPriceOf, netQtyOf, heldOf,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
   soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
@@ -2897,10 +2897,14 @@ function renderReady(){
   // 約束に遅れている注文を、状態より先に上へ出す。
   // 待たせている相手から片づけるのが、行列のなかでいちばん効く。
   const nowMs = Date.now();
-  const lateOf = o => (o.status !== 'completed' && o.pickupMs && o.pickupMs < nowMs) ? 0 : 1;
+  // 後回しにした人は、期限まで並びの後ろへ送る（来たらいつでも渡せる）。
+  const heldAt = o => heldOf(o, nowMs) ? 1 : 0;
+  const lateOf = o => (!heldOf(o, nowMs) && o.status !== 'completed'
+                       && o.pickupMs && o.pickupMs < nowMs) ? 0 : 1;
   const list = all
     .filter(o => readyFilter === 'all' || o.status === readyFilter)
-    .sort((a,b)=> (lateOf(a) - lateOf(b))
+    .sort((a,b)=> (heldAt(a) - heldAt(b))
+               || (lateOf(a) - lateOf(b))
                || (READY_RANK[a.status] - READY_RANK[b.status]) || byOrder(a,b));
 
   // 未収＝まだ代金をもらっていない注文。中止以外のすべてを数える。
@@ -2981,6 +2985,7 @@ function renderReady(){
           ? `<span class="ops-state" data-kind="done">${state}</span>`
           : `<span class="ops-timer">${o.createdMs ? mmss(sec) : '—'}</span>`}
       </div>
+      ${heldOf(o) ? `<span class="ops-state" data-kind="held">後回し　${hhmm(o.holdUntil)} まで</span>` : ''}
       ${!prep && !done && o.pickupMs
         ? `<span class="ops-when" data-late="${late}">${hhmm(o.pickupMs)} お越しの予定${
             late ? `（${Math.floor((Date.now() - o.pickupMs)/60000)}分 過ぎています）` : ''}</span>` : ''}
@@ -3039,23 +3044,36 @@ function renderRecall(){
   const now = Date.now();
   // 呼んでから長い順。いちばん戻ってきていない人を先頭に置く。
   const waiting = orders.filter(o => o.status === 'ready' && o.number)
-                        .sort((a,b)=>(a.calledAt||0) - (b.calledAt||0));
+                        .sort((a,b)=> (heldOf(a, now) ? 1 : 0) - (heldOf(b, now) ? 1 : 0)
+                                   || (a.calledAt||0) - (b.calledAt||0));
   paintList(list, waiting.map(o=>{
-    const on  = !!o.calledAt && now - o.calledAt < CALL_HOLD_MS;
+    const held = heldOf(o, now);
+    const on  = !held && !!o.calledAt && now - o.calledAt < CALL_HOLD_MS;
     const min = o.calledAt ? Math.floor((now - o.calledAt) / 60000) : null;
-    const late = !!o.pickupMs && o.pickupMs < now;
+    const late = !held && !!o.pickupMs && o.pickupMs < now;
     return `
-    <article class="ops-card" data-call="${on}" data-late="${late}">
+    <article class="ops-card" data-call="${on}" data-late="${late}" data-held="${held}">
       <div class="ops-head">
         <span class="ops-num">${numOf(o)}</span>
         <span class="ops-timer">${o.createdMs ? mmss(elapsedSec(o.createdMs)) : '—'}</span>
       </div>
       ${o.pickupMs ? `<span class="ops-when" data-late="${late}">${hhmm(o.pickupMs)} お越しの予定</span>` : ''}
-      <p class="ops-hint">${on ? 'いま呼び出し表示に出ています'
+      <p class="ops-hint">${held
+        ? `<b class="ops-held">後回し　${hhmm(o.holdUntil)} まで</b>`
+        : on ? 'いま呼び出し表示に出ています'
         : min === null ? 'まだ呼んでいません'
         : min < 1 ? 'さきほど呼びました' : `${min}分前に呼びました`}</p>
-      <button type="button" class="ops-do" data-act="flash" data-id="${o.id}"
-              aria-label="${numOf(o)} をもう一度呼ぶ">もう一度呼ぶ</button>
+      ${held
+        ? `<button type="button" class="ops-do" data-act="unhold" data-id="${o.id}"
+                   aria-label="${numOf(o)} の後回しをやめて、いま呼ぶ">後回しをやめて呼ぶ</button>`
+        : `<button type="button" class="ops-do" data-act="flash" data-id="${o.id}"
+                   aria-label="${numOf(o)} をもう一度呼ぶ">もう一度呼ぶ</button>
+           <p class="ops-hold-head">来なかったときは、後回しにできます</p>
+           <div class="ops-row">
+             ${[5,10,20].map(m=>`
+             <button type="button" class="ops-sub" data-act="hold" data-id="${o.id}" data-min="${m}"
+                     aria-label="${numOf(o)} を ${m}分 後回しにする">${m}分</button>`).join('')}
+           </div>`}
     </article>`;
   }).join(''));
   $('recall-list').classList.toggle('hidden', waiting.length === 0);
@@ -3134,7 +3152,10 @@ function announce(){
 function renderCall(){
   // 札を持っていないお客様は呼びようがない（札なしの注文は受渡口で直接渡す）。
   // 番号が空のまま並べると、何も書かれていない枠だけが増えて数が読めなくなる。
-  const ready = orders.filter(o=>o.status === 'ready' && o.number).sort(byOrder);
+  // 後回しにした人は出さない。呼んでも来ない番号で画面が埋まると、
+  // いま来ている人の番号が読めなくなる（期限が過ぎれば自動で戻る）。
+  const ready = orders.filter(o=>o.status === 'ready' && o.number && !heldOf(o))
+                      .sort(byOrder);
   $('call-grid').innerHTML = ready.map(o=>
     `<span class="call-num" data-called-at="${o.calledAt||0}">${o.number}</span>`).join('');
   $('call-grid').classList.toggle('hidden', ready.length === 0);
@@ -3171,6 +3192,7 @@ function recall(now){
   if(document.body.dataset.tab !== 'call' || !announceReady) return;
   for(const o of orders){
     if(o.status !== 'ready' || !o.number || !o.calledAt) continue;
+    if(heldOf(o, now)) continue;        // 後回しの人は呼び直さない
     if(now - o.calledAt < RECALL_MS) continue;
     // 打ち切りは「呼んでから」で測る。受付からの経過で測ると、焼きに時間が
     // かかった注文ほど早く打ち切られ、いちばん待たせた相手を呼ばなくなる。
@@ -3264,7 +3286,12 @@ function renderPay(){
         ${o.status==='ready' ? `<div class="ops-row">
           <button type="button" class="ops-sub" data-act="paydone" data-id="${o.id}"
                   aria-label="${numOf(o)} の ${amount}円 を受け取って渡した">受け取って渡した</button>
-        </div>` : ''}`}
+        </div>` : ''}
+        <div class="ops-row">
+          <button type="button" class="ops-sub" data-act="later" data-id="${o.id}"
+                  aria-label="${numOf(o)} のお越しの時刻を遅らせる">
+            お越しを遅らせる${o.pickupMs ? `（いま ${hhmm(o.pickupMs)}）` : ''}</button>
+        </div>`}
     </article>`;
   }).join(''));
 
@@ -3296,6 +3323,86 @@ function renderPay(){
     </div>`).join('');
   $('paid-empty').classList.toggle('hidden', paid.length>0);
   renderRefund();
+}
+
+/* ---------- 受け取り時刻を遅らせる ----------
+   受付では混み具合から「◯時◯分ごろ」をご案内するが、お客様の都合で
+   それより後にしたいことがある。支払い口は必ず会話をする場所なので、ここで直す。
+   直した時刻は受渡の「お越しの予定」と遅れ判定にそのまま効く。 */
+let latering = null;        // { id, min }
+
+function openLater(id){
+  const o = orders.find(x=>x.id===id);
+  if(!o){ toast('注文が見つかりません'); return; }
+  latering = { id, min: 0 };
+  $('later-sub').textContent = `${numOf(o)}（${itemsText(o)}）`;
+  renderLater();
+  openModal('m-later');
+}
+function laterPick(min){
+  if(!latering) return;
+  latering.min = min;
+  renderLater();
+}
+function renderLater(){
+  const o = orders.find(x=>x.id===latering?.id);
+  if(!o) return;
+  // 基準は、いまご案内している時刻。無ければ今から数える。
+  const base = o.pickupMs && o.pickupMs > Date.now() ? o.pickupMs : Date.now();
+  const to = base + (latering.min || 0) * 60000;
+  $('later-rows').innerHTML = [5,10,15,30].map(m=>`
+    <button type="button" class="later-step" data-act="later-step" data-min="${m}"
+            aria-pressed="${latering.min === m}"
+            aria-label="${m}分 遅らせる">＋${m}分</button>`).join('');
+  $('later-total').innerHTML = latering.min
+    ? `お越しは <b>${hhmm(base)}</b> → <b>${hhmm(to)}</b> ごろ`
+    : (o.pickupMs ? `いまのご案内は <b>${hhmm(o.pickupMs)}</b> ごろです`
+                  : 'この注文には時刻のご案内がありません');
+  $('later-yes').disabled = !latering.min;
+}
+$('later-no')?.addEventListener('click', ()=>{ latering = null; closeModal(); });
+$('later-yes')?.addEventListener('click', async ()=>{
+  const v = latering; latering = null; closeModal();
+  if(!v || !v.min) return;
+  try{
+    await authReady;
+    let to = 0;
+    await tracked(runTransaction(ref(db,'orders/'+v.id), cur=>{
+      if(cur === null) return;
+      const base = cur.pickupMs && cur.pickupMs > Date.now() ? cur.pickupMs : Date.now();
+      to = base + v.min * 60000;
+      cur.pickupMs = to;
+      cur.updatedMs = Date.now();
+      return cur;
+    }));
+    const o = orders.find(x=>x.id===v.id);
+    toast(`${numOf(o)} のお越しを ${hhmm(to)} ごろにしました`, 'ok');
+  }catch(e){
+    console.error(e);
+    toast(writeHint(e, 'お越しの時刻を変えられませんでした'));
+  }
+});
+
+/* 後回し（保留）。期限までは呼び出しから外し、受渡の並びでも後ろへ送る。
+   0 を渡すと解除して、その場で呼び直す。 */
+async function setHold(id, min){
+  try{
+    await authReady;
+    await tracked(runTransaction(ref(db,'orders/'+id), cur=>{
+      if(cur === null) return;
+      if(min > 0) cur.holdUntil = Date.now() + min * 60000;
+      else { delete cur.holdUntil; cur.calledAt = Date.now(); }  // 解除＝いま呼ぶ
+      cur.updatedMs = Date.now();
+      return cur;
+    }));
+    const o = orders.find(x=>x.id===id);
+    toast(min > 0
+      ? `${numOf(o)} を ${min}分 後回しにしました（来たらいつでも渡せます）`
+      : `${numOf(o)} の後回しをやめて、呼び出しました`, 'ok');
+  }catch(e){
+    console.error(e);
+    toast(writeHint(e, '後回しにできませんでした'));
+  }
 }
 
 /* ---------- 一部だけやめる ----------
@@ -3951,6 +4058,14 @@ document.addEventListener('click', e=>{
 
     // 「3 つのうち 1 つは大丈夫です」。注文は変えず、やめたぶんを別に数える。
     case 'voidpart': openVoid(id); return;
+
+    // 約束の時刻に来ない人を後回しにする。来たらいつでも渡せる。
+    case 'hold':   setHold(id, Number(b.dataset.min) || 5); return;
+    case 'unhold': setHold(id, 0); return;
+
+    // 受付で「◯時◯分ごろ」とご案内したあと、それより後にしたいと言われる場面。
+    case 'later':      openLater(id); return;
+    case 'later-step': laterPick(Number(b.dataset.min) || 0); return;
     case 'void-step': {
       if(!voiding) return;
       const o = orders.find(x=>x.id===voiding.id);

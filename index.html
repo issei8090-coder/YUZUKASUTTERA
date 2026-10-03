@@ -879,6 +879,18 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .void-total{margin:4px 0 0;font-family:var(--serif);color:var(--brown);
   font-size:clamp(20px,3vh,28px);letter-spacing:.04em;text-align:center}
 .void-note{margin:8px 0 0;color:var(--red);font-size:15px;text-align:center;min-height:1.2em}
+/* 遅らせる幅を選ぶ。立ったまま 1 タップで決められるよう横に並べる。 */
+.later-rows{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:16px 0 10px}
+.later-step{min-height:clamp(56px,8vh,72px);min-width:clamp(78px,12vw,110px);
+  border-radius:var(--r-ctl);cursor:pointer;font-family:var(--serif);
+  font-size:clamp(20px,3vh,28px);color:var(--brown);background:var(--lift);
+  border:2px solid var(--gold);line-height:1}
+.later-step[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
+/* 後回しにした注文。呼び出しの面と受渡で同じ見え方にする。 */
+.ops-held{color:var(--warn)}
+.ops-hold-head{margin:10px 0 4px;color:var(--dim);font-size:clamp(14px,2vh,17px);text-align:center}
+.ops-card[data-held="true"]{opacity:.72}
+.ops-state[data-kind="held"]{color:var(--warn)}
 
 .toast-undo{margin-left:16px;min-height:48px;padding:0 22px;border-radius:999px;
   border:1px solid currentColor;background:transparent;color:inherit;
@@ -2604,6 +2616,20 @@ if (location.protocol === 'file:') {
     <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
       <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">取りました・確定する</button>
       <button type="button" class="cta-ghost" id="place-no" style="width:100%;justify-content:center">まだです・戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- 受付でご案内した時刻より後にしたい、と言われる場面。支払い口で直す。 -->
+<div class="modal" id="m-later" role="dialog" aria-modal="true" aria-labelledby="later-h">
+  <div class="sheet">
+    <h2 id="later-h">お越しの時刻を遅らせますか？</h2>
+    <p class="sheet-sub" id="later-sub"></p>
+    <div class="later-rows" id="later-rows"></div>
+    <p class="void-total" id="later-total"></p>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+      <button type="button" class="cta" id="later-yes" style="width:100%;justify-content:center">この時刻にする</button>
+      <button type="button" class="cta-plain" id="later-no" style="width:100%;justify-content:center">戻る</button>
     </div>
   </div>
 </div>

@@ -363,6 +363,14 @@ type Order struct {
 	// 全部やめた場合は中止 (cancelled) にする。
 	Voided map[string]int `json:"voided,omitempty"`
 
+	// HoldUntil は「このお客様は後回し」の期限（ミリ秒）。
+	//
+	// 約束した時刻に来るとは限らない。呼んでも来ない相手を呼び続けると、
+	// 呼び出し表示が埋まって、いま来ている人の番号が読めなくなる。
+	// この時刻までは呼び出しから外し、受渡の並びでも後ろへ送る。
+	// 過ぎれば自動で戻る（来たらいつでも渡せる）。
+	HoldUntil int64 `json:"holdUntil,omitempty"`
+
 	// Session は営業回。リハーサルと本番を同じ DB で回すための仕切りで、
 	// 集計と画面はこれで絞る。注文を消さずに仕切れるので記録が失われない。
 	// 空の旧データは DefaultSession に属するものとして扱う。

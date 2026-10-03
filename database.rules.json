@@ -248,6 +248,9 @@
         "pickupMs": {
           ".validate": "newData.isNumber() && newData.val() > 0"
         },
+        "holdUntil": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
         "made": {
           "$flavor": {
             ".validate": "$flavor.matches(/^[a-z][a-z0-9_]{0,31}$/) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 99"
