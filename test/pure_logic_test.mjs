@@ -11,6 +11,7 @@ import {
   leftOf, madeOf, allMade, backlogCups, oldestWaitMin, measuredRate,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
+  usedPlates, kitchenPeople, batterRate,
   soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
   planDeal, dealDemand, voidedOf, wantOf, netPriceOf, netQtyOf,
 } from '../lib/pure.js';
@@ -141,19 +142,25 @@ eq('実測は毎分カップ数',
                  { status:'completed', quantity:4, calledAt: NOW - 5 * 60000 },
                  { status:'completed', quantity:9, calledAt: NOW - 30 * 60000 }], NOW), 1);
 
-console.log('\n[9] 厨房の体制（人数で決まる）');
-// 焼ける量を決めているのは台ではなく人。1 人が同時に見られるのは 12 マス
-// （＝2カップ）くらいで、大きい台はマスを余らせて使う。
+console.log('\n[9] 厨房の体制（台ごとのマス数と、生地の届く速さ）');
+// 台はマス数が揃っていない（台1 30・台2 24・台3 20）。基本は台1と台2で回し、
+// 台3は予備。焼ける速さは「焼く側」と「生地側」の低いほうで決まる。
 // ここがずれると、約束する受け取り時刻が全部ずれる。
-eq('1回ぶんの個数（4人×12マス）', cyclePieces({ people:4 }), 48);
-// 既定の見込み率は 75%（当日の立ち上がりの実測が毎分 1.2〜1.4 カップだったため）。
-eq('4人・見込み75%なら毎分1.5カップ', rateFromKitchen(), 1.5);
-eq('4人・見込み100%なら毎分2カップ', rateFromKitchen({ people:4, holes:12, cycleMin:4, margin:100 }), 2);
-eq('6人なら毎分3カップ',             rateFromKitchen({ people:6, holes:12, cycleMin:4, margin:100 }), 3);
-eq('2人なら毎分1カップ',             rateFromKitchen({ people:2, holes:12, cycleMin:4, margin:100 }), 1);
-eq('見込み率で落とせる',             rateFromKitchen({ people:4, holes:12, cycleMin:4, margin:50 }), 1);
-eq('でたらめな設定は既定に戻す', kitchenOf({ people:'x', holes:0, cycleMin:-1, margin:999 }),
-   { people:4, holes:12, cycleMin:4, margin:75 });
+const K = kitchenOf();
+eq('既定で使う台',       usedPlates().map(p=>p.label), ['台1','台2']);
+eq('1回ぶんの個数',      cyclePieces(), 54);               // 30 + 24
+eq('焼く人の合計',       kitchenPeople(), 4);              // 2 + 2
+eq('生地が届く速さ',     batterRate(), 5);                 // 5個 × 60個 ÷ 10分 ÷ 6
+eq('焼く側が上限・見込み75%',
+   Number(rateFromKitchen().toFixed(2)), 1.69);            // 54/6/4 = 2.25 × 0.75
+eq('見込み100%なら 2.25', rateFromKitchen({ margin:100 }), 2.25);
+eq('予備の台3も使うと 74個', cyclePieces({ plates:{ ...K.plates, '3':{ ...K.plates['3'], use:true } } }), 74);
+// 生地が追いつかなければ、台がいくつあっても焼けない。
+eq('生地側が上限になる',
+   Number(rateFromKitchen({ margin:100, bowls:{ ...K.bowls, count:1 } }).toFixed(2)), 1.0);
+eq('でたらめな設定は既定に戻す',
+   kitchenOf({ cycleMin:-1, margin:999, plates:{ '1':{ holes:0, people:99 } } }).plates['1'],
+   { holes:30, people:2, use:true });
 
 const ord = (seq, f, q, made) => ({
   seq, createdMs: NOW - (100 - seq) * 60000, status: 'pending', quantity: q,
@@ -164,18 +171,23 @@ const plan = (list, kitchen) => planBakers(list, kitchen, ['plain','flavor_b'])
 eq('残りは個で数える（受け取り済みを引く）',
    piecesLeft([ord(1, 'plain', 3, { plain: 1 })], 'plain'), 12);
 // 1 つの台に 1 つの味しか載らない。多いほうへ寄せ切ると、古い注文の味が焼かれない。
+// 既定は台1(30マス)と台2(32マス)の 2 台。
 eq('古い注文の味にも 1 台は当てる',
-   plan([ord(1, 'flavor_b', 1), ord(2, 'plain', 10)], { people:4 }),
-   '台1:plain/12 台2:plain/12 台3:plain/12 台4:flavor_b/6');
+   plan([ord(1, 'flavor_b', 1), ord(2, 'plain', 10)]),
+   '台1:plain/30 台2:flavor_b/6');
 // 注文より口が多ければ、その数だけ載せる（作り置きはできないので焼き足さない）。
 eq('注文が少なければ空きのまま',
-   plan([ord(1, 'plain', 1)], { people:3 }),
-   '台1:plain/6 台2:空き 台3:空き');
-eq('焼くものが無ければ全部空き', plan([], { people:2 }), '台1:空き 台2:空き');
+   plan([ord(1, 'plain', 1)]),
+   '台1:plain/6 台2:空き');
+eq('焼くものが無ければ全部空き', plan([]), '台1:空き 台2:空き');
 // 先頭の注文だけで口が全部埋まるなら、この 1 回はその味だけになる（受付順）。
 eq('先頭の注文で埋まるときは 1 色',
-   plan([ord(1, 'plain', 20), ord(2, 'flavor_b', 20)], { people:2 }),
-   '台1:plain/12 台2:plain/12');
+   plan([ord(1, 'plain', 20), ord(2, 'flavor_b', 20)]),
+   '台1:plain/30 台2:plain/24');
+// 予備の台3を使うと、3 台に割り当てられる。
+eq('予備の台を使うと 3 台に配る',
+   plan([ord(1, 'plain', 20)], { plates:{ ...K.plates, '3':{ ...K.plates['3'], use:true } } }),
+   '台1:plain/30 台2:plain/24 台3:plain/20');
 
 console.log('\n[10] 売れる速さと生地切れ');
 // 売り切れは必ず起きる。何分前に分かるかが全てなので、実績が薄いうちは言わない。
@@ -191,13 +203,16 @@ eq('売れていなければ言わない',   stockOutMin(40, null), null);
 eq('残り0なら0分',               stockOutMin(0, 2), 0);
 
 console.log('\n[11] 生地（ボウル）');
-// 1 ボウル 400g で 3 カップ。端数は 1 ボウル余分に要る（混ぜ足せない）。
-eq('3カップ＝1ボウル',   bowlsFor(3), 1);
-eq('4カップ＝2ボウル',   bowlsFor(4), 2);
-eq('100カップ＝34ボウル', bowlsFor(100), 34);
-eq('0カップ＝0ボウル',   bowlsFor(0), 0);
-eq('100カップ＝13.6kg',  weightText(gramsFor(100)), '13.6kg');
-eq('3カップは400g',      weightText(gramsFor(3)), '400g');
+// ボウル 1 個 400g で 60 個＝10 カップ。端数は 1 個余分に要る（混ぜ足せない）。
+eq('10カップ＝1ボウル',    bowlsFor(10), 1);
+eq('3カップでも1ボウル',   bowlsFor(3), 1);
+eq('11カップ＝2ボウル',    bowlsFor(11), 2);
+eq('100カップ＝10ボウル',  bowlsFor(100), 10);
+eq('0カップ＝0ボウル',     bowlsFor(0), 0);
+eq('100カップ＝4.0kg',     weightText(gramsFor(100)), '4.0kg');
+eq('10カップは400g',       weightText(gramsFor(10)), '400g');
+// ボウルの大きさを変えれば換算も変わる（設定から引いている）。
+eq('1個30個のボウルなら', bowlsFor(10, { bowls:{ ...K.bowls, pieces:30 } }), 2);
 
 console.log('\n[12] 届いた分をまとめて配る');
 // 厨房は板ごと持ってくる。受付順に、足りていないカップへ割り当てる。

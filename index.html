@@ -881,6 +881,16 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .void-note{margin:8px 0 0;color:var(--red);font-size:15px;text-align:center;min-height:1.2em}
 /* 遅らせる幅を選ぶ。立ったまま 1 タップで決められるよう横に並べる。 */
 .later-rows{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:16px 0 10px}
+/* 厨房の台。実物のマス数がそのまま並ぶ。 */
+.plate-rows{display:grid;gap:10px;margin:14px 0}
+.plate-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:12px 16px}
+.plate-row[data-use="false"]{opacity:.55}
+.plate-name{font-family:var(--serif);color:var(--brown);font-size:18px;min-width:3.5em}
+.plate-row .field{margin:0}
+.plate-row .field input{width:5.5em}
+.plate-use{display:flex;align-items:center;gap:8px;min-height:var(--tap);cursor:pointer;
+  margin-left:auto;font-size:15px;color:var(--brown-soft)}
 .later-step{min-height:clamp(56px,8vh,72px);min-width:clamp(78px,12vw,110px);
   border-radius:var(--r-ctl);cursor:pointer;font-family:var(--serif);
   font-size:clamp(20px,3vh,28px);color:var(--brown);background:var(--lift);
@@ -2407,30 +2417,47 @@ if (location.protocol === 'file:') {
         <p class="ctl-note">
           焼ける量を決めているのは台ではなく<b>人数</b>です。1 人が同時に見られるのは
           12 マスほど（＝2 カップ）で、大きい台はマスを余らせて使います。
-          <b>シフトで人数が変わったら、ここを変えてください。</b>
+          <b>台を増やす・減らすときは、ここを変えてください。</b>
           見積もりも、厨房の板に出る割り当ても一緒に変わります。<br>
-          ここに入れるのは<b>焼く人の数</b>です。<b>生地を混ぜる人は数えないでください</b>
-          （1 ボウル 400g で 3 カップ。4 人で焼くと 1.5 分に 1 杯空くので、
-          混ぜ続ける人が常時 1 人要ります。その人は焼けません）。
+          「人」に入れるのは<b>焼く人の数</b>です。<b>生地を混ぜる人は数えないでください</b>
+          （その人は焼けません）。
         </p>
-        <div class="ctl-count" id="kit-people">
-          <button type="button" class="ctl-step" data-people="-1" aria-label="厨房の人数を 1 人減らす">−</button>
-          <span class="ctl-count-n"><b id="kit-n">4</b>人</span>
-          <button type="button" class="ctl-step" data-people="1" aria-label="厨房の人数を 1 人増やす">＋</button>
-        </div>
+        <!-- 台はマス数が揃っていない。実物をそのまま並べる。
+             使わない台は外しておくと、割り当てにも見積もりにも出ない。 -->
+        <div class="plate-rows" id="kit-plates"></div>
         <p class="ctl-hint" id="kit-calc"></p>
         <div class="ctl-fields">
-          <div class="field">
-            <label for="kit-holes">1 人が見るマス数</label>
-            <input type="number" id="kit-holes" min="1" max="60" step="1" inputmode="numeric" value="12">
-          </div>
           <div class="field">
             <label for="kit-cycle">1 回にかかる分</label>
             <input type="number" id="kit-cycle" min="1" max="30" step="1" inputmode="numeric" value="4">
           </div>
           <div class="field">
             <label for="kit-margin">見込み（％）</label>
-            <input type="number" id="kit-margin" min="10" max="100" step="5" inputmode="numeric" value="100">
+            <input type="number" id="kit-margin" min="10" max="100" step="5" inputmode="numeric" value="75">
+          </div>
+        </div>
+
+        <h3 class="field-group" style="margin-top:22px">生地（ボウル）</h3>
+        <p class="ctl-note">
+          洗い場との往復が間に合わないと、台がいくつあっても焼けません。
+          下の数から<b>生地が届く速さ</b>を出し、焼ける速さと低いほうを見積もりに使います。
+        </p>
+        <div class="ctl-fields">
+          <div class="field">
+            <label for="kit-bowls">ボウルの数</label>
+            <input type="number" id="kit-bowls" min="1" max="99" step="1" inputmode="numeric" value="5">
+          </div>
+          <div class="field">
+            <label for="kit-bowl-pieces">1 個でできる数（個）</label>
+            <input type="number" id="kit-bowl-pieces" min="1" max="999" step="1" inputmode="numeric" value="60">
+          </div>
+          <div class="field">
+            <label for="kit-bowl-grams">1 個の重さ（g）</label>
+            <input type="number" id="kit-bowl-grams" min="10" max="9999" step="10" inputmode="numeric" value="400">
+          </div>
+          <div class="field">
+            <label for="kit-wash">洗い場まで往復（分）</label>
+            <input type="number" id="kit-wash" min="1" max="120" step="1" inputmode="numeric" value="10">
           </div>
         </div>
         <p class="field-hint" id="rate-hint"></p>

@@ -18,6 +18,7 @@ import {
   voidedOf, wantOf, netPriceOf, netQtyOf, heldOf,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
+  usedPlates, kitchenPeople, batterRate,
   soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
   PIECES_PER_CUP, KITCHEN_DEFAULT
 } from "./lib/pure.js";
@@ -878,7 +879,7 @@ function paintReserveAdmin(){
       const stock = remainingOf(f.key);
       const out   = stockOutMin(stock, soldRate(orders, f.key, now));
       return `<span data-soon="${out !== null && out <= 15}"><b>${f.short || f.label}</b> 残り ${stock}カップ`
-        + (stock > 0 ? `（生地 ${bowlsFor(stock)}杯・${weightText(gramsFor(stock))}）` : '')
+        + (stock > 0 ? `（生地 ${bowlsFor(stock, kitchen)}ボウル・${weightText(gramsFor(stock, kitchen))}）` : '')
         + (stock === 0 ? '（売り切れ）' : out !== null ? `・約${out}分で尽きます` : '')
         + '</span>';
     }).join('　／　');
@@ -898,18 +899,61 @@ function paintReserveAdmin(){
       : closed ? `${closeAt} を過ぎたので、受付を閉じています。`
                : `${closeAt} になったら、受付を自動で閉じます。`;
   }
-  const n = $('kit-n');
-  if(n) n.textContent = String(kitchen.people);
+  paintPlates();
   const calc = $('kit-calc');
-  if(calc) calc.innerHTML =
-    `焼く人 ${kitchen.people}人 × ${kitchen.holes}マス ＝ <b>${cyclePieces(kitchen)}個</b>`
-    + `（${(cyclePieces(kitchen)/PIECES_PER_CUP).toFixed(1)}カップ）を ${kitchen.cycleMin}分ごと`
-    + `${kitchen.margin < 100 ? `・見込み ${kitchen.margin}%` : ''}`
-    + ` → <b>毎分 ${cupRate.toFixed(1)}カップ</b>`;
-  for(const [id, v] of [['kit-holes', kitchen.holes], ['kit-cycle', kitchen.cycleMin],
-                        ['kit-margin', kitchen.margin]]){
+  if(calc){
+    const bake = cyclePieces(kitchen) / PIECES_PER_CUP / kitchen.cycleMin;
+    const batter = batterRate(kitchen);
+    // どちらが上限になっているかを出す。台を増やしても生地が追いつかなければ
+    // 焼ける量は変わらない（そこが分からないと、増やす判断を間違える）。
+    const bound = batter < bake ? '生地' : '焼き';
+    calc.innerHTML =
+      `使う台 ${usedPlates(kitchen).map(p=>`${p.label} ${p.holes}マス`).join(' ＋ ')}`
+      + ` ＝ <b>${cyclePieces(kitchen)}個</b>（${(cyclePieces(kitchen)/PIECES_PER_CUP).toFixed(1)}カップ）`
+      + `を ${kitchen.cycleMin}分ごと　焼く人 ${kitchenPeople(kitchen)}人<br>`
+      + `焼く側 ${bake.toFixed(1)} ／ 生地側 ${batter.toFixed(1)} カップ/分`
+      + `（${bound}が上限）`
+      + `${kitchen.margin < 100 ? `・見込み ${kitchen.margin}%` : ''}`
+      + ` → <b>毎分 ${cupRate.toFixed(1)}カップ</b>`;
+  }
+  for(const [id, v] of [['kit-cycle', kitchen.cycleMin], ['kit-margin', kitchen.margin],
+                        ['kit-bowls', kitchen.bowls.count], ['kit-bowl-pieces', kitchen.bowls.pieces],
+                        ['kit-bowl-grams', kitchen.bowls.grams], ['kit-wash', kitchen.bowls.washMin]]){
     const el = $(id);
     if(el && document.activeElement !== el) el.value = String(v);
+  }
+}
+
+/* 台の設定。実物のマス数がそのまま並ぶ。使わない台は外しておく。 */
+function paintPlates(){
+  const host = $('kit-plates');
+  if(!host) return;
+  const act = document.activeElement;
+  host.innerHTML = Object.keys(kitchen.plates).sort().map(key=>{
+    const p = kitchen.plates[key];
+    return `
+    <div class="plate-row" data-use="${p.use}">
+      <span class="plate-name">台${key}</span>
+      <div class="field">
+        <label for="plate-h-${key}">マス</label>
+        <input type="number" id="plate-h-${key}" data-plate="${key}" data-k="holes"
+               min="1" max="99" step="1" inputmode="numeric" value="${p.holes}">
+      </div>
+      <div class="field">
+        <label for="plate-p-${key}">人</label>
+        <input type="number" id="plate-p-${key}" data-plate="${key}" data-k="people"
+               min="0" max="12" step="1" inputmode="numeric" value="${p.people}">
+      </div>
+      <label class="plate-use">
+        <input type="checkbox" data-plate="${key}" data-k="use" ${p.use ? 'checked' : ''}>
+        <span>${p.use ? '使う' : '予備'}</span>
+      </label>
+    </div>`;
+  }).join('');
+  // 打っている最中の欄に戻る（描き直しで指が外れると数字を打ち切れない）。
+  if(act?.dataset?.plate){
+    const back = host.querySelector(`[data-plate="${act.dataset.plate}"][data-k="${act.dataset.k}"]`);
+    back?.focus();
   }
 }
 
@@ -1383,14 +1427,20 @@ async function setKitchen(patch){
   try{ await authReady; await update(ref(db,'config/kitchen'), next); }
   catch(err){ toast(writeHint(err, '厨房の体制を共有できませんでした')); }
 }
-$('kit-people')?.addEventListener('click', e=>{
-  const b = e.target.closest('button[data-people]');
-  if(!b) return;
-  setKitchen({ people: kitchen.people + Number(b.dataset.people) });
+$('kit-plates')?.addEventListener('change', e=>{
+  const el = e.target.closest('[data-plate]');
+  if(!el) return;
+  const key = el.dataset.plate, k = el.dataset.k;
+  const v = k === 'use' ? el.checked : Number(el.value);
+  setKitchen({ plates: { ...kitchen.plates, [key]: { ...kitchen.plates[key], [k]: v } } });
 });
-$('kit-holes')?.addEventListener('change', e=>setKitchen({ holes: Number(e.target.value) }));
 $('kit-cycle')?.addEventListener('change', e=>setKitchen({ cycleMin: Number(e.target.value) }));
 $('kit-margin')?.addEventListener('change', e=>setKitchen({ margin: Number(e.target.value) }));
+const setBowl = patch => setKitchen({ bowls: { ...kitchen.bowls, ...patch } });
+$('kit-bowls')?.addEventListener('change',       e=>setBowl({ count:   Number(e.target.value) }));
+$('kit-bowl-pieces')?.addEventListener('change', e=>setBowl({ pieces:  Number(e.target.value) }));
+$('kit-bowl-grams')?.addEventListener('change',  e=>setBowl({ grams:   Number(e.target.value) }));
+$('kit-wash')?.addEventListener('change',        e=>setBowl({ washMin: Number(e.target.value) }));
 
 /* 終了時刻。人が閉め忘れても、約束できない注文を受け続けないための歯止め。 */
 $('close-at')?.addEventListener('change', async e=>{
@@ -2501,7 +2551,7 @@ function renderKitchen(){
       const cups = pieces / PIECES_PER_CUP;
       return `<span class="kds-left-cell" data-zero="${stock === 0}" data-soon="${soon}">
         <b>${f.short || f.label}</b> 焼き待ち ${pieces}個（${cups.toFixed(0)}カップ`
-        + `${cups > 0 ? ` ＝ 生地${bowlsFor(cups)}杯` : ''}）`
+        + `${cups > 0 ? ` ＝ 生地${bowlsFor(cups, kitchen)}ボウル` : ''}）`
         + `・${stock === 0 ? 'この先は売り切れ'
              : `この先あと${stock}カップ${out !== null ? `（約${out}分）` : ''}`}</span>`;
     }).join('');
