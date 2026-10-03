@@ -3825,14 +3825,27 @@ document.addEventListener('click', e=>{
     }
     case 'collect-ok':     confirmCollect(); break;
     case 'collect-cancel': cancelCollect(); break;
-    case 'unpay':
-      ask({
+    case 'unpay': {
+      // 中止された注文で押すときは「打ち間違いを戻す」ではなく「返金した」の記録。
+      // 返したかどうかを残す欄が無いので、この操作がその代わりになっている。
+      // 同じ文言のままだと、何を記録しているのか押す人に伝わらない。
+      const o = orders.find(x=>x.id===id);
+      const refund = !!o && o.status === 'cancelled';
+      ask(refund ? {
+        title: '現金をお返ししましたか？',
+        sub: `${b.dataset.num||''} は中止された注文です。`
+           + `${yen(o.price||0)}円 をお返ししたら「はい」を押してください。`,
+        warn: 'まだお返ししていなければ「いいえ」。'
+            + '「はい」を押すと、この金額は「返金すべき」と金庫の理論値から外れます。',
+        onYes: ()=>setPaid(id, false)
+      } : {
         title: '支払いを「未払い」に戻しますか？',
         sub: `${b.dataset.num||''} の記録を未払いに戻します。`,
         warn: 'お客様に現金をお返しする場合は、忘れずに行ってください。',
         onYes: ()=>setPaid(id, false)
       });
       break;
+    }
 
     case 'move': {
       const to = b.dataset.to;
