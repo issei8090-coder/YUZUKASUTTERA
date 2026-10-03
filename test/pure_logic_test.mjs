@@ -151,9 +151,10 @@ eq('既定で使う台',       usedPlates().map(p=>p.label), ['台1','台2']);
 eq('1回ぶんの個数',      cyclePieces(), 54);               // 30 + 24
 eq('焼く人の合計',       kitchenPeople(), 4);              // 2 + 2
 eq('生地が届く速さ',     batterRate(), 5);                 // 5個 × 60個 ÷ 10分 ÷ 6
+eq('1回は 5分でちょうど 9カップ', cyclePieces() / 6, 9);
 eq('焼く側が上限・見込み75%',
-   Number(rateFromKitchen().toFixed(2)), 1.69);            // 54/6/4 = 2.25 × 0.75
-eq('見込み100%なら 2.25', rateFromKitchen({ margin:100 }), 2.25);
+   Number(rateFromKitchen().toFixed(2)), 1.35);            // 54/6/5 = 1.8 × 0.75
+eq('見込み100%なら 1.8', rateFromKitchen({ margin:100 }), 1.8);
 eq('予備の台3も使うと 74個', cyclePieces({ plates:{ ...K.plates, '3':{ ...K.plates['3'], use:true } } }), 74);
 // 生地が追いつかなければ、台がいくつあっても焼けない。
 eq('生地側が上限になる',
