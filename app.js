@@ -15,7 +15,9 @@ import {
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines,
   madeOf, backlogCups, oldestWaitMin, measuredRate,
-  forecast, reserveOn, stopIntake, hhmm, RATE_DEFAULT
+  forecast, reserveOn, stopIntake, hhmm,
+  kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
+  PIECES_PER_CUP, KITCHEN_DEFAULT
 } from "./lib/pure.js";
 
 /* DB 書き込みの失敗理由を切り分ける。
@@ -623,6 +625,15 @@ const deskStale = id => {
 const deskMode = id => (deskPolicy[id]?.mode === 'standby') ? 'standby' : 'open';
 const deskHold = id => deskPolicy[id]?.hold === true;
 const deskAuto = id => deskPolicy[id]?.auto === true;
+/* 強制解除された端末の印。本部が「強制解除」を押すと、そのとき席を持っていた
+   端末の印がここに入る。
+
+   名乗りを消すだけでは席は空かない。消えた名乗りは「回線が切れただけ」と
+   区別が付かないので、持っていた端末が黙って取り直すように作ってある
+   （受付の途中で選び直させないため）。本部から見ると、押しても何も起きない。
+   だから「この端末はもう使わない」を、消えない場所に残す。 */
+const deskKick = id => deskPolicy[id]?.kick || '';
+const kicked   = id => deskKick(id) === clientId;
 const deskHelp = id => Number(desksOnline[id]?.help || 0);
 // 呼び出しが出ている受付機。古い順に並べる（待たせている順に片づける）。
 const helpingDesks = () => DESKS.filter(d=>deskHelp(d.id) > 0)
@@ -692,8 +703,9 @@ function renderDeskAdmin(){
     const standby = deskMode(d.id) === 'standby';
     const serving = deskBusy(d.id);
     const auto = deskAuto(d.id);
+    const kick = !!deskKick(d.id);
     const state = standby ? (on ? '待機中（お客様には他の窓口を案内）' : '待機中（空いています）')
-      : !on ? '空いています'
+      : !on ? (kick ? '解除済み（元の端末は戻りません）' : '空いています')
       : serving ? `接客中（${helpAgo(on.busy)}）`
       : mine ? '注文受付中・空き（この端末）'
       : deskStale(d.id) ? '注文受付中（応答なし）' : '注文受付中・空き';
@@ -707,7 +719,8 @@ function renderDeskAdmin(){
               aria-label="${d.label} を${standby ? '注文受付中に戻す' : '待機にする'}">
         ${standby ? '注文受付中に戻す' : '待機にする'}</button>
       <button type="button" class="desk-free" data-act="deskfree" data-id="${d.id}"
-              ${on ? '' : 'disabled'} aria-label="${d.label} を空きに戻す">空ける</button>
+              ${on ? '' : 'disabled'}
+              aria-label="${d.label} を強制解除して空きに戻す">強制解除</button>
     </div>`;
   }).join('');
   const at = $('auto-toggle');
@@ -744,7 +757,8 @@ function renderDeskAdmin(){
    判断の計算は lib/pure.js にあり、Node からテストできる。ここは配線だけ。
    ============================================================ */
 let reserveMode   = 'auto';          // config/reserve: 'auto' | 'on' | 'off'
-let cupRate       = RATE_DEFAULT;    // config/rate: 毎分何カップ焼けるか
+let kitchen       = { ...KITCHEN_DEFAULT };   // config/kitchen: 何人で、1人いくつ焼くか
+let cupRate       = rateFromKitchen(kitchen); // そこから出る毎分カップ数
 let reserveNow    = false;           // いま受け取り時刻をご案内しているか
 let intakeStopped = false;           // いま受付を止めているか
 let flow = { backlog:0, cups:0, rate:RATE_DEFAULT, waitMin:0, pickupMs:0 };
@@ -813,8 +827,19 @@ function paintReserveAdmin(){
     hint.textContent = `焼き待ち ${backlogCups(orders)}カップ・いまの見積もり ${flow.waitMin}分`
       + (m ? `／実測 ${m.toFixed(1)}カップ/分（直近10分）` : '／実測はまだありません');
   }
-  const input = $('rate-cups');
-  if(input && document.activeElement !== input) input.value = String(cupRate);
+  const n = $('kit-n');
+  if(n) n.textContent = String(kitchen.people);
+  const calc = $('kit-calc');
+  if(calc) calc.innerHTML =
+    `${kitchen.people}人 × ${kitchen.holes}マス ＝ <b>${cyclePieces(kitchen)}個</b>`
+    + `（${(cyclePieces(kitchen)/PIECES_PER_CUP).toFixed(1)}カップ）を ${kitchen.cycleMin}分ごと`
+    + `${kitchen.margin < 100 ? `・見込み ${kitchen.margin}%` : ''}`
+    + ` → <b>毎分 ${cupRate.toFixed(1)}カップ</b>`;
+  for(const [id, v] of [['kit-holes', kitchen.holes], ['kit-cycle', kitchen.cycleMin],
+                        ['kit-margin', kitchen.margin]]){
+    const el = $(id);
+    if(el && document.activeElement !== el) el.value = String(v);
+  }
 }
 
 /* ---------- 省エネ ----------
@@ -1270,13 +1295,21 @@ $('reserve-mode')?.addEventListener('click', async e=>{
   catch(err){ toast(writeHint(err, 'ご案内の設定を共有できませんでした')); }
 });
 
-/* 焼ける速さ。見積もりの根拠はこれ 1 つなので、実測を見ながら手で合わせる。 */
-$('rate-cups')?.addEventListener('change', async e=>{
-  const v = Math.max(0.1, Math.min(60, Number(e.target.value) || RATE_DEFAULT));
-  e.target.value = String(v);
-  try{ await authReady; await set(ref(db,'config/rate'), v); }
-  catch(err){ toast(writeHint(err, '焼ける速さを共有できませんでした')); }
+/* 厨房の体制。ここを変えると、見積もりも厨房の板の割り当ても一緒に変わる。
+   シフトで人数が変わるたびに触る場所なので、押しやすい増減で持つ。 */
+async function setKitchen(patch){
+  const next = kitchenOf({ ...kitchen, ...patch });
+  try{ await authReady; await update(ref(db,'config/kitchen'), next); }
+  catch(err){ toast(writeHint(err, '厨房の体制を共有できませんでした')); }
+}
+$('kit-people')?.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-people]');
+  if(!b) return;
+  setKitchen({ people: kitchen.people + Number(b.dataset.people) });
 });
+$('kit-holes')?.addEventListener('change', e=>setKitchen({ holes: Number(e.target.value) }));
+$('kit-cycle')?.addEventListener('change', e=>setKitchen({ cycleMin: Number(e.target.value) }));
+$('kit-margin')?.addEventListener('change', e=>setKitchen({ margin: Number(e.target.value) }));
 
 $('notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
 $('ready-notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
@@ -1310,13 +1343,35 @@ async function releaseDesk(id, force){
       if(!force && cur.client !== clientId) return;   // 自分の席でなければ中止
       return null;                                     // null を返すと削除
     });
-  }catch(e){ console.error('受付機を空けられませんでした:', e); }
+  }catch(e){
+    // 黙って失敗すると、本部からは「押しても何も起きない」にしか見えない。
+    console.error('受付機を空けられませんでした:', e);
+    toast(writeHint(e, '受付機を空けられませんでした'));
+  }
+}
+
+/* 強制解除。席を空けるだけでなく、持っていた端末に「もう使うな」を残す。
+   消えた名乗りだけでは端末が取り直してしまうので、ここが本体。 */
+async function kickDesk(id){
+  const holder = desksOnline[id]?.client || '';
+  try{
+    await authReady;
+    // 端末が居ない席は、印を残しても意味がない（次に取る端末が困るだけ）。
+    if(holder) await tracked(update(ref(db,'config/desks/'+id), { kick: holder }));
+    await releaseDesk(id, true);
+    toast(`${deskLabel(id)} を解除しました。`, 'info');
+  }catch(e){
+    toast(writeHint(e, '受付機を解除できませんでした'));
+  }
 }
 
 /* 席を掴む。購読の値で判定すると、2 台が同時に同じ番号を押したとき両方通る。
    トランザクションにして、後から来たほうを必ず弾く。 */
 async function claimDesk(id, quiet){
   if(deskClaiming) return false;
+  // 自動の取り直しは、強制解除された席には行かない。
+  // 人が画面で選び直したときだけ解ける（その端末が目の前にあるということ）。
+  if(quiet && kicked(id)) return false;
   deskClaiming = true;
   const err = $('desk-err');
   const say = msg => { if(err){ err.textContent = msg; err.classList.add('show'); } };
@@ -1336,6 +1391,10 @@ async function claimDesk(id, quiet){
     // 繋がりが切れたら席を空ける。画面を閉じる・電池切れ・回線断のどれでも効く。
     try{ await onDisconnect(r).remove(); }catch(e){}
     if(prev && prev !== id) await releaseDesk(prev);
+    // 人が選び直した席の強制解除は、ここで解く。
+    if(!quiet && deskKick(id)){
+      update(ref(db,'config/desks/'+id), { kick: null }).catch(()=>{});
+    }
     myDesk = id;
     deskClaimedAt = Date.now();
     try{ localStorage.setItem('deskNo', id); }catch(e){}
@@ -1370,7 +1429,8 @@ function resumeDesk(){
   if(!desksKnown){ ensureDesk(); return; }
   let remembered = null;
   try{ remembered = localStorage.getItem('deskNo'); }catch(e){}
-  if(remembered && DESKS.some(d=>d.id===remembered) && !deskTaken(remembered)){
+  if(remembered && DESKS.some(d=>d.id===remembered) && !deskTaken(remembered)
+     && !kicked(remembered)){
     claimDesk(remembered, true).then(ok=>{ if(!ok) ensureDesk(); });
     return;
   }
@@ -1384,6 +1444,20 @@ function ensureDesk(){
   if(myDesk || deskClaiming || !desksKnown) return;
   if(openEl && openEl.id !== 'm-desk') return;   // 別の確認が出ている間は割り込まない
   openModal('m-desk', ()=>{ setTimeout(ensureDesk, 0); });
+}
+
+/* 本部に強制解除されていたら、その席を手放す。
+   回線が切れていた端末にも、戻ってきた時点で効く（印は消えない場所にある）。 */
+function checkKick(){
+  if(!myDesk || !kicked(myDesk)) return;
+  const id = myDesk;
+  dropDisconnect(id);
+  myDesk = null;
+  try{ localStorage.removeItem('deskNo'); }catch(e){}
+  releaseDesk(id, true);
+  paintDesks();
+  toast(`${deskLabel(id)} は本部が解除しました。受付機を選び直してください。`);
+  ensureDesk();
 }
 
 /* 名乗りが届いたら、この端末が覚えている席と突き合わせる。 */
@@ -1421,7 +1495,8 @@ function reconcileDesk(){
     // 取り直すのは受付の画面を開いている端末だけ。厨房や受渡の端末が
     // 「前は受付だった」記憶で席を占めると、受付が 1 台使えなくなる。
     if(document.body.dataset.tab === 'order'
-       && remembered && DESKS.some(d=>d.id===remembered) && !deskTaken(remembered)){
+       && remembered && DESKS.some(d=>d.id===remembered) && !deskTaken(remembered)
+       && !kicked(remembered)){
       claimDesk(remembered, true).then(ok=>{ if(!ok) ensureDesk(); });
       return;
     }
@@ -1446,6 +1521,7 @@ setTimeout(()=>{ desksKnown = true; ensureDesk(); }, 2500);
    待機はこのノードに無い（config/desks にある）ので、ここで消えることはない。 */
 function rearmDesk(){
   if(!myDesk) return;
+  if(kicked(myDesk)) return;      // 強制解除された席は取りに行かない
   const id = myDesk;
   const r = ref(db, 'desks/' + id);
   runTransaction(r, cur=>{
@@ -2034,7 +2110,7 @@ onValue(ref(db,'config/session'), snap=>{
    いなければ読み取り自体が拒否される。値ではなく「読めるかどうか」で版を測る。
    互換性を壊す変更をしたら、ここと database.rules.json の両方を上げる
    （食い違いは test/dom_wiring_test.mjs が落とす）。 */
-const RULES_VERSION = 'v11';
+const RULES_VERSION = 'v12';
 (async ()=>{
   try{
     await get(ref(db, 'rulesVersion/' + RULES_VERSION));
@@ -2105,16 +2181,18 @@ onValue(ref(db,'config/reserve'), snap=>{
   tickFlow();
 }, ()=>{});
 
-/* 毎分何カップ焼けるか。見積もりはこの 1 つの数字で決まる。 */
-onValue(ref(db,'config/rate'), snap=>{
-  const v = Number(snap.val());
-  cupRate = (Number.isFinite(v) && v > 0) ? v : RATE_DEFAULT;
+/* 厨房の体制。焼ける量を決めているのは台ではなく人なので、人数を主に置く。 */
+onValue(ref(db,'config/kitchen'), snap=>{
+  kitchen = kitchenOf(snap.val());
+  cupRate = rateFromKitchen(kitchen);
   tickFlow();
+  renderKitchen();
 }, ()=>{});
 
 /* 受付機の決めごと（待機・人が決めた印）。在席と違い、回線が切れても消えない。 */
 onValue(ref(db,'config/desks'), snap=>{
   deskPolicy = snap.val() || {};
+  checkKick();
   paintDesks();
   paintStandby();
   tickSaver();
@@ -2220,33 +2298,43 @@ function renderKitchen(){
   $('kitchen-empty').classList.toggle('hidden', list.length > 0);
   fitBoard();
 
-  // 調理者が最初に見るべきは「いま用意する数」。
-  // 以前ここに出していた「残り」は、まだ売れる数＝受付側の都合で、
-  // 目の前の仕事量ではなかった。焼き待ちを主役にし、残りは焼き足しの合図として添える。
-  const todo = {};
-  for(const f of FLAVORS) todo[f.key] = 0;
-  for(const o of list) for(const i of (o.items||[])) {
-    // 受渡口が受け取ったカップは焼き上がっている。残りだけを焼き待ちに数える。
-    if(i.flavor in todo) todo[i.flavor] += Math.max(0, (i.quantity||0) - madeOf(o, i.flavor));
-  }
-  $('queue').innerHTML = FLAVORS.map(f=>{
-    const left = remainingOf(f.key);
-    const n = todo[f.key];
+  // 調理者が最初に見るべきは「次にどの口へ何を何個載せるか」。
+  //
+  // 以前ここに出していたのは味ごとの焼き待ち合計だった。合計は「あとどれだけ
+  // 残っているか」であって「いま手を動かす内容」ではないので、毎回その場で
+  // 頭の中で台数と味に割り振り直すことになる。板は立てかけてあるだけで
+  // 触れないのだから、割り振りまで出し切る。
+  const spots = planBakers(orders, kitchen, FLAVORS.map(f=>f.key));
+  $('plates').innerHTML = spots.map(sp=>{
+    const f = sp.flavor ? FLAVORS.find(x=>x.key === sp.flavor) : null;
+    const cups = sp.pieces / PIECES_PER_CUP;
     return `
-    <div class="kds-batch-cell" data-todo="${n > 0}"
-         data-zero="${left === 0}" data-low="${left > 0 && left <= 10}">
-      <span class="kds-batch-n">${n}</span>
-      <span class="kds-batch-name">${f.short || f.label}</span>
-      <span class="kds-batch-todo">${f.unit} 焼き待ち</span>
-      <span class="kds-batch-left">${left === 0
-        ? 'この先は売り切れです'
-        : `この先あと <b>${left}</b>${f.unit} 売れます`}</span>
+    <div class="kds-plate" data-idle="${!f}" data-flavor="${sp.flavor||''}">
+      <span class="kds-plate-name">${sp.label}</span>
+      ${f ? `<span class="kds-plate-flavor">
+               <img src="${MARK[f.key]||''}" alt="">${f.short || f.label}</span>
+             <span class="kds-plate-n">${sp.pieces}<small>個</small></span>
+             <span class="kds-plate-sub">＝${
+               Number.isInteger(cups) ? `${cups}カップ`
+                 : `${Math.floor(cups)}カップ+${sp.pieces % PIECES_PER_CUP}個`}</span>`
+          : `<span class="kds-plate-idle">空き</span>
+             <span class="kds-plate-sub">焼く注文がありません</span>`}
     </div>`;
   }).join('');
 
+  // 味ごとの残り。割り当ての下に 1 行で添える（これは「あとどれだけ」の話）。
+  const leftLine = $('kds-left');
+  if(leftLine){
+    leftLine.innerHTML = FLAVORS.map(f=>{
+      const pieces = piecesLeft(orders, f.key);
+      const stock  = remainingOf(f.key);
+      return `<span class="kds-left-cell" data-zero="${stock === 0}">
+        <b>${f.short || f.label}</b> 焼き待ち ${pieces}個（${(pieces/PIECES_PER_CUP).toFixed(0)}カップ）`
+        + `・${stock === 0 ? 'この先は売り切れ' : `この先あと${stock}カップ`}</span>`;
+    }).join('');
+  }
+
   $('kds-tickets').textContent = list.length;
-  const cups = $('kds-cups');
-  if(cups) cups.textContent = backlogCups(orders);
   tickKitchen();
   // 読み上げ領域は厨房を開いているときだけ更新する。受付端末でも書き換えると、
   // お客様に向いた画面で厨房の件数がずっと読み上げられ続ける。
@@ -3150,8 +3238,8 @@ document.addEventListener('click', e=>{
       });
       break;
     }
-    // 管理画面から受付機を空ける。電池切れなどで onDisconnect が届かず、
-    // 「起動中」のまま残った席を手で戻すための逃げ道。
+    // 管理画面から受付機を強制解除する。電池切れや置き忘れで「起動中」のまま
+    // 残った席を、本部の判断で取り上げるための道。
     // 受付機を待機にする／注文受付中に戻す。遠隔で切り替えるので確認は挟まない
     // （待機は押し間違えてもすぐ戻せるし、止めると行列の捌きが遅れる）。
     case 'deskmode':
@@ -3165,12 +3253,15 @@ document.addEventListener('click', e=>{
       const d = DESKS.find(x=>x.id===id);
       const mine = desksOnline[id]?.client === clientId;
       ask({
-        title: `${d?.label||''} を空けますか？`,
-        sub: 'その受付機がまだ使われている場合、受付の途中で選び直すことになります。',
-        warn: mine ? 'これはこの端末です。空けると、この端末でもう一度選び直します。' : '',
+        title: `${d?.label||''} を強制解除しますか？`,
+        sub: 'いま使っている端末からこの受付機を取り上げ、空きに戻します。'
+           + 'その端末は自動では戻らず、画面で選び直すまで受付を使えません。',
+        warn: mine ? 'これはこの端末です。解除すると、この端末でもう一度選び直します。'
+                   : '受付の途中だった場合、その接客は中断します。',
         onYes: async ()=>{
-          await releaseDesk(id, true);
+          await kickDesk(id);
           if(mine){
+            dropDisconnect(id);
             myDesk = null;
             try{ localStorage.removeItem('deskNo'); }catch(e){}
             paintDesks();

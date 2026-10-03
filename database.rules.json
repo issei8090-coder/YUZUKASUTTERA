@@ -68,10 +68,14 @@
         ".write": "auth != null",
         ".validate": "newData.isString() && newData.val().matches(/^(auto|on|off)$/)"
       },
-      "rate": {
+      "kitchen": {
         ".read": "auth != null",
         ".write": "auth != null",
-        ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 60"
+        "people":   { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 12" },
+        "holes":    { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 60" },
+        "cycleMin": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 30" },
+        "margin":   { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 10 && newData.val() <= 100" },
+        "$other":   { ".validate": false }
       },
       "desks": {
         ".read": "auth != null",
@@ -83,6 +87,9 @@
           },
           "hold": {
             ".validate": "newData.isBoolean()"
+          },
+          "kick": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 64"
           },
           "auto": {
             ".validate": "newData.isBoolean()"
@@ -118,6 +125,9 @@
         ".read": "auth != null"
       },
       "v11": {
+        ".read": "auth != null"
+      },
+      "v12": {
         ".read": "auth != null"
       }
     },

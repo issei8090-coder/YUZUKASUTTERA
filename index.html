@@ -700,26 +700,34 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
   min-height:48px;padding:0 12px;cursor:pointer;font-size:22px;color:var(--dim)}
 .kds-sound input{width:28px;height:28px;accent-color:var(--ok)}
 
-/* 焼き待ち＝いま用意しなければならない数。調理者が最初に見る数字なので最大にする。
-   「残り」（まだ売れる数）は別の軸で、焼き足す判断に使う補助情報として添える。 */
-.kds-batch{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:12px}
-.kds-batch-cell{background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--line);
-  border-radius:10px;padding:10px 18px;display:grid;
-  grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:14px;align-items:center}
-/* 焼き待ちがあるときだけ色が付く。0 件なら静かにしておく。 */
-.kds-batch-cell[data-todo="true"]{border-left-color:var(--ok)}
-.kds-batch-n{grid-row:1/3;font-size:clamp(66px,14vh,120px);line-height:.9;font-weight:800;
-  font-variant-numeric:tabular-nums;color:#F2ECE0}
-.kds-batch-cell[data-todo="false"] .kds-batch-n{color:var(--dim);opacity:.45}
-.kds-batch-name{align-self:end;font-size:clamp(21px,3.2vh,30px);color:#F2ECE0;font-weight:700}
-.kds-batch-todo{align-self:start;font-size:clamp(18px,2.6vh,23px);color:var(--dim);letter-spacing:.06em}
-/* 残りは焼き足す合図。少ない・切れたときだけ目に入ればよい。 */
-.kds-batch-left{grid-column:2;font-size:clamp(18px,2.6vh,23px);color:var(--dim)}
-.kds-batch-left b{color:#F2ECE0;font-variant-numeric:tabular-nums;font-size:1.15em}
-.kds-batch-cell[data-low="true"]{border-left-color:var(--warn)}
-.kds-batch-cell[data-low="true"] .kds-batch-left b{color:var(--warn)}
-.kds-batch-cell[data-zero="true"]{border-left-color:var(--late)}
-.kds-batch-cell[data-zero="true"] .kds-batch-left{color:var(--late-text);font-weight:700}
+/* いま焼くもの。台（＝人）1 つにつき 1 枚。
+   調理者が最初に見るのは「次にどの口へ何を何個載せるか」なので、ここを最大にする。
+   味ごとの残り合計は、その下に 1 行で添えるだけにする（手を動かす内容ではない）。 */
+.kds-plates{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:12px}
+.kds-plate{background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--ok);
+  border-radius:10px;padding:8px 14px;display:grid;
+  grid-template-columns:1fr auto;grid-template-rows:auto auto auto;column-gap:12px;align-items:center}
+.kds-plate[data-idle="true"]{border-left-color:var(--line)}
+.kds-plate-name{grid-column:1/3;grid-row:1;
+  font-size:clamp(14px,2vh,17px);letter-spacing:.14em;color:var(--dim)}
+/* 味は左、個数は右。味の名前は折り返させない（「チョ／コ」になると読めない）。 */
+.kds-plate-flavor{grid-column:1;grid-row:2;display:flex;align-items:center;gap:8px;white-space:nowrap;
+  font-size:clamp(19px,2.9vh,27px);font-weight:700;color:#F2ECE0}
+.kds-plate-flavor img{width:clamp(26px,4vh,38px);height:auto;flex:none}
+.kds-plate-n{grid-column:2;grid-row:2/4;align-self:center;text-align:right;white-space:nowrap;
+  font-size:clamp(40px,7.6vh,68px);line-height:.95;
+  font-weight:800;font-variant-numeric:tabular-nums;color:#F2ECE0}
+.kds-plate-n small{font-size:.3em;margin-left:.1em;font-weight:700;color:var(--dim)}
+.kds-plate-sub{grid-column:1;grid-row:3;font-size:clamp(13px,1.8vh,15px);color:var(--dim);
+  letter-spacing:.02em;line-height:1.4;white-space:nowrap}
+.kds-plate-idle{grid-column:1;grid-row:2;font-size:clamp(19px,2.8vh,25px);font-weight:700;
+  color:var(--dim);opacity:.6}
+
+/* 味ごとの残り。あとどれだけ焼くかと、この先どれだけ売れるか。 */
+.kds-left{margin:0;display:flex;flex-wrap:wrap;gap:6px 28px;
+  font-size:clamp(15px,2.2vh,19px);color:var(--dim);letter-spacing:.04em}
+.kds-left-cell b{color:#F2ECE0;font-weight:700;margin-right:6px}
+.kds-left-cell[data-zero="true"]{color:var(--late-text);font-weight:700}
 
 /* 伝票。溢れた分は app.js 側で枚数に畳んでいる（この画面は誰も送れない）。
    overflow-y はそれでも入り切らない端末のための逃げ道で、常用はしない。 */
@@ -805,7 +813,7 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .kds :focus-visible{outline:3px solid #F0B429;outline-offset:3px}
 
 @media (max-width:760px){
-  .kds-batch{grid-auto-flow:row}
+  .kds-plates{grid-auto-flow:row}
   .kds-sound{margin-left:0}
 }
 
@@ -1187,10 +1195,11 @@ body[data-tab="amount"] .masthead{display:none}
      1024×768 の横向きでは、バーと焼き待ちの帯を引いて伝票に残るのは 300px 前後。
      誰も送れない以上、入り切らない伝票は出ないのと同じなので、
      焼き待ちの数字を少し抑えて、その分を伝票の段に回す。 */
-  body[data-tab="kitchen"] .kds-batch-n{font-size:clamp(52px,10vh,96px)}
-  body[data-tab="kitchen"] .kds-batch-cell{padding:8px 16px}
-  /* 次の 1 枚は 2 段ぶん。脇の控えがちょうど 2 枚積まれる高さになる。 */
-  .kds-ticket[data-next="true"]{grid-column:span 2;grid-row:span 2}
+  body[data-tab="kitchen"] .kds-plate-n{font-size:clamp(40px,7.4vh,68px)}
+  body[data-tab="kitchen"] .kds-plate{padding:8px 14px}
+  /* 伝票は「いま焼くもの」の下に来る控え。次の 1 枚は横 2 列ぶんのままで、
+     段は 1 つに収める（2 段取ると、この高さでは 1 枚しか出せなくなる）。 */
+  .kds-ticket[data-next="true"]{grid-column:span 2;grid-row:auto}
 }
 
 /* 画面が特に低いとき（Safari のツールバーが出た 1024x768 など）は説明文を省いて確実に収める */
@@ -1315,6 +1324,19 @@ body:not([data-tab="call"]):not([data-tab="amount"]) .kiosk-escape{display:none}
   font-family:var(--serif);font-size:clamp(17px,2.2vw,21px);letter-spacing:.12em;
   border:1px solid var(--gold);background:transparent;color:var(--brown-soft)}
 .ctl-switch[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
+
+/* 人数の増減。シフトが変わるたびに触る場所なので、数字を大きく、
+   押すところを離して置く（走りながらスマートフォンで触る）。 */
+.ctl-count{display:flex;align-items:center;gap:18px}
+.ctl-step{width:68px;min-height:68px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:28px;line-height:1;border:1px solid var(--gold);background:transparent;color:var(--brown)}
+.ctl-step:active{transform:scale(.97)}
+.ctl-count-n{font-size:20px;color:var(--brown-soft)}
+.ctl-count-n b{font-family:var(--serif);color:var(--brown);font-size:48px;
+  font-variant-numeric:tabular-nums;margin-right:4px}
+/* 細かい数字は横に並べる。人数ほど触らないので、小さくてよい。 */
+.ctl-fields{display:flex;flex-wrap:wrap;gap:14px;margin-top:16px}
+.ctl-fields .field{flex:1 1 150px;margin:0}
 
 /* 3 つから 1 つを選ぶ並び（受け取り時刻のご案内）。
    切り替えスイッチ 1 つでは「自動」を表せないので、押し分けの形にする。 */
@@ -1835,20 +1857,22 @@ if (location.protocol === 'file:') {
       <header class="kds-bar">
         <span class="kds-label">厨房</span>
         <span class="kds-stat"><b id="kds-tickets">0</b> 件 未処理</span>
-        <span class="kds-stat"><b id="kds-cups">0</b> カップ 焼き待ち</span>
         <span class="kds-stat">最長待ち <b id="kds-oldest">—</b></span>
         <span class="kds-stat">見積 <b id="kds-wait">すぐ</b></span>
         <span class="kds-stat ops-due" id="kds-reserve" hidden>受け取り時刻をご案内中</span>
         <!-- 手が汚れている場所なので、この画面は触らせない。
              押すところが無いことを先に言っておかないと、押せる何かを探される。 -->
-        <span class="kds-board">見るだけの画面です。用意できた分は受渡口が打ちます</span>
+        <span class="kds-board">見るだけ（用意できた分は受渡口が打ちます）</span>
         <label class="kds-sound">
           <input type="checkbox" id="sound" checked>
           <span>通知音</span>
         </label>
       </header>
 
-      <div class="kds-batch" id="queue"></div>
+      <!-- いま焼くもの。台（＝人）1 つずつに、味と個数を割り当てて出す。
+           板は立てかけてあるだけで触れないので、割り振りまで出し切る。 -->
+      <div class="kds-plates" id="plates"></div>
+      <p class="kds-left" id="kds-left"></p>
 
       <div class="kds-grid" id="kitchen-list"></div>
       <!-- 立てかけた画面は誰も送れない。入り切らなかった枚数は必ずここに出す。 -->
@@ -1994,8 +2018,10 @@ if (location.protocol === 'file:') {
         </div>
         <div class="desk-grid" id="desk-admin" style="margin-top:20px"></div>
         <p class="ctl-hint">
-          受付機は起動したときに名乗り、画面を閉じると自動で空きに戻ります。
-          電池切れなどで残ってしまったときだけ、「空ける」で手で戻してください。
+          受付機は起動したときに名乗り、画面を閉じる・他の画面へ移ると自動で空きに戻ります。<br>
+          <b>「強制解除」</b>は、置き忘れ・電池切れ・持ち去りなどで「起動中」のまま残った席を
+          本部の判断で取り上げるものです。解除された端末は<b>自動では戻らず</b>、
+          その端末の画面で選び直すまで受付を使えません。
         </p>
       </div>
 
@@ -2027,16 +2053,34 @@ if (location.protocol === 'file:') {
         </div>
         <p class="ctl-hint" id="reserve-state" data-on="false"></p>
 
-        <h3 class="field-group">焼ける速さ</h3>
+        <h3 class="field-group">厨房の体制</h3>
         <p class="ctl-note">
-          見積もりの根拠はこの数字 1 つです。生地の交換・補充・取り出しで止まる分も
-          込みの「ならした速さ」を入れてください（既定は 1 分あたり 1 カップ＝6 個）。
+          焼ける量を決めているのは台ではなく<b>人数</b>です。1 人が同時に見られるのは
+          12 マスほど（＝2 カップ）で、大きい台はマスを余らせて使います。
+          <b>シフトで人数が変わったら、ここを変えてください。</b>
+          見積もりも、厨房の板に出る割り当ても一緒に変わります。
         </p>
-        <div class="field" style="max-width:280px">
-          <label for="rate-cups">1 分あたりに焼けるカップ数</label>
-          <input type="number" id="rate-cups" min="0.1" max="60" step="0.1" inputmode="decimal" value="1">
-          <p class="field-hint" id="rate-hint"></p>
+        <div class="ctl-count" id="kit-people">
+          <button type="button" class="ctl-step" data-people="-1" aria-label="厨房の人数を 1 人減らす">−</button>
+          <span class="ctl-count-n"><b id="kit-n">4</b>人</span>
+          <button type="button" class="ctl-step" data-people="1" aria-label="厨房の人数を 1 人増やす">＋</button>
         </div>
+        <p class="ctl-hint" id="kit-calc"></p>
+        <div class="ctl-fields">
+          <div class="field">
+            <label for="kit-holes">1 人が見るマス数</label>
+            <input type="number" id="kit-holes" min="1" max="60" step="1" inputmode="numeric" value="12">
+          </div>
+          <div class="field">
+            <label for="kit-cycle">1 回にかかる分</label>
+            <input type="number" id="kit-cycle" min="1" max="30" step="1" inputmode="numeric" value="4">
+          </div>
+          <div class="field">
+            <label for="kit-margin">見込み（％）</label>
+            <input type="number" id="kit-margin" min="10" max="100" step="5" inputmode="numeric" value="100">
+          </div>
+        </div>
+        <p class="field-hint" id="rate-hint"></p>
       </div>
 
       <div class="panel">

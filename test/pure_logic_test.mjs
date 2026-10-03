@@ -10,6 +10,7 @@ import {
   encodeLines, decodeLines,
   leftOf, madeOf, allMade, backlogCups, oldestWaitMin, measuredRate,
   forecast, reserveOn, stopIntake, hhmm,
+  kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
 } from '../lib/pure.js';
 
 let failures = 0;
@@ -135,6 +136,40 @@ eq('実測は毎分カップ数',
    measuredRate([{ status:'ready', quantity:6, calledAt: NOW - 60000 },
                  { status:'completed', quantity:4, calledAt: NOW - 5 * 60000 },
                  { status:'completed', quantity:9, calledAt: NOW - 30 * 60000 }], NOW), 1);
+
+console.log('\n[9] 厨房の体制（人数で決まる）');
+// 焼ける量を決めているのは台ではなく人。1 人が同時に見られるのは 12 マス
+// （＝2カップ）くらいで、大きい台はマスを余らせて使う。
+// ここがずれると、約束する受け取り時刻が全部ずれる。
+eq('1回ぶんの個数（4人×12マス）', cyclePieces({ people:4 }), 48);
+eq('4人なら 4分に8カップ＝毎分2カップ', rateFromKitchen({ people:4, holes:12, cycleMin:4, margin:100 }), 2);
+eq('6人なら毎分3カップ',             rateFromKitchen({ people:6, holes:12, cycleMin:4, margin:100 }), 3);
+eq('2人なら毎分1カップ',             rateFromKitchen({ people:2, holes:12, cycleMin:4, margin:100 }), 1);
+eq('見込み率で落とせる',             rateFromKitchen({ people:4, holes:12, cycleMin:4, margin:50 }), 1);
+eq('でたらめな設定は既定に戻す', kitchenOf({ people:'x', holes:0, cycleMin:-1, margin:999 }),
+   { people:4, holes:12, cycleMin:4, margin:100 });
+
+const ord = (seq, f, q, made) => ({
+  seq, createdMs: NOW - (100 - seq) * 60000, status: 'pending', quantity: q,
+  items: [{ flavor: f, quantity: q }], made });
+const plan = (list, kitchen) => planBakers(list, kitchen, ['plain','flavor_b'])
+  .map(p => `${p.label}:${p.flavor || '空き'}${p.pieces ? '/' + p.pieces : ''}`).join(' ');
+
+eq('残りは個で数える（受け取り済みを引く）',
+   piecesLeft([ord(1, 'plain', 3, { plain: 1 })], 'plain'), 12);
+// 1 つの台に 1 つの味しか載らない。多いほうへ寄せ切ると、古い注文の味が焼かれない。
+eq('古い注文の味にも 1 台は当てる',
+   plan([ord(1, 'flavor_b', 1), ord(2, 'plain', 10)], { people:4 }),
+   '台1:plain/12 台2:plain/12 台3:plain/12 台4:flavor_b/6');
+// 注文より口が多ければ、その数だけ載せる（作り置きはできないので焼き足さない）。
+eq('注文が少なければ空きのまま',
+   plan([ord(1, 'plain', 1)], { people:3 }),
+   '台1:plain/6 台2:空き 台3:空き');
+eq('焼くものが無ければ全部空き', plan([], { people:2 }), '台1:空き 台2:空き');
+// 先頭の注文だけで口が全部埋まるなら、この 1 回はその味だけになる（受付順）。
+eq('先頭の注文で埋まるときは 1 色',
+   plan([ord(1, 'plain', 20), ord(2, 'flavor_b', 20)], { people:2 }),
+   '台1:plain/12 台2:plain/12');
 
 console.log(failures ? `\n✗ ${failures} 件失敗` : '\n✓ すべて通りました');
 process.exit(failures ? 1 : 0);
