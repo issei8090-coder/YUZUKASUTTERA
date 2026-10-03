@@ -17,6 +17,7 @@ import {
   madeOf, backlogCups, oldestWaitMin, measuredRate,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
+  soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
   PIECES_PER_CUP, KITCHEN_DEFAULT
 } from "./lib/pure.js";
 
@@ -756,12 +757,25 @@ function renderDeskAdmin(){
 
    判断の計算は lib/pure.js にあり、Node からテストできる。ここは配線だけ。
    ============================================================ */
+let closeAt       = '';             // config/closeAt: 'HH:MM'。過ぎたら受付を止める
 let reserveMode   = 'auto';          // config/reserve: 'auto' | 'on' | 'off'
 let kitchen       = { ...KITCHEN_DEFAULT };   // config/kitchen: 何人で、1人いくつ焼くか
 let cupRate       = rateFromKitchen(kitchen); // そこから出る毎分カップ数
 let reserveNow    = false;           // いま受け取り時刻をご案内しているか
 let intakeStopped = false;           // いま受付を止めているか
-let flow = { backlog:0, cups:0, rate:RATE_DEFAULT, waitMin:0, pickupMs:0 };
+let closed = false;                 // 終了時刻を過ぎたか
+let flow = { backlog:0, cups:0, rate:1, waitMin:0, pickupMs:0 };
+
+/* 終了時刻の判定。'HH:MM' は端末の時計で見る（会場の時計と合っていること）。
+   日付をまたぐ運用はしないので、その日の時刻だけを見ればよい。 */
+function isClosed(now = Date.now()){
+  const m = /^(\d{1,2}):(\d{2})$/.exec(closeAt || '');
+  if(!m) return false;
+  const d = new Date(now);
+  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
+                       Number(m[1]), Number(m[2]), 0, 0);
+  return now >= end.getTime();
+}
 
 function tickFlow(){
   const now = Date.now();
@@ -775,7 +789,10 @@ function tickFlow(){
   // 全端末で同じに見えるので、それを「続いているか」の印として使う。
   const last = orders.filter(o => o.status !== 'cancelled').sort(byOrder).pop();
   reserveNow    = reserveOn(reserveMode, orders, now, !!last?.pickupMs);
-  intakeStopped = stopIntake(flow.waitMin, intakeStopped);
+  // 終了時刻を過ぎたら、混み具合に関わらず受付を閉じる。
+  // 人が閉め忘れても、約束できない注文を受け続けることにはならない。
+  closed = isClosed(now);
+  intakeStopped = closed || stopIntake(flow.waitMin, intakeStopped);
   paintFlow();
 }
 // 時間が経つだけでも混み具合は変わる（誰も触らなくても最長待ちは伸びる）。
@@ -792,6 +809,15 @@ function paintFlow(){
   if(full){
     const standing = !!myDesk && deskMode(myDesk) === 'standby';
     full.hidden = !(intakeStopped && !!myDesk && !standing && gateState !== 'open');
+    full.dataset.why = closed ? 'closed' : 'busy';
+    const main = full.querySelector('.standby-main');
+    const sub  = full.querySelector('.standby-sub');
+    if(main) main.innerHTML = closed
+      ? '本日の販売は<br>終了しました'
+      : 'ただいま<br>受付を止めています';
+    if(sub) sub.textContent = closed
+      ? 'ご来店ありがとうございました'
+      : 'お作りしている分で手一杯です。少々お待ちください';
   }
 
   // 厨房・受渡：いまの見積もりを上のバーに出す。
@@ -824,14 +850,42 @@ function paintReserveAdmin(){
   const hint = $('rate-hint');
   if(hint){
     const m = measuredRate(orders, now);
+    // 実測と設定が離れていたら言う。直すのは人（生地交換で一瞬落ちた数字を
+    // 拾って自動で変えると、お客様への約束時刻が勝手に伸び縮みする）。
+    const off = m !== null && cupRate > 0 && Math.abs(m - cupRate) / cupRate > 0.3;
+    hint.dataset.warn = String(off);
     hint.textContent = `焼き待ち ${backlogCups(orders)}カップ・いまの見積もり ${flow.waitMin}分`
-      + (m ? `／実測 ${m.toFixed(1)}カップ/分（直近10分）` : '／実測はまだありません');
+      + (m === null ? '／実測はまだありません' : `／実測 ${m.toFixed(1)}カップ/分（直近10分）`)
+      + (off ? `　← 設定（${cupRate.toFixed(1)}）とずれています。人数を確かめてください`
+             : '');
+  }
+  // 生地が尽きるまで。本部が締めの段取りを決めるための数字。
+  const outLine = $('stock-out');
+  if(outLine){
+    outLine.innerHTML = FLAVORS.map(f=>{
+      const stock = remainingOf(f.key);
+      const out   = stockOutMin(stock, soldRate(orders, f.key, now));
+      return `<span data-soon="${out !== null && out <= 15}"><b>${f.short || f.label}</b> 残り ${stock}カップ`
+        + (stock > 0 ? `（生地 ${bowlsFor(stock)}杯・${weightText(gramsFor(stock))}）` : '')
+        + (stock === 0 ? '（売り切れ）' : out !== null ? `・約${out}分で尽きます` : '')
+        + '</span>';
+    }).join('　／　');
+  }
+  const closeEl = $('close-at');
+  if(closeEl && document.activeElement !== closeEl) closeEl.value = closeAt;
+  const closeHint = $('close-hint');
+  if(closeHint){
+    closeHint.dataset.warn = String(closed);
+    closeHint.textContent = !closeAt
+      ? '空のままなら、時刻では閉めません（混み具合だけで止まります）。'
+      : closed ? `${closeAt} を過ぎたので、受付を閉じています。`
+               : `${closeAt} になったら、受付を自動で閉じます。`;
   }
   const n = $('kit-n');
   if(n) n.textContent = String(kitchen.people);
   const calc = $('kit-calc');
   if(calc) calc.innerHTML =
-    `${kitchen.people}人 × ${kitchen.holes}マス ＝ <b>${cyclePieces(kitchen)}個</b>`
+    `焼く人 ${kitchen.people}人 × ${kitchen.holes}マス ＝ <b>${cyclePieces(kitchen)}個</b>`
     + `（${(cyclePieces(kitchen)/PIECES_PER_CUP).toFixed(1)}カップ）を ${kitchen.cycleMin}分ごと`
     + `${kitchen.margin < 100 ? `・見込み ${kitchen.margin}%` : ''}`
     + ` → <b>毎分 ${cupRate.toFixed(1)}カップ</b>`;
@@ -1310,6 +1364,14 @@ $('kit-people')?.addEventListener('click', e=>{
 $('kit-holes')?.addEventListener('change', e=>setKitchen({ holes: Number(e.target.value) }));
 $('kit-cycle')?.addEventListener('change', e=>setKitchen({ cycleMin: Number(e.target.value) }));
 $('kit-margin')?.addEventListener('change', e=>setKitchen({ margin: Number(e.target.value) }));
+
+/* 終了時刻。人が閉め忘れても、約束できない注文を受け続けないための歯止め。 */
+$('close-at')?.addEventListener('change', async e=>{
+  const v = (e.target.value || '').trim();
+  if(v && !/^\d{1,2}:\d{2}$/.test(v)){ toast('終了時刻は 15:30 のように入れてください。'); return; }
+  try{ await authReady; await set(ref(db,'config/closeAt'), v); }
+  catch(err){ toast(writeHint(err, '終了時刻を共有できませんでした')); }
+});
 
 $('notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
 $('ready-notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
@@ -2110,7 +2172,7 @@ onValue(ref(db,'config/session'), snap=>{
    いなければ読み取り自体が拒否される。値ではなく「読めるかどうか」で版を測る。
    互換性を壊す変更をしたら、ここと database.rules.json の両方を上げる
    （食い違いは test/dom_wiring_test.mjs が落とす）。 */
-const RULES_VERSION = 'v12';
+const RULES_VERSION = 'v13';
 (async ()=>{
   try{
     await get(ref(db, 'rulesVersion/' + RULES_VERSION));
@@ -2172,6 +2234,13 @@ onValue(ref(db,'config/pace'), snap=>{
   const v = snap.val();
   if(v) pace = { ms: v.ms || PACE_DEFAULT.ms, think: v.think || PACE_DEFAULT.think, n: v.n || 0 };
   renderDeskAdmin();
+}, ()=>{});
+
+/* 終了時刻。過ぎたら受付を自動で閉じる。空なら閉めない。 */
+onValue(ref(db,'config/closeAt'), snap=>{
+  const v = snap.val();
+  closeAt = (typeof v === 'string' && /^\d{1,2}:\d{2}$/.test(v)) ? v : '';
+  tickFlow();
 }, ()=>{});
 
 /* 受け取り時刻のご案内（予約）の切り替え。店全体の決めごと。 */
@@ -2325,12 +2394,20 @@ function renderKitchen(){
   // 味ごとの残り。割り当ての下に 1 行で添える（これは「あとどれだけ」の話）。
   const leftLine = $('kds-left');
   if(leftLine){
+    const now = Date.now();
     leftLine.innerHTML = FLAVORS.map(f=>{
       const pieces = piecesLeft(orders, f.key);
       const stock  = remainingOf(f.key);
-      return `<span class="kds-left-cell" data-zero="${stock === 0}">
-        <b>${f.short || f.label}</b> 焼き待ち ${pieces}個（${(pieces/PIECES_PER_CUP).toFixed(0)}カップ）`
-        + `・${stock === 0 ? 'この先は売り切れ' : `この先あと${stock}カップ`}</span>`;
+      // 生地が尽きるまで。売れている速さで割るだけだが、
+      // 「あと何分で終わるか」が分かるかどうかで、締め方がまるで変わる。
+      const out = stockOutMin(stock, soldRate(orders, f.key, now));
+      const soon = out !== null && out <= 15;
+      const cups = pieces / PIECES_PER_CUP;
+      return `<span class="kds-left-cell" data-zero="${stock === 0}" data-soon="${soon}">
+        <b>${f.short || f.label}</b> 焼き待ち ${pieces}個（${cups.toFixed(0)}カップ`
+        + `${cups > 0 ? ` ＝ 生地${bowlsFor(cups)}杯` : ''}）`
+        + `・${stock === 0 ? 'この先は売り切れ'
+             : `この先あと${stock}カップ${out !== null ? `（約${out}分）` : ''}`}</span>`;
     }).join('');
   }
 
@@ -2465,6 +2542,32 @@ function paintList(el, html){
   if(back) back.focus();
 }
 
+/* ---------- 横に送って面を替える ----------
+   受渡と支払い口は 1 台で何役も持つ。1 画面に全部出すと字が小さくなり、
+   立って 1m 離れて使えなくなる。面を分けて指で送り、下の札でも移れるようにする
+   （スワイプだけだと、誰も送れることに気づかない）。 */
+function initDeck(deckId, dotsId){
+  const deck = $(deckId), dots = $(dotsId);
+  if(!deck || !dots) return;
+  let t = 0;
+  const paint = ()=>{
+    const i = Math.round(deck.scrollLeft / Math.max(1, deck.clientWidth));
+    dots.querySelectorAll('button[data-page]').forEach(b=>{
+      if(Number(b.dataset.page) === i) b.setAttribute('aria-current','page');
+      else b.removeAttribute('aria-current');
+    });
+  };
+  // 指を離したあとに決める。送っている最中に札が点滅すると、酔う。
+  deck.addEventListener('scroll', ()=>{ clearTimeout(t); t = setTimeout(paint, 90); },
+                        { passive:true });
+  dots.addEventListener('click', e=>{
+    const b = e.target.closest('button[data-page]');
+    if(!b) return;
+    deck.scrollTo({ left: deck.clientWidth * Number(b.dataset.page), behavior:'smooth' });
+  });
+  paint();
+}
+
 /* 受渡に出す注文の絞り込み。既定は「すべて」。
    受渡口は「いま渡す 1 件」を探す場所であると同時に、
    いま店が何件抱えているかを見る場所でもある。 */
@@ -2487,9 +2590,14 @@ function renderReady(){
   const count = { all: all.length, ready:0, pending:0, completed:0 };
   for(const o of all) if(o.status in count) count[o.status]++;
 
+  // 約束に遅れている注文を、状態より先に上へ出す。
+  // 待たせている相手から片づけるのが、行列のなかでいちばん効く。
+  const nowMs = Date.now();
+  const lateOf = o => (o.status !== 'completed' && o.pickupMs && o.pickupMs < nowMs) ? 0 : 1;
   const list = all
     .filter(o => readyFilter === 'all' || o.status === readyFilter)
-    .sort((a,b)=> (READY_RANK[a.status] - READY_RANK[b.status]) || byOrder(a,b));
+    .sort((a,b)=> (lateOf(a) - lateOf(b))
+               || (READY_RANK[a.status] - READY_RANK[b.status]) || byOrder(a,b));
 
   // 未収＝まだ代金をもらっていない注文。中止以外のすべてを数える。
   const unpaid = all.filter(o=>!o.paid);
@@ -2501,6 +2609,9 @@ function renderReady(){
     const done = o.status === 'completed';
     // 渡したのに未払い＝取りはぐれ。支払い口と同じく赤く出し、ここでも回収できるようにする。
     const lost = done && due;
+    // 約束した時刻を過ぎた注文。お客様は時刻どおりに来るので、
+    // ここが分かっていないと「お待たせしました」の相手すら分からない。
+    const late = !done && !!o.pickupMs && o.pickupMs < Date.now();
     const amount = yen(o.price||0);
     // 時計の色は「まだ渡していない注文」にだけ意味がある。
     const age = done ? 'ok' : ageOf(sec);
@@ -2541,6 +2652,7 @@ function renderReady(){
 
     return `
     <article class="ops-card" id="rc-${o.id}" data-state="${o.status}" data-lost="${lost}"
+             data-late="${late}"
              data-ms="${o.createdMs||0}" data-age="${age}" data-wait="${!done}"
              aria-label="${numOf(o)}${state ? ' ' + state : ''}${due ? ` 未収 ${amount}円` : ''}">
       <div class="ops-head">
@@ -2550,9 +2662,11 @@ function renderReady(){
           : `<span class="ops-timer">${o.createdMs ? mmss(sec) : '—'}</span>`}
       </div>
       ${!prep && !done && o.pickupMs
-        ? `<span class="ops-when">${hhmm(o.pickupMs)} お越しの予定</span>` : ''}
-      ${prep ? `<span class="ops-state" data-kind="prep">ご用意中${
-        o.pickupMs ? ` ・ ${hhmm(o.pickupMs)} お渡し予定` : ''}</span>` : ''}
+        ? `<span class="ops-when" data-late="${late}">${hhmm(o.pickupMs)} お越しの予定${
+            late ? `（${Math.floor((Date.now() - o.pickupMs)/60000)}分 過ぎています）` : ''}</span>` : ''}
+      ${prep ? `<span class="ops-state" data-kind="prep" data-late="${late}">ご用意中${
+        o.pickupMs ? ` ・ ${hhmm(o.pickupMs)} お渡し予定${
+          late ? `（${Math.floor((Date.now() - o.pickupMs)/60000)}分 遅れ）` : ''}` : ''}</span>` : ''}
       ${prep ? fillRows(o) : opsLines(o)}
       ${due ? `<p class="ops-amount">${amount}<small>円</small></p>` : ''}
       ${actions}
@@ -2576,8 +2690,16 @@ function renderReady(){
       : '<b>この絞り込みに当てはまる注文はありません</b>「すべて」を押すと、この回の注文がすべて出ます。';
     if(empty.innerHTML !== html) empty.innerHTML = html;
   }
+  renderRecall();
   $('ready-count').textContent = count.ready;
   $('ready-prep').textContent  = count.pending;
+  // 約束に遅れている件数。0 のときは出さない（普段は無い札）。
+  const lateN = all.filter(o => lateOf(o) === 0).length;
+  const lateBadge = $('ready-late');
+  if(lateBadge){
+    lateBadge.hidden = lateN === 0;
+    $('ready-late-n').textContent = lateN;
+  }
   // 未収は他の端末の操作で増減する。0 のときは出さない。
   const dueBadge = $('ready-due');
   if(dueBadge){
@@ -2585,6 +2707,41 @@ function renderReady(){
     $('ready-unpaid').textContent = unpaid.length;
   }
   tickReady();
+}
+
+/* 呼び出しの状況。お客様側の表示に何が出ているかを、受渡口から確かめる面。
+   取りに来ない札は、ここから呼び直す。 */
+function renderRecall(){
+  const list = $('recall-list');
+  if(!list) return;
+  const now = Date.now();
+  // 呼んでから長い順。いちばん戻ってきていない人を先頭に置く。
+  const waiting = orders.filter(o => o.status === 'ready' && o.number)
+                        .sort((a,b)=>(a.calledAt||0) - (b.calledAt||0));
+  paintList(list, waiting.map(o=>{
+    const on  = !!o.calledAt && now - o.calledAt < CALL_HOLD_MS;
+    const min = o.calledAt ? Math.floor((now - o.calledAt) / 60000) : null;
+    const late = !!o.pickupMs && o.pickupMs < now;
+    return `
+    <article class="ops-card" data-call="${on}" data-late="${late}">
+      <div class="ops-head">
+        <span class="ops-num">${numOf(o)}</span>
+        <span class="ops-timer">${o.createdMs ? mmss(elapsedSec(o.createdMs)) : '—'}</span>
+      </div>
+      ${o.pickupMs ? `<span class="ops-when" data-late="${late}">${hhmm(o.pickupMs)} お越しの予定</span>` : ''}
+      <p class="ops-hint">${on ? 'いま呼び出し表示に出ています'
+        : min === null ? 'まだ呼んでいません'
+        : min < 1 ? 'さきほど呼びました' : `${min}分前に呼びました`}</p>
+      <button type="button" class="ops-do" data-act="flash" data-id="${o.id}"
+              aria-label="${numOf(o)} をもう一度呼ぶ">もう一度呼ぶ</button>
+    </article>`;
+  }).join(''));
+  $('recall-list').classList.toggle('hidden', waiting.length === 0);
+  $('recall-empty').classList.toggle('hidden', waiting.length > 0);
+  const head = $('recall-head');
+  if(head) head.textContent = waiting.length
+    ? `お呼び出し中 ${waiting.length}件（呼んでから長い順）`
+    : '呼び出しの状況';
 }
 
 /* 毎秒ここだけを書き換える。全体を描き直すとスクロール位置が飛ぶ。 */
@@ -2672,6 +2829,30 @@ function tickCall(){
     const on = at > 0 && now - at < CALL_HOLD_MS;
     if((el.dataset.on === 'true') !== on) el.dataset.on = String(on);
   });
+  recall(now);
+}
+
+/* ---------- 呼び出しの自動再掲 ----------
+   一度呼んだだけでは、その 40 秒を見ていなかった人には届かない。
+   番号札を持ったまま戻らない注文を、5 分おきにもう一度強調して鳴らす。
+
+   書くのは呼び出し表示を開いている端末だけ。全端末が書くと、
+   同じ注文に何台も書き込んで鳴り方が重なる（受渡の着信音と同じ理由）。
+   30 分を過ぎた注文は諦める。その頃には呼ぶより探しに行くほうが早い。 */
+const RECALL_MS   = 5 * 60000;
+const RECALL_STOP = 30 * 60000;
+let recalled = new Map();          // id → この端末が最後に書いた時刻
+function recall(now){
+  if(document.body.dataset.tab !== 'call' || !announceReady) return;
+  for(const o of orders){
+    if(o.status !== 'ready' || !o.number || !o.calledAt) continue;
+    if(now - o.calledAt < RECALL_MS) continue;
+    if(now - (o.createdMs || 0) > RECALL_STOP) continue;
+    // 自分の書き込みが返るまでの間、二重に書かない。
+    if(now - (recalled.get(o.id) || 0) < RECALL_MS) continue;
+    recalled.set(o.id, now);
+    callOrder(o.id);
+  }
 }
 
 /* ---------- 番号札の状況 ---------- */
@@ -2718,8 +2899,10 @@ function renderPay(){
   // 会計中の注文が支払い済み・中止で消えたら、選択も金額の配信も畳む。
   if(collecting && !unpaid.some(o => o.id === collecting.id)){
     collecting = null;
+    chgPaid = 0;
     clearAmount();
   }
+  renderChange();
 
   paintList($('pay-list'), unpaid.map(o=>{
     const handed = o.status==='completed';   // 渡したのに未払い＝取りはぐれ
@@ -2958,14 +3141,62 @@ function openCollect(id, alsoHandOver){
   const o = orders.find(x=>x.id===id);
   if(!o){ toast('注文が見つかりません'); return; }
   collecting = { id, alsoHandOver };
+  chgPaid = 0;            // 前のお客様のお預かりを残さない
   showAmount(o);          // お客様側の端末に金額を出す
   renderPay();
 }
+
+/* ---------- おつり（支払い口の 2 面目） ----------
+   暗算は行列のなかでいちばん間違える。しかも間違いは現金が合わなくなる形で残る。
+
+   請求は「◯円 受け取る」で選んだ注文から入れる。打つのはお預かりだけにする
+   （請求も打たせると、打ち間違いが釣り銭の間違いに直結する）。 */
+let chgPaid = 0;                    // いま打ったお預かり
+function chgDue(){
+  const o = collecting ? orders.find(x => x.id === collecting.id) : null;
+  return o ? (o.price || 0) : 0;
+}
+function renderChange(){
+  const due  = chgDue();
+  const back = chgPaid - due;
+  const dueEl = $('chg-due');
+  if(!dueEl) return;
+  dueEl.textContent = due ? `${yen(due)}円` : '—';
+  $('chg-paid').textContent = chgPaid ? `${yen(chgPaid)}円` : '0';
+  const row = $('chg-back')?.closest('.chg-row');
+  const short = due > 0 && chgPaid > 0 && back < 0;
+  if(row) row.dataset.short = String(short);
+  $('chg-back').textContent = (due > 0 && chgPaid > 0)
+    ? (back >= 0 ? `${yen(back)}円` : `${yen(-back)}円 不足`)
+    : '—';
+  $('chg-hint').textContent = due === 0
+    ? '左の面で「◯円 受け取る」を押すと、その金額がここに入ります。'
+    : chgPaid === 0 ? 'お預かりした金額を打ってください。'
+    : back >= 0 ? 'お釣りをお渡ししたら、左の面で「受け取った」を押します。'
+                : 'お預かりが足りません。';
+}
+$('chg-keys')?.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-k]');
+  if(!b) return;
+  const k = b.dataset.k;
+  if(k === 'back') chgPaid = Math.floor(chgPaid / 10);
+  else chgPaid = Math.min(999999, Number(String(chgPaid) + k));
+  renderChange();
+});
+$('chg-quick')?.addEventListener('click', e=>{
+  const b = e.target.closest('button');
+  if(!b) return;
+  if(b.dataset.exact) chgPaid = chgDue();
+  else chgPaid = Math.min(999999, chgPaid + Number(b.dataset.add || 0));
+  renderChange();
+});
+$('chg-clear')?.addEventListener('click', ()=>{ chgPaid = 0; renderChange(); });
 
 /* 会計をやめる。お客様の前に金額を出しっぱなしにしない。 */
 function cancelCollect(){
   if(!collecting) return;
   collecting = null;
+  chgPaid = 0;
   clearAmount();
   renderPay();
 }
@@ -2976,6 +3207,7 @@ async function confirmCollect(){
   const o = orders.find(x=>x.id===c.id);
   const amount = o ? yen(o.price||0) : '';
   collecting = null;
+  chgPaid = 0;
   clearAmount();
   renderPay();
   if(await setPaid(c.id, true)){
@@ -3542,6 +3774,9 @@ document.addEventListener('keydown', e=>{
 document.addEventListener('click', e=>{
   if(!navMenu.hidden && !e.target.closest('.nav-mini')) closeNav();
 });
+
+initDeck('ready-deck', 'ready-dots');
+initDeck('pay-deck', 'pay-dots');
 
 switchTab(viewFromHash());
 

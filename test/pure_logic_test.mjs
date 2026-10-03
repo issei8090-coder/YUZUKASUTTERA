@@ -11,6 +11,7 @@ import {
   leftOf, madeOf, allMade, backlogCups, oldestWaitMin, measuredRate,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
+  soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
 } from '../lib/pure.js';
 
 let failures = 0;
@@ -170,6 +171,28 @@ eq('焼くものが無ければ全部空き', plan([], { people:2 }), '台1:空�
 eq('先頭の注文で埋まるときは 1 色',
    plan([ord(1, 'plain', 20), ord(2, 'flavor_b', 20)], { people:2 }),
    '台1:plain/12 台2:plain/12');
+
+console.log('\n[10] 売れる速さと生地切れ');
+// 売り切れは必ず起きる。何分前に分かるかが全てなので、実績が薄いうちは言わない。
+const sold = (minAgo, q) => ({ status:'ready', createdMs: NOW - minAgo * 60000,
+  items:[{ flavor:'plain', quantity:q }] });
+eq('実績が薄ければ言わない', soldRate([sold(1, 2)], 'plain', NOW), null);
+eq('直近10分で20カップなら毎分2', soldRate([sold(1, 10), sold(9, 10)], 'plain', NOW), 2);
+eq('窓の外は数えない',        soldRate([sold(1, 10), sold(30, 90)], 'plain', NOW), 1);
+eq('中止は数えない',
+   soldRate([sold(1, 10), { ...sold(2, 90), status:'cancelled' }], 'plain', NOW), 1);
+eq('残り40カップ・毎分2 → 20分', stockOutMin(40, 2), 20);
+eq('売れていなければ言わない',   stockOutMin(40, null), null);
+eq('残り0なら0分',               stockOutMin(0, 2), 0);
+
+console.log('\n[11] 生地（ボウル）');
+// 1 ボウル 400g で 3 カップ。端数は 1 ボウル余分に要る（混ぜ足せない）。
+eq('3カップ＝1ボウル',   bowlsFor(3), 1);
+eq('4カップ＝2ボウル',   bowlsFor(4), 2);
+eq('100カップ＝34ボウル', bowlsFor(100), 34);
+eq('0カップ＝0ボウル',   bowlsFor(0), 0);
+eq('100カップ＝13.6kg',  weightText(gramsFor(100)), '13.6kg');
+eq('3カップは400g',      weightText(gramsFor(3)), '400g');
 
 console.log(failures ? `\n✗ ${failures} 件失敗` : '\n✓ すべて通りました');
 process.exit(failures ? 1 : 0);

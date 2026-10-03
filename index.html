@@ -892,8 +892,13 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .ops-fill-plus:disabled,.ops-fill-minus:disabled{opacity:.3;cursor:default}
 .ops-fill-plus:active:not(:disabled){transform:scale(.97)}
 
-/* 約束した受け取り時刻。渡す順を決めるのはこれなので、番号のすぐ下に出す。 */
+/* 約束した受け取り時刻。渡す順を決めるのはこれなので、番号のすぐ下に出す。
+   過ぎたら赤。お客様は時刻どおりに来るので、ここが分かっていないと
+   「お待たせしました」と言う相手すら分からない。 */
 .ops-when{font-size:clamp(15px,2.2vh,19px);color:var(--warn);letter-spacing:.06em;font-weight:700}
+.ops-when[data-late="true"]{color:var(--late-text)}
+.ops-card[data-late="true"]{border-top-color:var(--late);background:#251A17}
+.ops-state[data-late="true"]{color:var(--late-text)}
 
 /* 受け取る金額。支払い口で最初に目が行くべき数字なので、番号より大きくする。 */
 .ops-amount{margin:0;text-align:right;font-size:clamp(44px,7vh,66px);font-weight:800;
@@ -922,6 +927,56 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .ops-sub:hover{color:#F2ECE0;border-color:var(--dim)}
 .ops-row{display:flex;gap:10px}
 .ops-row .ops-sub{width:auto;flex:1}
+
+/* ============================================================
+   横に送って面を替える（受渡・支払い口）
+
+   受渡は「お渡し」と「呼び出しの状況」、支払い口は「未収」と「おつり」を
+   持つ。1 画面に全部出すと字が小さくなり、立って 1m 離れて使えなくなる。
+   面を分けて、指で送る。送れることが分かるように下に札を出し、
+   札を押しても移れるようにする（スワイプだけだと誰も気づかない）。
+   ============================================================ */
+.deck{flex:1;min-height:0;display:flex;overflow-x:auto;overflow-y:hidden;
+  scroll-snap-type:x mandatory;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;
+  overscroll-behavior-x:contain}
+.deck::-webkit-scrollbar{display:none}
+.deck-page{flex:0 0 100%;min-width:100%;scroll-snap-align:start;scroll-snap-stop:always;
+  display:flex;flex-direction:column;gap:12px;min-height:0}
+.deck-head{margin:0;font-size:clamp(17px,2.4vh,21px);letter-spacing:.1em;color:var(--dim)}
+.deck-dots{flex:none;display:flex;gap:8px;justify-content:center}
+.deck-dots button{min-height:46px;padding:0 24px;border-radius:999px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim);
+  font-size:clamp(15px,2.1vh,18px);letter-spacing:.08em}
+.deck-dots button[aria-current="page"]{background:#2F2922;border-color:var(--dim);
+  color:#F2ECE0;font-weight:700}
+
+/* 呼び出し中の札は、お客様側の表示と同じく目立たせる。 */
+.ops-card[data-call="true"]{border-top-color:var(--warn);box-shadow:0 0 0 2px var(--warn) inset}
+
+/* ---- おつり。暗算は行列のなかでいちばん間違える ---- */
+.chg{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:10px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.chg-row{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
+.chg-row span{font-size:clamp(15px,2.2vh,19px);color:var(--dim);letter-spacing:.08em}
+.chg-row b{font-size:clamp(30px,5vh,46px);font-weight:800;font-variant-numeric:tabular-nums;
+  color:#F2ECE0;line-height:1.1}
+.chg-row[data-out="true"]{border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
+.chg-row[data-out="true"] b{font-size:clamp(40px,8vh,78px);color:var(--ok)}
+.chg-row[data-out="true"][data-short="true"] b{color:var(--late-text)}
+.chg-hint{margin:0;font-size:clamp(13px,1.9vh,16px);color:var(--dim);line-height:1.6}
+.chg-quick{display:flex;gap:8px;flex-wrap:wrap}
+.chg-quick button{flex:1 1 0;min-width:84px;min-height:52px;border-radius:8px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:#F2ECE0;
+  font-size:clamp(15px,2.2vh,19px);font-variant-numeric:tabular-nums}
+/* キーは残りの高さを 4 段で割る。段の高さを決め打ちにすると、
+   低い画面で最後の段と「クリア」が重なる（実際に重なっていた）。 */
+.chg-keys{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);
+  grid-template-rows:repeat(4,minmax(0,1fr));gap:8px}
+.chg-keys button{min-height:46px;border-radius:8px;cursor:pointer;
+  background:#141210;border:1px solid var(--line);color:#F2ECE0;
+  font-size:clamp(20px,3.2vh,28px);font-weight:700;font-variant-numeric:tabular-nums}
+.chg-quick button:active,.chg-keys button:active{transform:scale(.97)}
+#chg-clear{flex:none;min-height:50px}
 
 /* 受渡の絞り込み。受渡は「いま渡す 1 件」を探す画面であると同時に、
    いま店に何件あるかを見る画面でもある。既定は「すべて」で、
@@ -1177,7 +1232,9 @@ body[data-tab="amount"] .masthead{display:none}
   #view-kitchen, #view-ready, #view-pay{
     flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(8px,1.4vh,18px)}
   #view-kitchen .sec-title{margin:0}
-  #kitchen-list, #ready-list, #pay-list{overflow-y:auto;min-height:0;padding-bottom:6px}
+  #kitchen-list, #ready-list, #pay-list, #recall-list{overflow-y:auto;min-height:0;padding-bottom:6px}
+  /* 面の中も同じ組み方にする（上の札は固定、一覧だけ送る）。 */
+  .deck-page{gap:clamp(8px,1.4vh,18px)}
   /* 支払い済みの控えは畳んである。一覧の送りに巻き込まない。 */
   #view-pay .ops-fold{flex:none}
   /* 記録と管理は座って読む画面なので、こちらは画面ごと送ってよい。
@@ -1925,6 +1982,9 @@ if (location.protocol === 'file:') {
              件数・最長待ちは常時変わるので、あえて live にしない。 -->
         <span class="kds-stat ops-due" id="ready-due" hidden
               role="status" aria-atomic="true">未収 <b id="ready-unpaid">0</b> 件</span>
+        <!-- 約束した時刻を過ぎた注文。普段は出ない札なので、出たら必ず目に入る。 -->
+        <span class="kds-stat ops-alert" id="ready-late" hidden
+              role="status" aria-atomic="true">お待たせ <b id="ready-late-n">0</b> 件</span>
       </header>
 
       <!-- 呼び出し。受渡口は人が立っている場所なので、ここにも出して誰かが動けるようにする。 -->
@@ -1936,6 +1996,11 @@ if (location.protocol === 'file:') {
           <span>呼び出し表示に「しばらくお待ちください」を出す</span>
         </label>
       </div>
+
+      <!-- 受渡は 1 台で何役も持つので、1 画面に全部出すと字が小さくなる。
+           面を分けて横に送る（指でスワイプ、下の札でも移れる）。 -->
+      <div class="deck" id="ready-deck">
+      <section class="deck-page" aria-label="お渡し">
 
       <!-- 受渡口は「いま渡す 1 件」を探す場所であると同時に、
            いま店に何件抱えているかを見る場所でもある。既定は「すべて」。 -->
@@ -1952,6 +2017,24 @@ if (location.protocol === 'file:') {
         受付で注文が確定すると、その時点でここに「ご用意中」として出ます。<br>
         厨房から品物を受け取ったら「用意できた」を押します（お呼び出しも始まります）。
       </p>
+      </section>
+
+      <!-- 2 面目：呼び出しの状況。お客様側の呼び出し表示に何が出ているかを、
+           受渡口から確かめられるようにする。取りに来ない札はここから呼び直す。 -->
+      <section class="deck-page" aria-label="呼び出しの状況">
+        <p class="deck-head" id="recall-head">呼び出しの状況</p>
+        <div class="kds-grid" id="recall-list"></div>
+        <p class="kds-empty hidden" id="recall-empty">
+          <b>いまお呼び出しはありません</b>
+          お渡し待ちになった注文が、ここと呼び出し表示に出ます。
+        </p>
+      </section>
+      </div>
+
+      <nav class="deck-dots" id="ready-dots" aria-label="受渡の画面">
+        <button type="button" data-page="0" aria-current="page">お渡し</button>
+        <button type="button" data-page="1">呼び出し</button>
+      </nav>
     </section>
 
     <!-- ===== 支払い口 =====
@@ -1974,15 +2057,56 @@ if (location.protocol === 'file:') {
         </span>
       </header>
 
-      <div class="kds-grid" id="pay-list"></div>
-      <p class="kds-empty hidden" id="pay-empty">未払いの注文はありません。</p>
+      <div class="deck" id="pay-deck">
+      <section class="deck-page" aria-label="未収の回収">
+        <div class="kds-grid" id="pay-list"></div>
+        <p class="kds-empty hidden" id="pay-empty">未払いの注文はありません。</p>
 
-      <!-- 打ち間違いを戻す導線。普段は畳んでおき、未収の並びを邪魔しない。 -->
-      <details class="ops-fold">
-        <summary>支払い済み（打ち間違いはここから戻せます）</summary>
-        <div class="ops-paid-list" id="paid-list"></div>
-        <p class="ops-note hidden" id="paid-empty">まだ支払い済みの注文はありません。</p>
-      </details>
+        <!-- 打ち間違いを戻す導線。普段は畳んでおき、未収の並びを邪魔しない。 -->
+        <details class="ops-fold">
+          <summary>支払い済み（打ち間違いはここから戻せます）</summary>
+          <div class="ops-paid-list" id="paid-list"></div>
+          <p class="ops-note hidden" id="paid-empty">まだ支払い済みの注文はありません。</p>
+        </details>
+      </section>
+
+      <!-- 2 面目：おつり。暗算は行列のなかでいちばん間違える。
+           請求は「受け取る」で選んだ注文から入るので、打つのはお預かりだけ。 -->
+      <section class="deck-page" aria-label="おつり計算">
+        <div class="chg">
+          <div class="chg-row"><span>請求</span><b id="chg-due">—</b></div>
+          <div class="chg-row"><span>お預かり</span><b id="chg-paid">0</b></div>
+          <div class="chg-row" data-out="true"><span>おつり</span><b id="chg-back">—</b></div>
+          <p class="chg-hint" id="chg-hint"></p>
+          <div class="chg-quick" id="chg-quick">
+            <button type="button" data-add="500">+500</button>
+            <button type="button" data-add="1000">+1000</button>
+            <button type="button" data-add="5000">+5000</button>
+            <button type="button" data-exact="1">ちょうど</button>
+          </div>
+          <div class="chg-keys" id="chg-keys">
+            <button type="button" data-k="1">1</button>
+            <button type="button" data-k="2">2</button>
+            <button type="button" data-k="3">3</button>
+            <button type="button" data-k="4">4</button>
+            <button type="button" data-k="5">5</button>
+            <button type="button" data-k="6">6</button>
+            <button type="button" data-k="7">7</button>
+            <button type="button" data-k="8">8</button>
+            <button type="button" data-k="9">9</button>
+            <button type="button" data-k="00">00</button>
+            <button type="button" data-k="0">0</button>
+            <button type="button" data-k="back" aria-label="1 文字消す">←</button>
+          </div>
+          <button type="button" class="ops-sub" id="chg-clear">クリア</button>
+        </div>
+      </section>
+      </div>
+
+      <nav class="deck-dots" id="pay-dots" aria-label="支払い口の画面">
+        <button type="button" data-page="0" aria-current="page">未収</button>
+        <button type="button" data-page="1">おつり</button>
+      </nav>
     </section>
 
     <!-- ===== 管理（コントロール） =====
@@ -2053,12 +2177,29 @@ if (location.protocol === 'file:') {
         </div>
         <p class="ctl-hint" id="reserve-state" data-on="false"></p>
 
+        <h3 class="field-group">生地が尽きるまで</h3>
+        <p class="ctl-hint" id="stock-out"></p>
+
+        <h3 class="field-group">終了時刻</h3>
+        <p class="ctl-note">
+          この時刻を過ぎたら、受付を自動で閉じます（お客様の画面は「本日の販売は終了しました」）。
+          すでに受付中のお客様は最後まで通ります。空のままなら時刻では閉めません。
+        </p>
+        <div class="field" style="max-width:200px">
+          <label for="close-at">受付を閉じる時刻</label>
+          <input type="time" id="close-at" step="60">
+        </div>
+        <p class="ctl-hint" id="close-hint"></p>
+
         <h3 class="field-group">厨房の体制</h3>
         <p class="ctl-note">
           焼ける量を決めているのは台ではなく<b>人数</b>です。1 人が同時に見られるのは
           12 マスほど（＝2 カップ）で、大きい台はマスを余らせて使います。
           <b>シフトで人数が変わったら、ここを変えてください。</b>
-          見積もりも、厨房の板に出る割り当ても一緒に変わります。
+          見積もりも、厨房の板に出る割り当ても一緒に変わります。<br>
+          ここに入れるのは<b>焼く人の数</b>です。<b>生地を混ぜる人は数えないでください</b>
+          （1 ボウル 400g で 3 カップ。4 人で焼くと 1.5 分に 1 杯空くので、
+          混ぜ続ける人が常時 1 人要ります。その人は焼けません）。
         </p>
         <div class="ctl-count" id="kit-people">
           <button type="button" class="ctl-step" data-people="-1" aria-label="厨房の人数を 1 人減らす">−</button>
