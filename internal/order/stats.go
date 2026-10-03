@@ -109,18 +109,18 @@ func Calculate(res DecodeResult) Stats {
 		// 支払いの集計。キャンセルは受注額に含めないので、ここでも除外する。
 		// ただし「支払い済みのまま中止」は現金が手元にあるので別に拾う。
 		if o.Status == StatusCancelled && o.Paid {
-			s.CancelledPaidSales += o.Price
+			s.CancelledPaidSales += o.NetPrice()
 			s.CancelledPaidOrders++
 		}
 		if o.Status != StatusCancelled {
 			if o.Paid {
-				s.PaidSales += o.Price
+				s.PaidSales += o.NetPrice()
 				s.PaidOrders++
 			} else {
-				s.UnpaidSales += o.Price
+				s.UnpaidSales += o.NetPrice()
 				s.UnpaidOrders++
 				if o.Status == StatusCompleted {
-					s.UnpaidDeliveredSales += o.Price
+					s.UnpaidDeliveredSales += o.NetPrice()
 					s.UnpaidDeliveredOrders++
 				}
 			}
@@ -128,14 +128,14 @@ func Calculate(res DecodeResult) Stats {
 
 		switch o.Status {
 		case StatusCancelled:
-			s.CancelledSales += o.Price
+			s.CancelledSales += o.NetPrice()
 		case StatusPending, StatusReady:
-			s.OutstandingSales += o.Price
+			s.OutstandingSales += o.NetPrice()
 		case StatusCompleted:
-			s.CompletedSales += o.Price
+			s.CompletedSales += o.NetPrice()
 		}
 		if o.Status != StatusCancelled {
-			s.TotalSales += o.Price
+			s.TotalSales += o.NetPrice()
 		}
 
 		for _, it := range o.Items {
@@ -143,25 +143,25 @@ func Calculate(res DecodeResult) Stats {
 
 			switch o.Status {
 			case StatusCancelled:
-				s.CancelledPacks += it.Quantity
-				fs.CancelledPacks += it.Quantity
+				s.CancelledPacks += o.WantOf(it.Flavor)
+				fs.CancelledPacks += o.WantOf(it.Flavor)
 				continue
 			case StatusPending:
-				s.QueuePacks += it.Quantity
-				s.PendingPacks += it.Quantity
-				fs.QueuePacks += it.Quantity
-				s.QueueByFlavor[it.Flavor] += it.Quantity
+				s.QueuePacks += o.WantOf(it.Flavor)
+				s.PendingPacks += o.WantOf(it.Flavor)
+				fs.QueuePacks += o.WantOf(it.Flavor)
+				s.QueueByFlavor[it.Flavor] += o.WantOf(it.Flavor)
 			case StatusReady:
-				s.PendingPacks += it.Quantity
-				fs.ReadyPacks += it.Quantity
+				s.PendingPacks += o.WantOf(it.Flavor)
+				fs.ReadyPacks += o.WantOf(it.Flavor)
 			case StatusCompleted:
-				s.CompletedPacks += it.Quantity
-				fs.CompletedPacks += it.Quantity
+				s.CompletedPacks += o.WantOf(it.Flavor)
+				fs.CompletedPacks += o.WantOf(it.Flavor)
 			}
 
-			s.TotalPacks += it.Quantity
-			fs.OrderedPacks += it.Quantity
-			fs.Sales += it.Price
+			s.TotalPacks += o.WantOf(it.Flavor)
+			fs.OrderedPacks += o.WantOf(it.Flavor)
+			fs.Sales += o.WantOf(it.Flavor) * it.UnitPrice
 		}
 	}
 

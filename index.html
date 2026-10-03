@@ -862,6 +862,24 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
   min-height:56px;font-size:16px;letter-spacing:.08em;margin-top:20px}
 .cta-plain:hover{color:var(--brown)}
 
+/* 一部だけやめる。受渡口で立ったまま押すので、受渡の操作盤と同じ大きさにする。 */
+.void-rows{display:grid;gap:12px;margin:14px 0}
+.void-row{display:flex;align-items:center;gap:14px;background:var(--card);
+  border:1px solid var(--gold-line);border-radius:var(--r-card);padding:12px 16px}
+.void-row img{width:clamp(40px,6vh,56px);height:auto;flex:none}
+.void-name{flex:1;min-width:0;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(17px,2.4vh,21px);letter-spacing:.06em}
+.void-n{flex:none;min-width:3.6em;text-align:center;font-family:var(--serif);
+  color:var(--brown);font-size:clamp(26px,4vh,38px);line-height:1;font-variant-numeric:tabular-nums}
+.void-n small{font-size:.45em;color:var(--brown-soft);margin-left:.15em}
+.void-step{flex:none;min-height:clamp(48px,6.6vh,62px);min-width:clamp(56px,8vw,78px);
+  border-radius:var(--r-ctl);cursor:pointer;font-size:clamp(20px,2.9vh,26px);
+  background:var(--lift);border:2px solid var(--gold);color:var(--brown);line-height:1}
+.void-step:disabled{opacity:.35;cursor:not-allowed}
+.void-total{margin:4px 0 0;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(20px,3vh,28px);letter-spacing:.04em;text-align:center}
+.void-note{margin:8px 0 0;color:var(--red);font-size:15px;text-align:center;min-height:1.2em}
+
 .toast-undo{margin-left:16px;min-height:48px;padding:0 22px;border-radius:999px;
   border:1px solid currentColor;background:transparent;color:inherit;
   font-size:16px;font-weight:700;cursor:pointer}
@@ -2586,6 +2604,22 @@ if (location.protocol === 'file:') {
     <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
       <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">取りました・確定する</button>
       <button type="button" class="cta-ghost" id="place-no" style="width:100%;justify-content:center">まだです・戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- 「3 つのうち 1 つは大丈夫です」。注文そのものは記録として変えず、
+     受け取らなかったカップ数だけを別に数える。金額も焼き待ちもこれを引いた数で動く。 -->
+<div class="modal" id="m-void" role="dialog" aria-modal="true" aria-labelledby="void-h">
+  <div class="sheet">
+    <h2 id="void-h">受け取らないぶんを選んでください</h2>
+    <p class="sheet-sub" id="void-sub"></p>
+    <div class="void-rows" id="void-rows"></div>
+    <p class="void-total" id="void-total"></p>
+    <p class="void-note" id="void-note"></p>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+      <button type="button" class="cta" id="void-yes" style="width:100%;justify-content:center">この内容にする</button>
+      <button type="button" class="cta-plain" id="void-no" style="width:100%;justify-content:center">戻る</button>
     </div>
   </div>
 </div>

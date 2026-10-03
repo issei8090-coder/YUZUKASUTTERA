@@ -253,6 +253,11 @@
             ".validate": "$flavor.matches(/^[a-z][a-z0-9_]{0,31}$/) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 99"
           }
         },
+        "voided": {
+          "$flavor": {
+            ".validate": "$flavor.matches(/^[a-z][a-z0-9_]{0,31}$/) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 99"
+          }
+        },
         "tag": {
           ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 999 && (!data.exists() || newData.val() === data.val())"
         },

@@ -355,6 +355,14 @@ type Order struct {
 	// どこにも残らず、焼き待ちの総量も実際より多く見える。
 	Made map[string]int `json:"made,omitempty"`
 
+	// Voided は味ごとの「お客様が受け取らなかったカップ数」。
+	//
+	// 「3 つのうち 1 つは大丈夫です」と言われる場面のための軸。注文そのもの
+	// (items/price/quantity) は記録として変えない（ルールでも不変にしてある）。
+	// 金額もカップ数も、ここを引いた NetPrice / NetQuantity を見る。
+	// 全部やめた場合は中止 (cancelled) にする。
+	Voided map[string]int `json:"voided,omitempty"`
+
 	// Session は営業回。リハーサルと本番を同じ DB で回すための仕切りで、
 	// 集計と画面はこれで絞る。注文を消さずに仕切れるので記録が失われない。
 	// 空の旧データは DefaultSession に属するものとして扱う。
@@ -376,6 +384,61 @@ func (o Order) SessionOf() string {
 	}
 	return o.Session
 }
+
+// VoidedOf は味ごとの「受け取らなかったカップ数」。注文数を超えては数えない。
+func (o Order) VoidedOf(flavor string) int {
+	want := 0
+	for _, it := range o.Items {
+		if it.Flavor == flavor {
+			want = it.Quantity
+		}
+	}
+	n := o.Voided[flavor]
+	if n < 0 {
+		n = 0
+	}
+	if n > want {
+		n = want
+	}
+	return n
+}
+
+// WantOf は実際に用意するカップ数（注文 − 受け取らなかったぶん）。
+func (o Order) WantOf(flavor string) int {
+	for _, it := range o.Items {
+		if it.Flavor == flavor {
+			return it.Quantity - o.VoidedOf(flavor)
+		}
+	}
+	return 0
+}
+
+// NetPrice は実際にいただく金額。Price は注文時のまま残す。
+func (o Order) NetPrice() int {
+	if len(o.Voided) == 0 {
+		return o.Price
+	}
+	n := 0
+	for _, it := range o.Items {
+		n += o.WantOf(it.Flavor) * it.UnitPrice
+	}
+	return n
+}
+
+// NetQuantity は実際に渡すカップ数。
+func (o Order) NetQuantity() int {
+	if len(o.Voided) == 0 {
+		return o.Quantity
+	}
+	n := 0
+	for _, it := range o.Items {
+		n += o.WantOf(it.Flavor)
+	}
+	return n
+}
+
+// VoidedPrice は受け取らなかったぶんの金額。支払い済みなら返金が要る。
+func (o Order) VoidedPrice() int { return o.Price - o.NetPrice() }
 
 // FlavorText は表示用の商品名。複数商品なら「A 2個 / B 1個」の形にまとめる。
 func (o Order) FlavorText() string {

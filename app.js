@@ -15,6 +15,7 @@ import {
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines,
   madeOf, backlogCups, oldestWaitMin, measuredRate, planDeal, dealDemand,
+  voidedOf, wantOf, netPriceOf, netQtyOf,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
   soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
@@ -2615,11 +2616,14 @@ function opsLines(o){
    半分だけ出来ている注文が、出来ていない注文と見分けられない。 */
 function fillRows(o){
   return `<div class="ops-fill">` + (o.items||[]).map(i=>{
-    const want = i.quantity || 0;
+    // やめたぶんを引いた数で数える。「3 つのうち 1 つは大丈夫です」と
+    // 言われたあとは、2 つそろえば用意できたことになる。
+    const want = wantOf(o, i.flavor);
+    const off  = voidedOf(o, i.flavor);
     const got  = madeOf(o, i.flavor);
     return `<div class="ops-fill-row" data-done="${got >= want}">
       <span class="ops-mark"><img src="${MARK[i.flavor]||''}" alt="${label(i.flavor)}"></span>
-      <span class="ops-fill-n"><b>${got}</b><small>/${want}</small></span>
+      <span class="ops-fill-n"><b>${got}</b><small>/${want}${off ? ` <i>(${off}やめた)</i>` : ''}</small></span>
       <button type="button" class="ops-fill-minus" data-act="unmade" data-id="${o.id}"
               data-flavor="${i.flavor}" ${got <= 0 ? 'disabled' : ''}
               aria-label="${label(i.flavor)} を 1 減らす">−</button>
@@ -2912,7 +2916,8 @@ function renderReady(){
     // 約束した時刻を過ぎた注文。お客様は時刻どおりに来るので、
     // ここが分かっていないと「お待たせしました」の相手すら分からない。
     const late = !done && !!o.pickupMs && o.pickupMs < Date.now();
-    const amount = yen(o.price||0);
+    // 一部だけやめた注文があるので、金額は必ず「実際にいただく額」で出す。
+    const amount = yen(netPriceOf(o));
     // 時計の色は「まだ渡していない注文」にだけ意味がある。
     const age = done ? 'ok' : ageOf(sec);
     const state = prep ? 'ご用意中' : done ? (lost ? 'お渡し済み・未払い' : 'お渡し済み') : '';
@@ -2924,7 +2929,11 @@ function renderReady(){
       // 「ぜんぶ」を主にし、1 カップずつ届くときは上の行で数える。
       // そろった時点で呼び出しも始まる（fillCup / fillAll が calledAt を書く）。
       ? `<button type="button" class="ops-do" data-act="madeall" data-id="${o.id}"
-                 aria-label="${numOf(o)} はぜんぶ用意できた">ぜんぶ用意できた</button>`
+                 aria-label="${numOf(o)} はぜんぶ用意できた">ぜんぶ用意できた</button>
+         <div class="ops-row">
+           <button type="button" class="ops-sub" data-act="voidpart" data-id="${o.id}"
+                   aria-label="${numOf(o)} の一部をやめる">一部やめる</button>
+         </div>`
       : done
         ? `${lost ? `<button type="button" class="ops-do" data-kind="cash" data-act="takepaid" data-id="${o.id}" data-num="${numOf(o)}"
                    aria-label="${numOf(o)} の ${amount}円 を受け取る">${amount}円 受け取る</button>` : ''}
@@ -2945,9 +2954,17 @@ function renderReady(){
                        aria-label="${numOf(o)} をもう一度呼ぶ">呼ぶ</button>` : ''}
                <button type="button" class="ops-sub" data-act="done" data-id="${o.id}"
                        aria-label="${numOf(o)} を代金を受け取らずに渡す">未払いのまま渡す</button>
+             </div>
+             <div class="ops-row">
+               <button type="button" class="ops-sub" data-act="voidpart" data-id="${o.id}"
+                       aria-label="${numOf(o)} の一部をやめる">一部やめる</button>
              </div>`
           : `<button type="button" class="ops-do" data-act="done" data-id="${o.id}"
                      aria-label="${numOf(o)} を渡した">渡した</button>
+             <div class="ops-row">
+               <button type="button" class="ops-sub" data-act="voidpart" data-id="${o.id}"
+                       aria-label="${numOf(o)} の一部をやめる">一部やめる</button>
+             </div>
              ${o.number ? `<div class="ops-row">
                <button type="button" class="ops-sub" data-act="flash" data-id="${o.id}"
                        aria-label="${numOf(o)} をもう一度呼ぶ">呼ぶ</button>
@@ -3263,7 +3280,7 @@ function renderPay(){
   const allUnpaid = all.filter(o=>!o.paid);
   const lost      = allUnpaid.filter(o=>o.status==='completed');
   $('pay-count').textContent = allUnpaid.length;
-  $('pay-sum').textContent   = yen(allUnpaid.reduce((n,o)=>n+(o.price||0), 0));
+  $('pay-sum').textContent   = yen(allUnpaid.reduce((n,o)=>n+netPriceOf(o), 0));
   const lw = $('pay-lost-wrap');
   if(lw){
     lw.hidden = lost.length === 0;
@@ -3273,12 +3290,127 @@ function renderPay(){
   $('paid-list').innerHTML = paid.map(o=>`
     <div class="ops-paid-row">
       <span class="ops-paid-num">${numOf(o)}</span>
-      <span class="ops-paid-yen">${yen(o.price||0)}円</span>
+      <span class="ops-paid-yen">${yen(netPriceOf(o))}円</span>
       <button type="button" class="ops-mini" data-act="unpay" data-id="${o.id}" data-num="${numOf(o)}"
               aria-label="${numOf(o)} を未払いに戻す">未払いに戻す</button>
     </div>`).join('');
   $('paid-empty').classList.toggle('hidden', paid.length>0);
   renderRefund();
+}
+
+/* ---------- 一部だけやめる ----------
+   「3 つのうち 1 つは大丈夫です」と言われる場面。注文そのもの（items・price・
+   quantity）は記録として変えない。ルールでも不変にしてあるし、あとから
+   「元は何を頼んだのか」が消えると、差額の説明ができなくなる。
+
+   受け取らなかったカップ数を voided に置き、金額も焼き待ちもそれを引いた数で見る。
+   すでに焼けていたカップは手元（onhand）に戻し、次のお客様に出せるようにする。
+   全部やめるときは、この操作ではなく中止を使う。 */
+let voiding = null;    // { id, pick: {flavor: n} }
+
+function openVoid(id){
+  const o = orders.find(x=>x.id===id);
+  if(!o){ toast('注文が見つかりません'); return; }
+  voiding = { id, pick: {} };
+  $('void-sub').textContent = `${numOf(o)}（${itemsText(o)}）`;
+  renderVoid();
+  openModal('m-void');
+}
+
+function renderVoid(){
+  const o = orders.find(x=>x.id===voiding?.id);
+  if(!o) return;
+  const rows = $('void-rows');
+  rows.innerHTML = (o.items||[]).map(i=>{
+    const want = wantOf(o, i.flavor);          // いま用意することになっている数
+    const n = voiding.pick[i.flavor] || 0;
+    return `
+    <div class="void-row">
+      <img src="${MARK[i.flavor]||''}" alt="">
+      <span class="void-name">${label(i.flavor)}<br>
+        <small>${want}${unit(i.flavor)}のうち</small></span>
+      <button type="button" class="void-step" data-act="void-step" data-key="${i.flavor}" data-step="-1"
+              aria-label="${label(i.flavor)} をやめる数を 1 減らす" ${n<=0?'disabled':''}>−</button>
+      <span class="void-n">${n}<small>やめる</small></span>
+      <button type="button" class="void-step" data-act="void-step" data-key="${i.flavor}" data-step="1"
+              aria-label="${label(i.flavor)} をやめる数を 1 増やす" ${n>=want?'disabled':''}>＋</button>
+    </div>`;
+  }).join('');
+
+  // 残る金額。すでに受け取っているなら、差額は返金になる。
+  const off = (o.items||[]).reduce((n,i)=>n + (voiding.pick[i.flavor]||0) * (i.unitPrice||0), 0);
+  const now = netPriceOf(o);
+  const left = Math.max(0, now - off);
+  const all = (o.items||[]).every(i => (voiding.pick[i.flavor]||0) >= wantOf(o, i.flavor));
+  $('void-total').innerHTML = off
+    ? `お会計は <b>${yen(now)}</b> 円 → <b>${yen(left)}</b> 円`
+    : 'やめるカップを選んでください';
+  $('void-note').textContent = all && off
+    ? 'ぜんぶやめる場合は、この画面ではなく「中止」を使ってください。'
+    : (off && o.paid ? `すでに代金をいただいています。${yen(off)}円 をお返ししてください。` : '');
+  $('void-yes').disabled = off === 0 || all;
+}
+
+$('void-no')?.addEventListener('click', ()=>{ voiding = null; closeModal(); });
+$('void-yes')?.addEventListener('click', async ()=>{
+  const v = voiding; voiding = null; closeModal();
+  if(!v) return;
+  await applyVoid(v.id, v.pick);
+});
+
+async function applyVoid(id, pick){
+  let ng = null, back = {};
+  try{
+    await authReady;
+    const tx = await tracked(runTransaction(ref(db,'orders/'+id), cur=>{
+      ng = null; back = {};
+      if(cur === null){ ng = '注文が見つかりません'; return; }
+      if(cur.status === 'cancelled'){ ng = 'この注文は中止されています'; return; }
+      const items = cur.items || [];
+      const voided = { ...(cur.voided || {}) };
+      const made   = { ...(cur.made || {}) };
+      for(const [k, n] of Object.entries(pick)){
+        if(!(n > 0)) continue;
+        const want = (items.find(i=>i.flavor === k) || {}).quantity || 0;
+        const already = Math.max(0, Math.min(want, Number(voided[k]) || 0));
+        const add = Math.max(0, Math.min(want - already, n));
+        if(!add) continue;
+        voided[k] = already + add;
+        // すでに焼けていたカップは手元に戻す。注文からは外れるが物は残る。
+        const got = Math.max(0, Number(made[k]) || 0);
+        const keep = Math.max(0, want - voided[k]);
+        if(got > keep){ back[k] = (back[k] || 0) + (got - keep); made[k] = keep; }
+      }
+      if(!Object.keys(voided).length){ ng = 'やめるカップが選ばれていません'; return; }
+      cur.voided = voided;
+      cur.made = made;
+      // 残りがそろっていれば受渡待ちへ（3 つ中 2 つ焼けていれば、もう渡せる）。
+      const ok = items.every(i => {
+        const w = Math.max(0, (i.quantity||0) - (Number(voided[i.flavor])||0));
+        return (Number(made[i.flavor]) || 0) >= w;
+      });
+      const left = items.reduce((n,i)=> n + Math.max(0,
+        (i.quantity||0) - (Number(voided[i.flavor])||0)), 0);
+      if(ok && left > 0 && cur.status === 'pending'){
+        cur.status = 'ready';
+        cur.calledAt = Date.now();
+      }
+      cur.updatedMs = Date.now();
+      return cur;
+    }));
+    if(ng){ toast(ng); return; }
+    if(!tx.committed){ toast('記録できませんでした。もう一度お試しください。'); return; }
+  }catch(e){
+    console.error(e);
+    toast(writeHint(e, '記録できませんでした'));
+    return;
+  }
+  // 焼けていたカップを手元へ返す。次のお客様に出せる。
+  for(const [k, n] of Object.entries(back)) await bumpOnhand(k, n);
+  const o = orders.find(x=>x.id===id);
+  const backText = Object.entries(back).map(([k,n])=>`${shortLabel(k)} ${n}${unit(k)}`).join('／');
+  toast(`${numOf(o)} の一部をやめました`
+      + (backText ? `（${backText} を手元に戻しました）` : ''), 'ok', null, 7000);
 }
 
 /* ---------- 支払い口 3 面目：返金 ----------
@@ -3414,7 +3546,7 @@ function handOver(id){
   if(!o || o.paid){ changeStatus(id,'ready','completed'); return; }
 
   $('unpaid-sub').textContent = `${numOf(o)}　${itemsText(o)}`;
-  $('unpaid-total').innerHTML = `${yen(o.price||0)}<small>円</small>`;
+  $('unpaid-total').innerHTML = `${yen(netPriceOf(o))}<small>円</small>`;
   pendingHandOver = id;
   openModal('m-unpaid');
 }
@@ -3816,6 +3948,18 @@ document.addEventListener('click', e=>{
       bumpOnhand(b.dataset.key, Number(b.dataset.step) || 0);
       return;
     case 'deal-go': applyDeal(); return;
+
+    // 「3 つのうち 1 つは大丈夫です」。注文は変えず、やめたぶんを別に数える。
+    case 'voidpart': openVoid(id); return;
+    case 'void-step': {
+      if(!voiding) return;
+      const o = orders.find(x=>x.id===voiding.id);
+      const k = b.dataset.key, d = Number(b.dataset.step) || 0;
+      const max = o ? wantOf(o, k) : 0;
+      voiding.pick[k] = Math.max(0, Math.min(max, (voiding.pick[k] || 0) + d));
+      renderVoid();
+      return;
+    }
 
     // 1 カップ受け取った／取り消した。厨房の画面は立てかけてあるだけで
     // 触れないので、品物を受け取った受渡口がここを打つ。

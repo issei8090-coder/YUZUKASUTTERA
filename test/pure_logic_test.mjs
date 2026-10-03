@@ -12,7 +12,7 @@ import {
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
   soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
-  planDeal, dealDemand,
+  planDeal, dealDemand, voidedOf, wantOf, netPriceOf, netQtyOf,
 } from '../lib/pure.js';
 
 let failures = 0;
@@ -224,6 +224,30 @@ eq('欲しい数を超えて配っても、注文を超えて数えない',
 eq('小数や負は切り捨てて無視する', planDeal(DEAL, { plain:2.7, flavor_b:-3 }).rows.map(r=>r.add),
    [{plain:1},{plain:1}]);
 eq('注文が 1 つも無ければ全部余る', planDeal([], { plain:4 }), { rows:[], left:{ plain:4 } });
+
+console.log('\n[13] 一部だけやめる（3つのうち1つは大丈夫です）');
+// 注文そのものは変えない。受け取らなかったカップ数を別に数え、
+// 金額・焼き待ち・在庫のすべてがそれを引いた数で動くこと。
+const V = { id:'v', seq:1, status:'pending',
+  items:[{flavor:'plain',quantity:3,unitPrice:200,price:600},
+         {flavor:'flavor_b',quantity:1,unitPrice:200,price:200}],
+  made:{plain:3}, voided:{plain:1} };
+eq('やめた数',           voidedOf(V,'plain'), 1);
+eq('用意する数',         wantOf(V,'plain'), 2);
+eq('触っていない味',     wantOf(V,'flavor_b'), 1);
+eq('受け取った数は用意する数で頭打ち', madeOf(V,'plain'), 2);
+eq('いただく金額',       netPriceOf(V), 600);
+eq('渡すカップ数',       netQtyOf(V), 3);
+eq('焼き待ちはチョコ1だけ', leftOf(V), 1);
+eq('売れた数（やめたぶんは引く）', soldOf([V],'plain'), 2);
+eq('注文数を超えてやめたことにはできない',
+   wantOf({ items:[{flavor:'plain',quantity:2}], voided:{plain:9} }, 'plain'), 0);
+eq('全部やめたら「そろった」とは言わない',
+   allMade({ items:[{flavor:'plain',quantity:2}], voided:{plain:2}, made:{} }), false);
+eq('残りがそろえば用意できたことになる',
+   allMade({ items:[{flavor:'plain',quantity:3}], voided:{plain:1}, made:{plain:2} }), true);
+eq('配る先も引いた数で見る',
+   dealDemand([V]), { plain:0, flavor_b:1 });
 
 console.log(failures ? `\n✗ ${failures} 件失敗` : '\n✓ すべて通りました');
 process.exit(failures ? 1 : 0);

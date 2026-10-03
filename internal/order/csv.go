@@ -40,10 +40,13 @@ func OrdersCSV(res DecodeResult) ([]byte, error) {
 				o.ID,
 				o.CreatedDisplay(),
 				it.FlavorText(),
-				strconv.Itoa(it.Quantity),
+				// 受け取らなかったぶんを引いた数で出す。集計（サマリ）も同じ数を
+				// 見ているので、2 枚の CSV が食い違わない。やめたぶんは
+				// サマリの「要対応の注文」に金額つきで残る。
+				strconv.Itoa(o.WantOf(it.Flavor)),
 				strconv.Itoa(it.UnitPrice),
-				strconv.Itoa(it.Price),
-				strconv.Itoa(o.Price),
+				strconv.Itoa(o.WantOf(it.Flavor) * it.UnitPrice),
+				strconv.Itoa(o.NetPrice()),
 				o.StatusText(),
 				o.PaymentText(),
 				o.PaidDisplay(),
@@ -112,18 +115,26 @@ func SummaryCSV(res DecodeResult) ([]byte, error) {
 			need = append(need, o)
 		} else if !o.Paid && o.Status == StatusCompleted {
 			need = append(need, o)
+		} else if o.VoidedPrice() > 0 {
+			// 一部だけやめた注文。支払い済みならその差額を返している必要がある。
+			need = append(need, o)
 		}
 	}
 	if len(need) > 0 {
 		rows = append(rows, []string{"", ""}, []string{"■ 要対応の注文", ""},
 			[]string{"区分", "注文番号", "注文ID", "受付日時", "金額(円)", "商品", ""})
 		for _, o := range need {
-			kind := "要返金（支払い済みのまま中止）"
-			if o.Status == StatusCompleted {
+			kind, amount := "", o.NetPrice()
+			switch {
+			case o.Paid && o.Status == StatusCancelled:
+				kind, amount = "要返金（支払い済みのまま中止）", o.Price
+			case !o.Paid && o.Status == StatusCompleted:
 				kind = "取りはぐれ（渡したのに未払い）"
+			default:
+				kind, amount = "一部やめた（受け取らなかったぶん）", o.VoidedPrice()
 			}
 			rows = append(rows, []string{kind, o.Number, o.ID, o.CreatedDisplay(),
-				strconv.Itoa(o.Price), o.FlavorText(), ""})
+				strconv.Itoa(amount), o.FlavorText(), ""})
 		}
 	}
 	if s.InvalidRecords > 0 {

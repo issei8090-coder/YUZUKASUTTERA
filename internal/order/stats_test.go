@@ -337,6 +337,59 @@ func TestRefundDueInSummaryCSV(t *testing.T) {
 	}
 }
 
+// 「3 つのうち 1 つは大丈夫です」。注文の記録は変えず、受け取らなかったぶんを
+// 金額とカップ数から引く。2 枚の CSV が食い違わないことまで見る。
+func TestVoidedPartOfOrder(t *testing.T) {
+	o := Order{ID: "a", Number: "#001", Status: StatusCompleted, Paid: true,
+		Price: 600, Quantity: 3, CreatedAt: "12:00:00",
+		Items:  []Item{{Flavor: "plain", Quantity: 3, UnitPrice: 200, Price: 600}},
+		Voided: map[string]int{"plain": 1}}
+
+	if got := o.WantOf("plain"); got != 2 {
+		t.Errorf("用意するカップ数 = %d, want 2", got)
+	}
+	if got := o.NetPrice(); got != 400 {
+		t.Errorf("いただく金額 = %d, want 400", got)
+	}
+	if got := o.NetQuantity(); got != 2 {
+		t.Errorf("渡すカップ数 = %d, want 2", got)
+	}
+	if got := o.VoidedPrice(); got != 200 {
+		t.Errorf("受け取らなかったぶん = %d, want 200", got)
+	}
+	// 注文数を超えてやめたことにはできない。
+	o2 := o
+	o2.Voided = map[string]int{"plain": 9}
+	if got := o2.NetPrice(); got != 0 {
+		t.Errorf("全部やめたら 0 円のはず, got %d", got)
+	}
+
+	s := Calculate(DecodeResult{Orders: []Order{o}})
+	if s.TotalSales != 400 || s.PaidSales != 400 {
+		t.Errorf("売上 = %d / 受取済み = %d, want 400 / 400", s.TotalSales, s.PaidSales)
+	}
+	if s.TotalPacks != 2 || s.CompletedPacks != 2 {
+		t.Errorf("カップ数 = %d / 受渡完了 = %d, want 2 / 2", s.TotalPacks, s.CompletedPacks)
+	}
+
+	// 明細 CSV も同じ数で出る（2 枚が食い違うと締めで照合できない）。
+	b, err := OrdersCSV(DecodeResult{Orders: []Order{o}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("#001,a,")) || !bytes.Contains(b, []byte(",2,200,400,400,")) {
+		t.Errorf("明細 CSV が受け取らなかったぶんを引いていない:\n%s", b)
+	}
+	// サマリの「要対応の注文」に、やめたぶんが金額つきで残る。
+	sum, err := SummaryCSV(DecodeResult{Orders: []Order{o}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(sum, []byte("一部やめた")) || !bytes.Contains(sum, []byte(",200,")) {
+		t.Errorf("サマリに一部やめた記録が無い:\n%s", sum)
+	}
+}
+
 func TestPaymentInSummaryCSV(t *testing.T) {
 	b, err := SummaryCSV(decode(t, paymentSample))
 	if err != nil {
