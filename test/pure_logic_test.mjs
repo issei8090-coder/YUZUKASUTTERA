@@ -8,6 +8,8 @@ import {
   soldOf, remainingOf, headroomOf, tagsInUse, nextFreeTag,
   inSession, sessionOf, normalize, byOrder, waitText, ageOf, DEFAULT_SESSION,
   encodeLines, decodeLines,
+  leftOf, madeOf, allMade, backlogCups, oldestWaitMin, measuredRate,
+  forecast, reserveOn, stopIntake, hhmm,
 } from '../lib/pure.js';
 
 let failures = 0;
@@ -84,6 +86,55 @@ eq('空でも落ちない', decodeLines(''), []);
 // 旧い形式（文章）が届いても、絵に変換できないので空で返す。金額だけ出す。
 eq('旧い文章は空', decodeLines('ゆずカステラ 4カップ'), []);
 eq('壊れた値は空', decodeLines('plain:x|:'), []);
+
+console.log('\n[8] 焼き待ちと受け取り時刻');
+// 作り置きができないので、注文は「まだ焼けていないカップ数」で数える。
+// 部分的に受け取った分を引かないと、焼き待ちが実際より多く出て時刻が遅れていく。
+const NOW = Date.parse('2026-10-03T12:00:00+09:00');
+const cup = (q, st, minAgo, made, extra = {}) => ({
+  status: st, quantity: q, createdMs: NOW - minAgo * 60000,
+  items: [{ flavor: 'plain', quantity: q }], made, ...extra });
+
+eq('未処理は注文数ぶん残っている', leftOf(cup(3, 'pending', 1)), 3);
+eq('受け取った分は引く',          leftOf(cup(3, 'pending', 1, { plain: 1 })), 2);
+eq('受渡待ちは焼き待ちでない',    leftOf(cup(3, 'ready', 1)), 0);
+eq('注文数を超えて数えない',      madeOf(cup(2, 'pending', 1, { plain: 9 }), 'plain'), 2);
+eq('そろった',                    allMade(cup(2, 'pending', 1, { plain: 2 })), true);
+eq('そろっていない',              allMade(cup(2, 'pending', 1, { plain: 1 })), false);
+
+const QUEUE = [cup(3, 'pending', 9), cup(2, 'pending', 1, { plain: 1 }), cup(1, 'ready', 5)];
+eq('焼き待ちの合計', backlogCups(QUEUE), 4);
+eq('最長待ちは未処理だけを見る', oldestWaitMin(QUEUE, NOW), 9);
+
+// 1 分 1 カップなら、4 カップ待ち ＋ 2 カップの注文 = 6 分 ＋ 手間 2 分。
+const f = forecast(QUEUE, { now: NOW, rate: 1, addCups: 2 });
+eq('見積もり（分）', f.waitMin, 8);
+eq('受け取り時刻',   hhmm(f.pickupMs), '12:08');
+// 空いていても、その注文を焼く時間だけはかかる（2カップ＝2分＋手間2分）。
+eq('空いていても自分のぶんはかかる', forecast([], { now: NOW, rate: 1, addCups: 2 }).waitMin, 4);
+// 何も注文していない＝いまの待ち時間を訊いただけなら 0 分。
+eq('焼き待ちが無ければ 0 分', forecast([], { now: NOW, rate: 1 }).waitMin, 0);
+// 速さが倍なら半分。設定を変えたら見積もりも動くこと。
+eq('速さを上げると縮む', forecast(QUEUE, { now: NOW, rate: 2, addCups: 2 }).waitMin, 5);
+
+eq('8分で予約が始まる',      reserveOn('auto', QUEUE, NOW, false), true);
+eq('7分では始まらない',      reserveOn('auto', [cup(1, 'pending', 7)], NOW, false), false);
+eq('始まったら5分までは続く', reserveOn('auto', [cup(1, 'pending', 6)], NOW, true), true);
+eq('5分を切ったら戻る',      reserveOn('auto', [cup(1, 'pending', 4)], NOW, true), false);
+eq('手動ONは待ち時間を見ない', reserveOn('on', [], NOW, false), true);
+eq('手動OFFは混んでも出さない', reserveOn('off', QUEUE, NOW, true), false);
+
+eq('30分を超えたら受付を止める', stopIntake(31, false), true);
+eq('30分ちょうどは止めない',     stopIntake(30, false), false);
+eq('止めたあとは25分まで戻さない', stopIntake(26, true), true);
+eq('25分以下で再開',             stopIntake(25, true), false);
+
+// 実測は件数が足りないと使わない（たまたま 1 件出ただけで速さを決めない）。
+eq('実測が足りなければ null', measuredRate([{ status:'ready', quantity:2, calledAt: NOW - 60000 }], NOW), null);
+eq('実測は毎分カップ数',
+   measuredRate([{ status:'ready', quantity:6, calledAt: NOW - 60000 },
+                 { status:'completed', quantity:4, calledAt: NOW - 5 * 60000 },
+                 { status:'completed', quantity:9, calledAt: NOW - 30 * 60000 }], NOW), 1);
 
 console.log(failures ? `\n✗ ${failures} 件失敗` : '\n✓ すべて通りました');
 process.exit(failures ? 1 : 0);

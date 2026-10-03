@@ -50,6 +50,10 @@ const CASES = [
   ['札なし', { items: [{ flavor: 'plain', quantity: 2 }], immediate: true, paid: false }],
   ['札なし・受付で受取済み', { items: [{ flavor: 'plain', quantity: 2 }], immediate: true, paid: true }],
   ['営業回つき', { items: [{ flavor: 'plain', quantity: 1 }], session: 'r2' }],
+  // 受け取り時刻の案内（予約）。記録に残る値なので、両方が同じ形で残すこと。
+  ['受け取り時刻つき', { items: [{ flavor: 'plain', quantity: 2 }], pickupMs: NOW + 12 * 60000 }],
+  ['受け取り時刻が過去', { items: [{ flavor: 'plain', quantity: 2 }], pickupMs: NOW - 60000 }],
+  ['受け取り時刻が遠すぎる', { items: [{ flavor: 'plain', quantity: 2 }], pickupMs: NOW + 48 * 3600000 }],
   ['採番が不正', { items: [{ flavor: 'plain', quantity: 1 }], seq: 0 }],
 ];
 
@@ -71,7 +75,7 @@ for (const [name, over] of CASES) {
   if (!goRes.ok) { check(`${name}（どちらも拒否）`, true); continue; }
 
   // 記録として残る値が一致すること。文言は一致させない（別の言語で書くため）。
-  const KEYS = ['id', 'seq', 'tag', 'number', 'quantity', 'price', 'status', 'paid', 'session'];
+  const KEYS = ['id', 'seq', 'tag', 'number', 'quantity', 'price', 'status', 'paid', 'session', 'pickupMs'];
   const diff = KEYS.filter(k => JSON.stringify(goRes.order[k]) !== JSON.stringify(jsRes.order[k]));
   const gi = JSON.stringify(goRes.order.items);
   const ji = JSON.stringify(jsRes.order.items);

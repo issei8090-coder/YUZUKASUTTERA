@@ -593,6 +593,21 @@ tbody tr:hover{background:var(--lift)}
 .done-label{font-size:17px;letter-spacing:.16em;margin:0}
 .done-num{font-family:var(--serif);color:var(--brown);font-size:clamp(84px,17vw,150px);line-height:1;margin:14px 0 6px;letter-spacing:.03em}
 .done-meta{font-size:17px;margin:0 0 20px}
+/* 何時に来ればよいか。番号の次に大きい字にする。ここを小さくすると、
+   お客様は番号だけ覚えて、その場に立って待ってしまう。 */
+.done-pickup{margin:0 0 14px;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(20px,3.4vw,27px);letter-spacing:.08em;line-height:1.45}
+.done-pickup b{font-size:1.8em;letter-spacing:.04em}
+/* 「お越しください」は時刻と別の行にする。1 行に流すと、幅の狭い端末で
+   最後の 1 文字だけが次の行に落ちて読みにくい。 */
+.done-pickup span{display:block;margin-top:4px;font-size:.92em;letter-spacing:.14em}
+.done-pickup[hidden]{display:none}
+/* 確定の前に出す見込み。断る機会をお客様に残すためのもの。 */
+.confirm-pickup{margin:0 0 16px;padding:12px 16px;border-radius:var(--r-card);
+  background:var(--lift);border:1px solid var(--gold-line);
+  font-size:clamp(15px,2vw,18px);letter-spacing:.06em;color:var(--brown-soft);text-align:center}
+.confirm-pickup b{font-family:var(--serif);color:var(--brown);font-size:1.5em;letter-spacing:.04em}
+.confirm-pickup[hidden]{display:none}
 /* 次にすることの案内。番号札の数字の次に目が行く位置に置く。
    枠で囲って「ここから先の話」だと分かるようにする。 */
 .done-guide{border-top:1px solid var(--gold-line);margin-top:4px;padding-top:22px;
@@ -752,6 +767,10 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .kds-qty{font-size:clamp(40px,6.2vh,56px);font-weight:800;line-height:1.1;min-width:1.5em;
   font-variant-numeric:tabular-nums}
 .kds-name{font-size:clamp(22px,3.2vh,27px);color:#D8CFBF}
+/* 受渡口が受け取ったぶん。残り 0 の行は沈める（もう焼かなくてよい）。 */
+.kds-got{font-size:clamp(15px,2.2vh,19px);color:var(--ok);letter-spacing:.04em}
+.kds-lines li[data-done="true"]{opacity:.45}
+.kds-lines li[data-done="true"] .kds-qty{color:var(--dim)}
 /* 押すところが無いので、明細が伝票の残りを使う（下に余白を溜めない）。 */
 .kds-lines{flex:1}
 
@@ -847,6 +866,26 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .ops-qty{font-size:clamp(28px,4.2vh,38px);font-weight:800;line-height:1.1;
   font-variant-numeric:tabular-nums;color:#F2ECE0}
 .ops-name{font-size:clamp(14px,2vh,17px);color:var(--dim);letter-spacing:.04em}
+
+/* 1 カップずつ受け取る行。注文は普通それ自体が分割して焼き上がるので、
+   「いくつ入ったか」を数えられる形にする。
+   ＋は親指で押す場所なので、他のどのボタンよりも先に指が届く右端に置く。 */
+.ops-fill{display:flex;flex-direction:column;gap:8px;padding-top:8px;
+  border-top:1px solid var(--line)}
+.ops-fill-row{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:10px}
+.ops-fill-row[data-done="true"]{opacity:.55}
+.ops-fill-n{font-size:clamp(20px,3vh,26px);color:var(--dim);font-variant-numeric:tabular-nums}
+.ops-fill-n b{font-size:1.5em;color:#F2ECE0}
+.ops-fill-row[data-done="true"] .ops-fill-n b{color:var(--ok)}
+.ops-fill-minus,.ops-fill-plus{min-height:52px;border-radius:8px;cursor:pointer;
+  font-size:clamp(17px,2.5vh,21px);font-weight:700;font-variant-numeric:tabular-nums}
+.ops-fill-minus{width:56px;background:transparent;border:1px solid var(--line);color:var(--dim)}
+.ops-fill-plus{width:92px;background:#2E7D55;border:1px solid #3E9D6C;color:#fff}
+.ops-fill-plus:disabled,.ops-fill-minus:disabled{opacity:.3;cursor:default}
+.ops-fill-plus:active:not(:disabled){transform:scale(.97)}
+
+/* 約束した受け取り時刻。渡す順を決めるのはこれなので、番号のすぐ下に出す。 */
+.ops-when{font-size:clamp(15px,2.2vh,19px);color:var(--warn);letter-spacing:.06em;font-weight:700}
 
 /* 受け取る金額。支払い口で最初に目が行くべき数字なので、番号より大きくする。 */
 .ops-amount{margin:0;text-align:right;font-size:clamp(44px,7vh,66px);font-weight:800;
@@ -1277,6 +1316,15 @@ body:not([data-tab="call"]):not([data-tab="amount"]) .kiosk-escape{display:none}
   border:1px solid var(--gold);background:transparent;color:var(--brown-soft)}
 .ctl-switch[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
 
+/* 3 つから 1 つを選ぶ並び（受け取り時刻のご案内）。
+   切り替えスイッチ 1 つでは「自動」を表せないので、押し分けの形にする。 */
+.ctl-row{display:flex;flex-wrap:wrap;gap:10px}
+.ctl-pick{min-height:56px;padding:0 22px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:15px;letter-spacing:.08em;
+  border:1px solid var(--gold-line);background:transparent;color:var(--brown-soft)}
+.ctl-pick[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift);font-weight:700}
+.ctl-hint[data-on="true"]{color:var(--brown);font-weight:700}
+
 /* 受付機の在席。4 台ぶんを横に並べ、空き・使用中・この端末を色で分ける。 */
 .desk-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
 .desk-cell{border:1px solid var(--gold-line);border-radius:var(--r-card);padding:18px 20px;
@@ -1384,6 +1432,10 @@ body:not([data-tab="order"]) .helpwait{display:none}
   cursor:not-allowed;
 }
 .standby[hidden]{display:none}
+/* 受付を止めている覆い。待機（赤＝この窓口は違う）と同じ色にすると、
+   「他の窓口へ回ればよい」と読まれる。店ごと詰まっているので琥珀にする。 */
+.standby[data-kind="full"]{background:rgba(120,78,10,.76)}
+body[data-saver="true"] .standby[data-kind="full"]{background:rgba(58,37,4,.93)}
 /* 省エネ中の待機。幕を重ねる代わりに、赤そのものを暗くする。
    画面は暗くなり、白文字は白のままなので 13.6:1 を保てる。 */
 body[data-saver="true"] .standby{background:rgba(66,10,10,.92)}
@@ -1764,6 +1816,14 @@ if (location.protocol === 'file:') {
       <p class="standby-sub">この受付機はただいま閉じています</p>
     </div>
 
+    <!-- 受付を止めている間の覆い。待機（この受付機だけ閉じる）とは別で、
+         店全体が受け切れていない状態。他の窓口へ送っても同じなので、
+         文言は「他の窓口へ」ではなく「お待ちください」にする。 -->
+    <div class="standby" id="full" data-kind="full" hidden role="status" aria-live="polite">
+      <p class="standby-main">ただいま<br>受付を止めています</p>
+      <p class="standby-sub">お作りしている分で手一杯です。少々お待ちください</p>
+    </div>
+
     <!-- 押したあと。お客様に「届いた」ことを返さないと、何度も押される。 -->
     <div class="helpwait" id="helpwait" hidden role="status" aria-live="polite">
       <p class="helpwait-main">店員をお呼びしました</p>
@@ -1775,7 +1835,10 @@ if (location.protocol === 'file:') {
       <header class="kds-bar">
         <span class="kds-label">厨房</span>
         <span class="kds-stat"><b id="kds-tickets">0</b> 件 未処理</span>
+        <span class="kds-stat"><b id="kds-cups">0</b> カップ 焼き待ち</span>
         <span class="kds-stat">最長待ち <b id="kds-oldest">—</b></span>
+        <span class="kds-stat">見積 <b id="kds-wait">すぐ</b></span>
+        <span class="kds-stat ops-due" id="kds-reserve" hidden>受け取り時刻をご案内中</span>
         <!-- 手が汚れている場所なので、この画面は触らせない。
              押すところが無いことを先に言っておかないと、押せる何かを探される。 -->
         <span class="kds-board">見るだけの画面です。用意できた分は受渡口が打ちます</span>
@@ -1831,6 +1894,8 @@ if (location.protocol === 'file:') {
         <!-- 受付で確定した時点からここに出る。厨房が用意し終えるのを待っている数。 -->
         <span class="kds-stat"><b id="ready-prep">0</b> 件 ご用意中</span>
         <span class="kds-stat">最長待ち <b id="ready-oldest">—</b></span>
+        <span class="kds-stat">見積 <b id="ready-wait">すぐ</b></span>
+        <span class="kds-stat ops-due" id="ready-reserve" hidden>受け取り時刻をご案内中</span>
         <!-- 未収は他の端末の操作で増減する。読み上げは「未収 3 件」の形で
              一度に伝える（数字だけを読み上げると何の数か分からない）。
              件数・最長待ちは常時変わるので、あえて live にしない。 -->
@@ -1944,6 +2009,34 @@ if (location.protocol === 'file:') {
         </p>
         <button type="button" class="ctl-switch" id="auto-toggle" aria-pressed="true">自動で台数を決めています</button>
         <p class="ctl-hint" id="pace-hint"></p>
+      </div>
+
+      <div class="panel">
+        <h2 class="sec-title">受け取り時刻のご案内</h2>
+        <p class="ctl-note">
+          混んでくると、お客様を立たせたまま待たせることになります。そこで
+          <b>最長待ちが 8 分</b>を超えたら、受付で「◯時◯分ごろにお越しください」と
+          ご案内し、番号札を持って出直していただきます（5 分を下回ると自動で戻ります）。<br>
+          見積もりが <b>30 分</b>を超えると、守れない時刻を約束しないために
+          受付そのものを止めます（25 分まで下がると自動で再開します）。
+        </p>
+        <div class="ctl-row" id="reserve-mode" role="group" aria-label="受け取り時刻のご案内">
+          <button type="button" class="ctl-pick" data-reserve="auto" aria-pressed="true">混んだら自動で出す</button>
+          <button type="button" class="ctl-pick" data-reserve="on"   aria-pressed="false">いつでも出す</button>
+          <button type="button" class="ctl-pick" data-reserve="off"  aria-pressed="false">出さない</button>
+        </div>
+        <p class="ctl-hint" id="reserve-state" data-on="false"></p>
+
+        <h3 class="field-group">焼ける速さ</h3>
+        <p class="ctl-note">
+          見積もりの根拠はこの数字 1 つです。生地の交換・補充・取り出しで止まる分も
+          込みの「ならした速さ」を入れてください（既定は 1 分あたり 1 カップ＝6 個）。
+        </p>
+        <div class="field" style="max-width:280px">
+          <label for="rate-cups">1 分あたりに焼けるカップ数</label>
+          <input type="number" id="rate-cups" min="0.1" max="60" step="0.1" inputmode="decimal" value="1">
+          <p class="field-hint" id="rate-hint"></p>
+        </div>
       </div>
 
       <div class="panel">
@@ -2159,6 +2252,9 @@ if (location.protocol === 'file:') {
   <div class="sheet">
     <h2 id="confirm-h">この内容で注文しますか？</h2>
     <p class="sheet-sub" id="confirm-sub">よろしければ、お渡しする番号札の番号を入力してください。</p>
+    <!-- 受け取りの見込み。確定してから初めて「30分後です」と知らせるのでは、
+         断る機会をお客様から奪うことになる。 -->
+    <p class="confirm-pickup" id="confirm-pickup" hidden></p>
     <div class="recap">
       <div class="recap-items" id="recap-items"></div>
       <div class="recap-total">
@@ -2206,6 +2302,9 @@ if (location.protocol === 'file:') {
   <div class="sheet" id="done-sheet">
     <p class="done-label" id="done-h">ご注文ありがとうございました</p>
     <p class="done-num" id="done-num">#001</p>
+    <!-- 何時に来ればよいか。番号の次に大きく出す。ここを小さくすると、
+         お客様は番号だけ覚えてその場に立ち続ける。 -->
+    <p class="done-pickup" id="done-pickup" hidden></p>
     <p class="done-meta" id="done-meta"></p>
     <!-- 次に何をすればよいかの案内。文字だけだと読まれずに立ち去られるので、
          絵を添える。意匠に合わせて細い線で描く（写真やアイコン集は使わない）。 -->

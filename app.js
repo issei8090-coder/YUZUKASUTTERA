@@ -13,7 +13,9 @@ import {
   soldOf as pureSold, remainingOf as pureRemaining, headroomOf as pureHeadroom,
   tagsInUse as pureTagsInUse, fallbackBuild, normalize, inSession, DEFAULT_SESSION,
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
-  encodeLines, decodeLines
+  encodeLines, decodeLines,
+  madeOf, backlogCups, oldestWaitMin, measuredRate,
+  forecast, reserveOn, stopIntake, hhmm, RATE_DEFAULT
 } from "./lib/pure.js";
 
 /* DB 書き込みの失敗理由を切り分ける。
@@ -64,7 +66,8 @@ const MARK  = { plain:'art/mark-yuzu.png', flavor_b:'art/mark-cacao.png' };
 let MAX_QTY = 10;
 
 let prices = { plain:250, flavor_b:250 };
-/* 商品は作り置き。stock は「当日用意した総数」で、売れた分を引いた残りが売れる数。
+/* stock は「その日に出せる上限」＝用意した生地で作れるカップ数。
+   作り置きはできないので棚にある数ではないが、売れる数の上限は同じ。
    maxPerOrder は 1 組のお客様が買い占めないための 1 注文あたりの合計上限。 */
 let limits = { maxPerOrder:10, stock:{ plain:100, flavor_b:100 }, tagCount:50 };
 /* 番号札を使うかどうかは時間帯で変わる（空いていれば札は不要）。
@@ -257,6 +260,8 @@ function applySession(){
 
   announce();
   arrived();
+  // 混み具合は注文が動くたびに出し直す。受付の覆いと受け取り時刻がここで決まる。
+  tickFlow();
   // 仕事が入ったら幕を上げる。暗いまま見逃すのがいちばん重い。
   if(workCount() > 0) wakeSaver();
   renderKitchen(); renderReady(); renderPay(); renderRows();
@@ -586,6 +591,11 @@ const clientId = (()=>{
 
 let myDesk = null;          // いま名乗っている受付機の番号
 let desksOnline = {};       // DB にある名乗り（番号 → {client, at}）
+/* 受付機の決めごと（待機かどうか）。在席ノード desks/ は回線が切れると
+   onDisconnect で消えるため、そこに置いた待機は数十秒で勝手に解けていた
+   （RTDB は裏で繋ぎ直すので、切れること自体は毎回起きる）。
+   消えてはいけない決めごとは config 側に置く。 */
+let deskPolicy = {};        // 番号 → {mode, hold, auto}
 let desksKnown = false;     // 名乗りが一度でも届いたか
 let deskClaiming = false;   // 掴みに行っている最中
 let deskBooted = false;     // 起動時の取り直しを一度だけ試す
@@ -605,8 +615,14 @@ const deskStale = id => {
 };
 
 /* 受付機の様子。mode は 'open'（注文受付中）か 'standby'（待機）。
-   待機は管理画面から遠隔で切り替える。help は「店員を呼ぶ」が押された時刻。 */
-const deskMode = id => (desksOnline[id]?.mode === 'standby') ? 'standby' : 'open';
+   待機は管理画面から遠隔で切り替える。help は「店員を呼ぶ」が押された時刻。
+
+   hold は「人が決めた」印。自動の増減（autoScale）と「店員を呼ぶ」は、
+   この印が付いた席に触らない。人が待機にしたのに数秒で開き直すのは、
+   操作が効いていないのと同じで、押した人には故障にしか見えない。 */
+const deskMode = id => (deskPolicy[id]?.mode === 'standby') ? 'standby' : 'open';
+const deskHold = id => deskPolicy[id]?.hold === true;
+const deskAuto = id => deskPolicy[id]?.auto === true;
 const deskHelp = id => Number(desksOnline[id]?.help || 0);
 // 呼び出しが出ている受付機。古い順に並べる（待たせている順に片づける）。
 const helpingDesks = () => DESKS.filter(d=>deskHelp(d.id) > 0)
@@ -675,9 +691,9 @@ function renderDeskAdmin(){
     const mine = !!on && on.client === clientId;
     const standby = deskMode(d.id) === 'standby';
     const serving = deskBusy(d.id);
-    const auto = on?.auto === true;
-    const state = !on ? '空いています'
-      : standby ? '待機中（お客様には他の窓口を案内）'
+    const auto = deskAuto(d.id);
+    const state = standby ? (on ? '待機中（お客様には他の窓口を案内）' : '待機中（空いています）')
+      : !on ? '空いています'
       : serving ? `接客中（${helpAgo(on.busy)}）`
       : mine ? '注文受付中・空き（この端末）'
       : deskStale(d.id) ? '注文受付中（応答なし）' : '注文受付中・空き';
@@ -686,7 +702,7 @@ function renderDeskAdmin(){
       <span class="desk-name">${d.label}${d.note ? `（${d.note}）` : ''}${auto ? '<small class="desk-auto">自動</small>' : ''}</span>
       <span class="desk-state">${state}</span>
       <button type="button" class="desk-mode" data-act="deskmode" data-id="${d.id}"
-              data-to="${standby ? 'open' : 'standby'}" ${on ? '' : 'disabled'}
+              data-to="${standby ? 'open' : 'standby'}"
               aria-pressed="${standby}"
               aria-label="${d.label} を${standby ? '注文受付中に戻す' : '待機にする'}">
         ${standby ? '注文受付中に戻す' : '待機にする'}</button>
@@ -711,6 +727,94 @@ function renderDeskAdmin(){
   const c = $('desk-count');
   if(c) c.textContent =
     `注文受付中 ${open}台 ／ 待機 ${busy - open}台 ／ 空き ${DESKS.length - busy}台（全${DESKS.length}台）`;
+}
+
+/* ============================================================
+   混み具合・受け取り時刻のご案内（予約）・受付の歯止め
+
+   ベビーカステラは作り置きができない。生地は途中で交換が要るし、焼いたものは
+   置けない。プレートは 3 枚（大 1・小 2）しかなく、補充と取り出しの間は止まる。
+   だから混むと「列が長くなる」ではなく「渡せる時刻が遠くなる」形で詰まる。
+
+   立って待たせ続けるかわりに、札を持って出直してもらう。
+     ・最長待ちが 8 分以上になったら、受け取り時刻のご案内を始める（自動）
+     ・見積もりが 30 分を超えたら、受付そのものを止める
+   どちらも戻すしきい値を別に置いてある（境目で案内が点滅しないため）。
+
+   判断の計算は lib/pure.js にあり、Node からテストできる。ここは配線だけ。
+   ============================================================ */
+let reserveMode   = 'auto';          // config/reserve: 'auto' | 'on' | 'off'
+let cupRate       = RATE_DEFAULT;    // config/rate: 毎分何カップ焼けるか
+let reserveNow    = false;           // いま受け取り時刻をご案内しているか
+let intakeStopped = false;           // いま受付を止めているか
+let flow = { backlog:0, cups:0, rate:RATE_DEFAULT, waitMin:0, pickupMs:0 };
+
+function tickFlow(){
+  const now = Date.now();
+  // 新しい注文を足さない見積もり＝「いま焼き待ちを捌き切るまで」。
+  // 受付を止めるかどうかはこれで決める。
+  flow = forecast(orders, { now, rate: cupRate });
+
+  // 8 分で始めて 5 分まで続ける、の「いま続いているか」は端末の記憶で持たない。
+  // 受付機は複数あり、後から開いた端末は記憶を持たないので、同じ列を見ながら
+  // 隣の端末と違う案内を出してしまう。直前の注文に受け取り時刻が入っているかは
+  // 全端末で同じに見えるので、それを「続いているか」の印として使う。
+  const last = orders.filter(o => o.status !== 'cancelled').sort(byOrder).pop();
+  reserveNow    = reserveOn(reserveMode, orders, now, !!last?.pickupMs);
+  intakeStopped = stopIntake(flow.waitMin, intakeStopped);
+  paintFlow();
+}
+// 時間が経つだけでも混み具合は変わる（誰も触らなくても最長待ちは伸びる）。
+setInterval(tickFlow, 10000);
+
+/* 混み具合を各画面に出す。数字は 1 本（flow）から配る。 */
+function paintFlow(){
+  document.body.dataset.reserve = String(reserveNow);
+  document.body.dataset.full    = String(intakeStopped);
+
+  // 受付：止めている間は門を出さず、覆いを出す（接客中の人は最後まで通す）。
+  paintGate();
+  const full = $('full');
+  if(full){
+    const standing = !!myDesk && deskMode(myDesk) === 'standby';
+    full.hidden = !(intakeStopped && !!myDesk && !standing && gateState !== 'open');
+  }
+
+  // 厨房・受渡：いまの見積もりを上のバーに出す。
+  const txt = flow.waitMin > 0 ? `${flow.waitMin}分` : 'すぐ';
+  for(const id of ['kds-wait','ready-wait']){
+    const el = $(id);
+    if(el) el.textContent = txt;
+  }
+  for(const id of ['kds-reserve','ready-reserve']){
+    const el = $(id);
+    if(el) el.hidden = !reserveNow;
+  }
+  paintReserveAdmin();
+}
+
+/* 管理画面の「受け取り時刻のご案内」。 */
+function paintReserveAdmin(){
+  const now = Date.now();
+  document.querySelectorAll('#reserve-mode [data-reserve]').forEach(b=>{
+    b.setAttribute('aria-pressed', String(b.dataset.reserve === reserveMode));
+  });
+  const st = $('reserve-state');
+  if(st){
+    st.textContent = (reserveNow
+      ? `いま：受け取り時刻をご案内しています（最長待ち ${oldestWaitMin(orders, now)}分）`
+      : `いま：その場でお渡ししています（最長待ち ${oldestWaitMin(orders, now)}分）`)
+      + (intakeStopped ? ' ／ 受付を止めています' : '');
+    st.dataset.on = String(reserveNow);
+  }
+  const hint = $('rate-hint');
+  if(hint){
+    const m = measuredRate(orders, now);
+    hint.textContent = `焼き待ち ${backlogCups(orders)}カップ・いまの見積もり ${flow.waitMin}分`
+      + (m ? `／実測 ${m.toFixed(1)}カップ/分（直近10分）` : '／実測はまだありません');
+  }
+  const input = $('rate-cups');
+  if(input && document.activeElement !== input) input.value = String(cupRate);
 }
 
 /* ---------- 省エネ ----------
@@ -805,22 +909,26 @@ function autoScale(){
   const busy = open.filter(d => deskBusy(d.id));
   const free = open.length - busy.length;
 
+  // 人が決めた席は動かさない。待機にした直後に機械が開き直すと、
+  // 押した人からは「待機にできない」としか見えない。
+  if(deskHold(myDesk)) return;
+
   // --- 増やす：自分が待機していて、待機の中でいちばん若い番号のときだけ考える
   if(deskMode(myDesk) === 'standby'){
-    const waiting = DESKS.filter(d => desksOnline[d.id] && deskMode(d.id) === 'standby');
+    const waiting = DESKS.filter(d => desksOnline[d.id] && deskMode(d.id) === 'standby'
+                                      && !deskHold(d.id));
     if(waiting[0]?.id !== myDesk) return;        // 開けるのは 1 台だけ
     if(!open.length) return;                      // 1 台も開いていない＝人の判断に任せる
     if(free > 0) return;                          // まだ空きがある
     // もうすぐ空きそうなら増やさない。「もう終わるだろう」の予測がこれ。
     const soonest = Math.min(...busy.map(d => remainingAt(d.id)));
     if(soonest <= SOON_MS) return;
-    setDeskMode(myDesk, 'open');
-    update(ref(db,'desks/'+myDesk), { auto: true }).catch(()=>{});
+    setDeskMode(myDesk, 'open', 'auto');
     return;
   }
 
   // --- 戻す：自動で開いた席が、空いたまま十分に経ったら待機へ返す
-  if(desksOnline[myDesk]?.auto !== true) return;  // 人が開けた席は畳まない
+  if(!deskAuto(myDesk)) return;                   // 人が開けた席は畳まない
   if(deskBusy(myDesk) || gateState === 'open'){ idleSince = 0; return; }
   // 自分以外にも空いている受付機があるときだけ畳む。最後の 1 台は閉じない。
   const othersFree = open.filter(d => d.id !== myDesk && !deskBusy(d.id)).length;
@@ -828,8 +936,7 @@ function autoScale(){
   if(!idleSince){ idleSince = Date.now(); return; }
   if(Date.now() - idleSince < AUTO_IDLE_MS) return;
   idleSince = 0;
-  setDeskMode(myDesk, 'standby');
-  update(ref(db,'desks/'+myDesk), { auto: null }).catch(()=>{});
+  setDeskMode(myDesk, 'standby', 'auto');
 }
 // 判断は時間でも変わる（経過が延びれば「もうすぐ空く」が覆る）。
 setInterval(autoScale, 3000);
@@ -861,7 +968,9 @@ function paintGate(){
   if(!g) return;
   const standing = !!myDesk && deskMode(myDesk) === 'standby';
   // 受付機を選んでいない間も門は出さない。選ぶ画面が先に立つ。
-  const show = !!myDesk && !standing && gateState !== 'open';
+  // 受付を止めている間も出さない（代わりに満員の覆いが出る）。接客中の人は
+  // 最後まで通すので、ここで見るのは「次のお客様を迎えるかどうか」だけ。
+  const show = !!myDesk && !standing && !intakeStopped && gateState !== 'open';
   // 引いている最中は触らない。別の端末の操作で描き直されると、
   // 動きが 1 フレームで切り落とされて「消えた」になる。
   if(g.dataset.leaving === 'true') return;
@@ -1003,10 +1112,16 @@ addEventListener('pointerdown', ()=>{
 /* ---------- 待機と、店員を呼ぶ ----------
    待機は「この受付機だけ閉じている」状態。店が閉じているわけではないので、
    お客様には他の窓口へ回っていただく。切り替えは管理画面から遠隔で行う。 */
-async function setDeskMode(id, to){
+async function setDeskMode(id, to, by = 'hand'){
   try{
     await authReady;
-    await update(ref(db,'desks/'+id), { mode: to });
+    await update(ref(db,'config/desks/'+id), {
+      mode: to,
+      // 人が決めた席は、以後ここが自動で動かさない（解くのも人の操作）。
+      hold: by === 'hand',
+      // 自動で開けた席だけを、自動で待機へ返す。
+      auto: by === 'auto' && to === 'open'
+    });
   }catch(e){ toast(writeHint(e, '受付機の状態を変えられませんでした')); }
 }
 
@@ -1022,7 +1137,10 @@ async function callStaff(){
     await authReady;
     await tracked(update(ref(db,'desks/'+myDesk), { help: Date.now() }));
     for(const d of DESKS){
-      if(desksOnline[d.id] && deskMode(d.id) === 'standby') await setDeskMode(d.id, 'open');
+      // 人が待機にした席は開けない。そこに立てる人が居ないから待機にしてある。
+      if(desksOnline[d.id] && deskMode(d.id) === 'standby' && !deskHold(d.id)){
+        await setDeskMode(d.id, 'open', 'auto');
+      }
     }
   }catch(e){
     toast(writeHint(e, '店員を呼べませんでした'));
@@ -1144,8 +1262,35 @@ $('saver-min')?.addEventListener('change', async e=>{
   try{ await authReady; await set(ref(db,'config/saver'), v); }
   catch(err){ toast(writeHint(err, '省エネの設定を共有できませんでした')); }
 });
+/* 受け取り時刻のご案内。自動／常に出す／出さない。 */
+$('reserve-mode')?.addEventListener('click', async e=>{
+  const b = e.target.closest('button[data-reserve]');
+  if(!b) return;
+  try{ await authReady; await set(ref(db,'config/reserve'), b.dataset.reserve); }
+  catch(err){ toast(writeHint(err, 'ご案内の設定を共有できませんでした')); }
+});
+
+/* 焼ける速さ。見積もりの根拠はこれ 1 つなので、実測を見ながら手で合わせる。 */
+$('rate-cups')?.addEventListener('change', async e=>{
+  const v = Math.max(0.1, Math.min(60, Number(e.target.value) || RATE_DEFAULT));
+  e.target.value = String(v);
+  try{ await authReady; await set(ref(db,'config/rate'), v); }
+  catch(err){ toast(writeHint(err, '焼ける速さを共有できませんでした')); }
+});
+
 $('notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
 $('ready-notice-toggle')?.addEventListener('change', e=>setNotice(e.target.checked));
+
+/* 在席ノードに書き戻す値。残すのは在席に関わるものだけにする。
+
+   丸ごと書き戻す（{...cur}）と、古い版が置いた mode / auto がノードに残って
+   いた場合にそれも一緒に送ることになり、新しいルールの $other:false に弾かれて
+   受付機を掴めなくなる。知っている鍵だけを通す。 */
+function deskSeat(cur){
+  const seat = { client: clientId, at: Date.now() };
+  for(const k of ['help','busy','firstAt']) if(cur?.[k]) seat[k] = cur[k];
+  return seat;
+}
 
 /* 「切れたら消す」の予約を外す。外し忘れると、別の端末がその席を取った後に
    こちらの回線が切れた瞬間、他人の名乗りを消してしまう。 */
@@ -1181,9 +1326,8 @@ async function claimDesk(id, quiet){
     const r = ref(db, 'desks/' + id);
     const tx = await runTransaction(r, cur=>{
       if(cur && cur.client && cur.client !== clientId) return;   // 起動中 → 中止
-      // 丸ごと置き換えると、管理画面から設定された待機と呼び出しが消える。
-      // リロードを挟んだだけで待機が勝手に解けるのは事故なので、残す。
-      return { ...(cur || {}), client: clientId, at: Date.now() };
+      // 呼び出しと接客中の印は残す（待機は config 側にあるので消えない）。
+      return deskSeat(cur);
     });
     if(!tx.committed){
       say(`${deskLabel(id)} は別の端末が起動しています。ほかの受付機を選んでください。`);
@@ -1204,6 +1348,33 @@ async function claimDesk(id, quiet){
     say(writeHint(e, '受付機を登録できませんでした'));
     return false;
   }finally{ deskClaiming = false; }
+}
+
+/* 受付の画面を離れたら、その席を空ける。
+   受付機は 4 台しかないのに、厨房や管理を見に行っただけの端末が席を
+   掴んだままで、他の端末から「起動中」で選べなくなっていた。
+   覚えている番号（deskNo）は消さない。戻ってきたら黙って取り直す。 */
+function leaveDesk(){
+  if(!myDesk) return;
+  const id = myDesk;
+  myDesk = null;
+  idleSince = 0;
+  releaseDesk(id).then(paintDesks).catch(()=>{});
+  paintDesks();
+}
+
+/* 受付の画面に戻ってきた。覚えている席が空いていれば黙って取り直す。
+   名乗りが届く前は何もしない（届いた時点で reconcileDesk が同じことをする）。 */
+function resumeDesk(){
+  if(myDesk || deskClaiming) return;
+  if(!desksKnown){ ensureDesk(); return; }
+  let remembered = null;
+  try{ remembered = localStorage.getItem('deskNo'); }catch(e){}
+  if(remembered && DESKS.some(d=>d.id===remembered) && !deskTaken(remembered)){
+    claimDesk(remembered, true).then(ok=>{ if(!ok) ensureDesk(); });
+    return;
+  }
+  ensureDesk();
 }
 
 /* 受付の画面は、受付機を名乗るまで使わせない。
@@ -1271,7 +1442,8 @@ setTimeout(()=>{ desksKnown = true; ensureDesk(); }, 2500);
    張り直さないと「選んだはずなのに、しばらくして戻される」が起きる。
    Firebase の在席検知が .info/connected を見て毎回書き直す形なのはこのため。
 
-   ついでに at も新しくなるので、管理画面の「応答なし」判定もここで保たれる。 */
+   ついでに at も新しくなるので、管理画面の「応答なし」判定もここで保たれる。
+   待機はこのノードに無い（config/desks にある）ので、ここで消えることはない。 */
 function rearmDesk(){
   if(!myDesk) return;
   const id = myDesk;
@@ -1279,8 +1451,7 @@ function rearmDesk(){
   runTransaction(r, cur=>{
     // 他の端末のものになっていたら触らない。取り返しに行かない。
     if(cur && cur.client && cur.client !== clientId) return;
-    // 遠隔で設定された待機と呼び出しは残す。
-    return { ...(cur || {}), client: clientId, at: Date.now() };
+    return deskSeat(cur);
   }).then(tx=>{
     if(tx.committed) onDisconnect(r).remove().catch(()=>{});
   }).catch(()=>{});
@@ -1397,6 +1568,15 @@ $('submit-btn').addEventListener('click', ()=>{
       </div>
     </div>`).join('');
   $('recap-total').innerHTML = `${yen(items.reduce((s,i)=>s+i.qty*i.unitPrice,0))}<small>円</small>`;
+  // 受け取り時刻の見込み。ここで出しておかないと、確定してから初めて
+  // 「30分後です」と知らせることになり、断る機会をお客様から奪う。
+  const pk = $('confirm-pickup');
+  if(pk){
+    const cups = items.reduce((s,i)=>s+i.qty, 0);
+    const f = forecast(orders, { rate: cupRate, addCups: cups });
+    pk.hidden = !reserveNow;
+    pk.innerHTML = `お渡しは <b>${hhmm(f.pickupMs)}</b> ごろの見込みです（約${f.waitMin}分）`;
+  }
   if(useTags) padReset();
   openModal('m-confirm');
 });
@@ -1487,7 +1667,13 @@ async function placeOrder(immediate, pickedTag){
     }
 
     const nowMs = Date.now();
-    const req = { items, prices, nowMs, maxPerOrder: limits.maxPerOrder, remaining,
+    // 受け取り時刻は、読み直したサーバーの値 (inSess) で出す。手元の購読値だと
+    // 直前に別の受付機が受けた注文が入っておらず、守れない時刻を約束する。
+    const addCups = items.reduce((s,i)=>s+(i.quantity||0), 0);
+    const pickupMs = reserveNow
+      ? forecast(inSess, { now: nowMs, rate: cupRate, addCups }).pickupMs : 0;
+
+    const req = { items, prices, nowMs, maxPerOrder: limits.maxPerOrder, remaining, pickupMs,
                   // immediate は「厨房を飛ばす」の意味。札なしの注文は焼き待ちに出さず、
                   // 受渡待ち (ready) から始めて受渡口で渡す。
                   immediate: noTag, tag, tagCount: tagCount(), inUseTags: inUse,
@@ -1554,9 +1740,19 @@ function showThanks(o){
   // 札なしの注文は受渡口へ回る。代金もそこで受け取るので、受付では受け取らない。
   // ここを書かないと、受付係が現金を受け取ってしまい二重取りになる。
   const tagged = !!o.number;
-  $('done-next').textContent = tagged
-    ? '番号札を持って、会計口にお進みください'
-    : 'お渡し口で、お品物とお会計をご用意しております';
+  // 受け取り時刻のご案内。番号だけ出して帰すと、お客様はその場に立って待つ。
+  // 「いつ戻ればよいか」はこの画面にしか書いていない。
+  const when = $('done-pickup');
+  if(when){
+    when.hidden = !o.pickupMs;
+    if(o.pickupMs) when.innerHTML =
+      `<b>${hhmm(o.pickupMs)}</b> ごろ<span>お越しください</span>`;
+  }
+  $('done-next').textContent = o.pickupMs
+    ? '番号札を持って、会計口へお進みください（お品物はお時間になってから）'
+    : tagged
+      ? '番号札を持って、会計口にお進みください'
+      : 'お渡し口で、お品物とお会計をご用意しております';
   // SVG に hidden は効かない（HTML 要素の性質なので、代入しても属性にならない）。
   // 親の印で出し分ける。
   $('done-guide').dataset.mode = tagged ? 'tag' : 'notag';
@@ -1565,10 +1761,11 @@ function showThanks(o){
   requestAnimationFrame(()=>bloom($('done-sheet'), 16));
   // 6 秒。お客様が番号を読み、札を受け取り、進む向きを確かめるまでの時間。
   // 短いと、札を手にする前に画面が変わって「何番だったか」が消える。
+  // 時刻をご案内したときは長めに出す（番号に加えて時刻も覚えてもらうため）。
   setTimeout(()=>{
     if(openEl && openEl.id === 'm-done') closeModal();
     gateThanks();   // 番号札が消えてから、緑を見せる時間を数え始める
-  }, DONE_HOLD_MS);
+  }, o.pickupMs ? DONE_HOLD_MS + 3500 : DONE_HOLD_MS);
 }
 $('m-done').addEventListener('click', closeModal);
 
@@ -1837,7 +2034,7 @@ onValue(ref(db,'config/session'), snap=>{
    いなければ読み取り自体が拒否される。値ではなく「読めるかどうか」で版を測る。
    互換性を壊す変更をしたら、ここと database.rules.json の両方を上げる
    （食い違いは test/dom_wiring_test.mjs が落とす）。 */
-const RULES_VERSION = 'v9';
+const RULES_VERSION = 'v11';
 (async ()=>{
   try{
     await get(ref(db, 'rulesVersion/' + RULES_VERSION));
@@ -1899,6 +2096,28 @@ onValue(ref(db,'config/pace'), snap=>{
   const v = snap.val();
   if(v) pace = { ms: v.ms || PACE_DEFAULT.ms, think: v.think || PACE_DEFAULT.think, n: v.n || 0 };
   renderDeskAdmin();
+}, ()=>{});
+
+/* 受け取り時刻のご案内（予約）の切り替え。店全体の決めごと。 */
+onValue(ref(db,'config/reserve'), snap=>{
+  const v = snap.val();
+  reserveMode = (v === 'on' || v === 'off') ? v : 'auto';
+  tickFlow();
+}, ()=>{});
+
+/* 毎分何カップ焼けるか。見積もりはこの 1 つの数字で決まる。 */
+onValue(ref(db,'config/rate'), snap=>{
+  const v = Number(snap.val());
+  cupRate = (Number.isFinite(v) && v > 0) ? v : RATE_DEFAULT;
+  tickFlow();
+}, ()=>{});
+
+/* 受付機の決めごと（待機・人が決めた印）。在席と違い、回線が切れても消えない。 */
+onValue(ref(db,'config/desks'), snap=>{
+  deskPolicy = snap.val() || {};
+  paintDesks();
+  paintStandby();
+  tickSaver();
 }, ()=>{});
 
 onValue(ref(db,'config/auto'), snap=>{
@@ -1982,7 +2201,16 @@ function renderKitchen(){
       </div>
       ${next ? '<span class="kds-next-tag">次に用意する</span>' : ''}
       <ul class="kds-lines">
-        ${(o.items||[]).map(i=>`<li><span class="kds-qty">${i.quantity}</span><span class="kds-name">${shortLabel(i.flavor)}</span></li>`).join('')}
+        ${(o.items||[]).map(i=>{
+          const got  = madeOf(o, i.flavor);
+          const left = Math.max(0, (i.quantity||0) - got);
+          // 残りを主にする。注文数のままだと、半分渡した伝票を見てもう一度焼く。
+          return `<li data-done="${left === 0}">
+            <span class="kds-qty">${left}</span>
+            <span class="kds-name">${shortLabel(i.flavor)}</span>
+            ${got > 0 ? `<span class="kds-got">${got} 済</span>` : ''}
+          </li>`;
+        }).join('')}
       </ul>
     </article>`;
   }).join('');
@@ -1998,7 +2226,8 @@ function renderKitchen(){
   const todo = {};
   for(const f of FLAVORS) todo[f.key] = 0;
   for(const o of list) for(const i of (o.items||[])) {
-    if(i.flavor in todo) todo[i.flavor] += i.quantity || 0;
+    // 受渡口が受け取ったカップは焼き上がっている。残りだけを焼き待ちに数える。
+    if(i.flavor in todo) todo[i.flavor] += Math.max(0, (i.quantity||0) - madeOf(o, i.flavor));
   }
   $('queue').innerHTML = FLAVORS.map(f=>{
     const left = remainingOf(f.key);
@@ -2016,6 +2245,8 @@ function renderKitchen(){
   }).join('');
 
   $('kds-tickets').textContent = list.length;
+  const cups = $('kds-cups');
+  if(cups) cups.textContent = backlogCups(orders);
   tickKitchen();
   // 読み上げ領域は厨房を開いているときだけ更新する。受付端末でも書き換えると、
   // お客様に向いた画面で厨房の件数がずっと読み上げられ続ける。
@@ -2104,6 +2335,27 @@ function opsLines(o){
      </li>`).join('') + `</ul>`;
 }
 
+/* 焼き上がったカップを 1 つずつ受け取る行。
+   注文は普通それ自体が分割して焼き上がる（プレートは 3 枚しかなく、
+   2 つの味を同時には焼けない）。注文を塊として「用意できた」だけで扱うと、
+   半分だけ出来ている注文が、出来ていない注文と見分けられない。 */
+function fillRows(o){
+  return `<div class="ops-fill">` + (o.items||[]).map(i=>{
+    const want = i.quantity || 0;
+    const got  = madeOf(o, i.flavor);
+    return `<div class="ops-fill-row" data-done="${got >= want}">
+      <span class="ops-mark"><img src="${MARK[i.flavor]||''}" alt="${label(i.flavor)}"></span>
+      <span class="ops-fill-n"><b>${got}</b><small>/${want}</small></span>
+      <button type="button" class="ops-fill-minus" data-act="unmade" data-id="${o.id}"
+              data-flavor="${i.flavor}" ${got <= 0 ? 'disabled' : ''}
+              aria-label="${label(i.flavor)} を 1 減らす">−</button>
+      <button type="button" class="ops-fill-plus" data-act="made" data-id="${o.id}"
+              data-flavor="${i.flavor}" ${got >= want ? 'disabled' : ''}
+              aria-label="${label(i.flavor)} を 1 受け取った">＋1</button>
+    </div>`;
+  }).join('') + `</div>`;
+}
+
 /* 一覧を描き替えても、手元の位置を動かさない。
    innerHTML を差し替えるとその要素の scrollTop は 0 に戻り、フォーカスも失われる。
    この 2 画面は別の端末の操作でも描き替わるため、混んでいる時ほど
@@ -2169,10 +2421,11 @@ function renderReady(){
     // 押すところはカード 1 枚につき 1 つ。状態ごとに「普通の道」だけを大きく出す。
     const actions = prep
       // 厨房は手が汚れていて画面を押せない（衛生上、押させない）。
-      // 焼き上がった品物を受け取ったこちらで「用意できた」を打つ。
-      // 押すと呼び出しも同時に始まる（changeStatus が calledAt を書く）。
-      ? `<button type="button" class="ops-do" data-act="ready" data-id="${o.id}"
-                 aria-label="${numOf(o)} の用意ができた">用意できた</button>`
+      // 焼き上がった品物を受け取ったこちらで打つ。まとめて届いたときのために
+      // 「ぜんぶ」を主にし、1 カップずつ届くときは上の行で数える。
+      // そろった時点で呼び出しも始まる（fillCup / fillAll が calledAt を書く）。
+      ? `<button type="button" class="ops-do" data-act="madeall" data-id="${o.id}"
+                 aria-label="${numOf(o)} はぜんぶ用意できた">ぜんぶ用意できた</button>`
       : done
         ? `${lost ? `<button type="button" class="ops-do" data-kind="cash" data-act="takepaid" data-id="${o.id}" data-num="${numOf(o)}"
                    aria-label="${numOf(o)} の ${amount}円 を受け取る">${amount}円 受け取る</button>` : ''}
@@ -2208,8 +2461,11 @@ function renderReady(){
           ? `<span class="ops-state" data-kind="done">${state}</span>`
           : `<span class="ops-timer">${o.createdMs ? mmss(sec) : '—'}</span>`}
       </div>
-      ${prep ? '<span class="ops-state" data-kind="prep">ご用意中</span>' : ''}
-      ${opsLines(o)}
+      ${!prep && !done && o.pickupMs
+        ? `<span class="ops-when">${hhmm(o.pickupMs)} お越しの予定</span>` : ''}
+      ${prep ? `<span class="ops-state" data-kind="prep">ご用意中${
+        o.pickupMs ? ` ・ ${hhmm(o.pickupMs)} お渡し予定` : ''}</span>` : ''}
+      ${prep ? fillRows(o) : opsLines(o)}
       ${due ? `<p class="ops-amount">${amount}<small>円</small></p>` : ''}
       ${actions}
     </article>`;
@@ -2692,6 +2948,88 @@ async function setPaid(id, next){
   }
 }
 
+/* 焼き上がったカップを受け取った／取り消した。
+
+   そろった時点で受渡待ちにし、呼び出しも同じ 1 回の書き込みで始める。
+   別に「用意できた」を押させると、そろってから呼ぶまでが人の気づき待ちになる。
+   取り消して足りなくなったら、焼き待ちへ戻す（状態と実物をずらさない）。 */
+async function fillCup(id, flavor, delta){
+  if(!flavor) return false;
+  let ng = null;
+  try{
+    await authReady;
+    const tx = await tracked(runTransaction(ref(db,'orders/'+id), cur=>{
+      ng = null;
+      if(cur === null){ ng = '注文が見つかりません'; return; }
+      if(cur.status === 'cancelled'){ ng = 'この注文は中止されています'; return; }
+      if(cur.status === 'completed'){ ng = 'この注文はお渡し済みです'; return; }
+      const items = cur.items || [];
+      const want = (items.find(i=>i.flavor === flavor) || {}).quantity || 0;
+      if(!want){ ng = 'この注文にその商品はありません'; return; }
+      const made = { ...(cur.made || {}) };
+      made[flavor] = Math.max(0, Math.min(want, (Number(made[flavor]) || 0) + delta));
+      cur.made = made;
+      const all = items.every(i => (Number(made[i.flavor]) || 0) >= (i.quantity || 0));
+      if(all && cur.status === 'pending'){
+        cur.status = 'ready';
+        if(!cur.calledAt) cur.calledAt = Date.now();
+      }else if(!all && cur.status === 'ready'){
+        cur.status = 'pending';          // 足りなくなった＝まだ焼き待ち
+      }
+      cur.updatedMs = Date.now();
+      return cur;
+    }));
+    if(ng){ toast(ng); return false; }
+    if(!tx.committed){ toast('記録できませんでした。もう一度お試しください。'); return false; }
+    return true;
+  }catch(e){
+    console.error(e);
+    toast(writeHint(e, '記録できませんでした'));
+    return false;
+  }
+}
+
+/* まとめて届いたとき。味も数も全部そろったことにして、受渡待ちにする。
+   before を渡すと、その時点の「受け取った数」へ戻せる（トーストの「戻す」）。 */
+async function fillAll(id, before){
+  let ng = null;
+  try{
+    await authReady;
+    const tx = await tracked(runTransaction(ref(db,'orders/'+id), cur=>{
+      ng = null;
+      if(cur === null){ ng = '注文が見つかりません'; return; }
+      if(cur.status === 'cancelled'){ ng = 'この注文は中止されています'; return; }
+      const items = cur.items || [];
+      if(before){
+        // 取り消し。押す前の数に戻し、足りなければ焼き待ちへ返す。
+        const made = {};
+        for(const i of items) made[i.flavor] = Math.max(0, Math.min(i.quantity || 0,
+                                                 Number(before[i.flavor]) || 0));
+        cur.made = made;
+        const all = items.every(i => (made[i.flavor] || 0) >= (i.quantity || 0));
+        if(!all && cur.status === 'ready') cur.status = 'pending';
+      }else{
+        const made = {};
+        for(const i of items) made[i.flavor] = i.quantity || 0;
+        cur.made = made;
+        if(cur.status === 'pending'){
+          cur.status = 'ready';
+          if(!cur.calledAt) cur.calledAt = Date.now();
+        }
+      }
+      cur.updatedMs = Date.now();
+      return cur;
+    }));
+    if(ng){ toast(ng); return false; }
+    if(!tx.committed){ toast('記録できませんでした。もう一度お試しください。'); return false; }
+    return true;
+  }catch(e){
+    console.error(e);
+    toast(writeHint(e, '記録できませんでした'));
+    return false;
+  }
+}
+
 /* 呼び出し表示で目立たせる。CALL_HOLD_MS の間だけ強調される。 */
 const CALL_HOLD_MS = 40000;
 async function callOrder(id){
@@ -2735,19 +3073,25 @@ document.addEventListener('click', e=>{
   if(!b) return;
   const id = b.dataset.id;
   switch(b.dataset.act){
-    // 「用意できた」。厨房の画面は立てかけてあるだけで触れないので、
-    // 品物を受け取った受渡口がここを打つ（呼び出しも同時に始まる）。
-    case 'ready': {
+    // 1 カップ受け取った／取り消した。厨房の画面は立てかけてあるだけで
+    // 触れないので、品物を受け取った受渡口がここを打つ。
+    case 'made':
+      knownReady.add(id);          // 自分の操作では受渡の着信音を鳴らさない
+      fillCup(id, b.dataset.flavor, +1);
+      break;
+    case 'unmade':
+      fillCup(id, b.dataset.flavor, -1);
+      break;
+    // ぜんぶまとめて届いたとき。そろうので、呼び出しもここから始まる。
+    case 'madeall': {
       const o = orders.find(x=>x.id===id);
-      // 自分が押した分で受渡の着信音を鳴らさない。鳴っても合図にならず、
-      // 「別の注文が来た」と取り違える。
+      const before = { ...(o?.made || {}) };
       knownReady.add(id);
-      changeStatus(id,'pending','ready');
+      fillAll(id);
       // 確認で止めると行列が詰まる。止めずに、後から取り消せるようにする。
-      // 取り消せないと、押し間違いを直すために別の画面まで行く必要があった。
       toast(`${numOf(o)} をお渡し待ちにしました`
             + (o?.number ? '・お呼び出しを始めました' : ''), 'info',
-            ()=>changeStatus(id,'ready','pending'), 7000);
+            ()=>fillAll(id, before), 7000);
       break;
     }
     case 'done':   handOver(id); break;
@@ -3065,9 +3409,12 @@ function switchTab(t){
   });
   document.body.dataset.tab = t;
   closeNav();
-  // 受付機を訊くのは受付の画面だけ。他の画面（厨房・受渡・表示）は名乗らない。
-  if(t === 'order') ensureDesk();
-  else if(openEl?.id === 'm-desk') closeModal();
+  // 受付機を名乗るのは受付の画面だけ。離れたら席は空ける（他の端末が使える）。
+  if(t === 'order') resumeDesk();
+  else {
+    leaveDesk();
+    if(openEl?.id === 'm-desk') closeModal();
+  }
   // 厨房は display:none の間は高さが測れない。開いた時点で測り直す。
   if(t === 'kitchen') fitBoard();
   // 画面ごとに省エネの条件が違う。切り替えたら必ず取り直す。

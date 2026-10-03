@@ -206,7 +206,9 @@ func DefaultStocks() map[string]int {
 
 // Limits は運用中に変えられる上限設定。
 //
-// 商品は作り置きなので、当日用意した数 (Stock) を超えて売らないことが要件。
+// Stock は「その日に出せる上限」＝用意した生地で作れるカップ数。
+// 作り置きはできない（焼いたものは置けず、生地も途中で交換が要る）ので、
+// 棚にある数ではないが、これを超えて売らないことが要件なのは同じ。
 // MaxPerOrder は 1 組のお客様に買い占められないようにするための上限。
 type Limits struct {
 	MaxPerOrder int            `json:"maxPerOrder"`
@@ -337,8 +339,21 @@ type Order struct {
 	Paid   bool  `json:"paid"`
 	PaidMs int64 `json:"paidMs,omitempty"`
 
-	// CalledAt は呼び出し表示で強調を始めた時刻。厨房が「用意した」を押すと入る。
+	// CalledAt は呼び出し表示で強調を始めた時刻。受渡が「用意できた」を押すと入る。
 	CalledAt int64 `json:"calledAt,omitempty"`
+
+	// PickupMs は「◯時◯分ごろにお越しください」とご案内した受け取り予定時刻。
+	// 混んでいて立って待たせられないときだけ入る（0 なら時刻の案内をしていない）。
+	// 見積もりそのものは画面側 (lib/pure.js の forecast) が出す。ここは記録。
+	PickupMs int64 `json:"pickupMs,omitempty"`
+
+	// Made は味ごとの「焼き上がって受渡口が受け取ったカップ数」。
+	//
+	// ベビーカステラは作り置きができず、プレートは 3 枚しかないので、
+	// 1 つの注文は普通それ自体が分割して焼き上がる。注文を塊として
+	// pending/ready だけで見ると「3 カップのうち 2 カップは出来ている」が
+	// どこにも残らず、焼き待ちの総量も実際より多く見える。
+	Made map[string]int `json:"made,omitempty"`
 
 	// Session は営業回。リハーサルと本番を同じ DB で回すための仕切りで、
 	// 集計と画面はこれで絞る。注文を消さずに仕切れるので記録が失われない。
@@ -682,7 +697,7 @@ type NewOrderRequest struct {
 	// MaxPerOrder は 1 注文あたりの合計上限。0 なら MaxQuantity を使う。
 	MaxPerOrder int `json:"maxPerOrder"`
 	// Remaining は商品ごとの残り数。nil なら在庫チェックをしない。
-	// 作り置きのため、ここを超える注文は受け付けてはいけない。
+	// 生地で作れる数の残りなので、ここを超える注文は受け付けてはいけない。
 	Remaining map[string]int `json:"remaining"`
 
 	// Immediate は番号札を出さない注文。列がないときは札を出す意味がないため、
@@ -693,6 +708,10 @@ type NewOrderRequest struct {
 	// 以前はここで completed + 支払い済みまで立てていたが、
 	// 受付係が代金を受け取り忘れても誰も気づけず、締めでも一致してしまった。
 	Immediate bool `json:"immediate"`
+
+	// PickupMs は受け取り予定時刻。混んでいるときだけ入れる（0 なら案内なし）。
+	// 見積もりは画面側で出し、ここは受け取った値を注文に残すだけ。
+	PickupMs int64 `json:"pickupMs"`
 
 	// Session は営業回。空なら既定の回。
 	Session string `json:"session"`
@@ -854,6 +873,10 @@ func BuildOrder(req NewOrderRequest) BuildResult {
 		CreatedISO: t.Format(time.RFC3339),
 		CreatedMs:  req.NowMs,
 		UpdatedMs:  req.NowMs,
+	}
+	// 受け取り時刻の案内。過去や、丸一日先のような値は記録しない。
+	if req.PickupMs > req.NowMs && req.PickupMs < req.NowMs+24*60*60*1000 {
+		o.PickupMs = req.PickupMs
 	}
 	if len(items) == 1 {
 		o.Flavor = items[0].Flavor
