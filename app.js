@@ -2781,7 +2781,8 @@ async function dealOne(id, add){
       cur.made = made;
       if(items.every(i => (Number(made[i.flavor]) || 0) >= (i.quantity || 0))){
         cur.status = 'ready';
-        if(!cur.calledAt) cur.calledAt = Date.now();
+        cur.calledAt = Date.now();
+        cur.calls = 1;
       }
       cur.updatedMs = Date.now();
       return cur;
@@ -3043,26 +3044,36 @@ function renderRecall(){
   if(!list) return;
   const now = Date.now();
   // 呼んでから長い順。いちばん戻ってきていない人を先頭に置く。
+  // 何度呼んでも来ていない札を先頭に寄せる。誰を後回しにすべきかを
+  // 人が全部の札から探すのではなく、画面のほうから出す。
+  // 「何分後にするか」はお客様との会話でしか決まらないので、そこは人が押す。
+  const CALLS_MANY = 3;
+  const many = o => !heldOf(o, now) && (o.calls || 0) >= CALLS_MANY;
   const waiting = orders.filter(o => o.status === 'ready' && o.number)
                         .sort((a,b)=> (heldOf(a, now) ? 1 : 0) - (heldOf(b, now) ? 1 : 0)
+                                   || (many(b) ? 1 : 0) - (many(a) ? 1 : 0)
                                    || (a.calledAt||0) - (b.calledAt||0));
   paintList(list, waiting.map(o=>{
     const held = heldOf(o, now);
     const on  = !held && !!o.calledAt && now - o.calledAt < CALL_HOLD_MS;
     const min = o.calledAt ? Math.floor((now - o.calledAt) / 60000) : null;
     const late = !held && !!o.pickupMs && o.pickupMs < now;
+    const calls = o.calls || 0;
     return `
-    <article class="ops-card" data-call="${on}" data-late="${late}" data-held="${held}">
+    <article class="ops-card" data-call="${on}" data-late="${late}" data-held="${held}"
+             data-many="${many(o)}">
       <div class="ops-head">
         <span class="ops-num">${numOf(o)}</span>
         <span class="ops-timer">${o.createdMs ? mmss(elapsedSec(o.createdMs)) : '—'}</span>
       </div>
       ${o.pickupMs ? `<span class="ops-when" data-late="${late}">${hhmm(o.pickupMs)} お越しの予定</span>` : ''}
+      ${many(o) ? `<p class="ops-alert ops-many"><b>${calls}回</b> 呼んでも来ていません</p>` : ''}
       <p class="ops-hint">${held
         ? `<b class="ops-held">後回し　${hhmm(o.holdUntil)} まで</b>`
         : on ? 'いま呼び出し表示に出ています'
         : min === null ? 'まだ呼んでいません'
-        : min < 1 ? 'さきほど呼びました' : `${min}分前に呼びました`}</p>
+        : min < 1 ? `さきほど呼びました${calls > 1 ? `（${calls}回目）` : ''}`
+                  : `${min}分前に呼びました${calls > 1 ? `（${calls}回目）` : ''}`}</p>
       ${held
         ? `<button type="button" class="ops-do" data-act="unhold" data-id="${o.id}"
                    aria-label="${numOf(o)} の後回しをやめて、いま呼ぶ">後回しをやめて呼ぶ</button>`
@@ -3078,7 +3089,13 @@ function renderRecall(){
   }).join(''));
   $('recall-list').classList.toggle('hidden', waiting.length === 0);
   $('recall-empty').classList.toggle('hidden', waiting.length > 0);
+  const manyN = waiting.filter(many).length;
   const head = $('recall-head');
+  if(head && manyN){
+    head.innerHTML = `お呼び出し中 ${waiting.length}件`
+      + ` ／ <b class="ops-many-n">${manyN}件</b> は ${CALLS_MANY}回以上 呼んでも来ていません`;
+    return;
+  }
   if(head) head.textContent = waiting.length
     ? `お呼び出し中 ${waiting.length}件（呼んでから長い順）`
     : '呼び出しの状況';
@@ -3501,6 +3518,7 @@ async function applyVoid(id, pick){
       if(ok && left > 0 && cur.status === 'pending'){
         cur.status = 'ready';
         cur.calledAt = Date.now();
+        cur.calls = 1;
       }
       cur.updatedMs = Date.now();
       return cur;
@@ -3932,6 +3950,7 @@ async function fillCup(id, flavor, delta){
         // 受渡待ちになるたびに呼び直す。前の calledAt を残すと、焼き待ちへ
         // 戻してからそろえ直したとき、呼び出し表示が一度も点かない。
         cur.calledAt = Date.now();
+        cur.calls = 1;              // ここが 1 回目
       }else if(!all && cur.status === 'ready'){
         cur.status = 'pending';          // 足りなくなった＝まだ焼き待ち
         delete cur.calledAt;             // 呼んでいない状態に戻す
@@ -3975,6 +3994,7 @@ async function fillAll(id, before){
         if(cur.status === 'pending'){
           cur.status = 'ready';
           cur.calledAt = Date.now();
+          cur.calls = 1;
         }
       }
       cur.updatedMs = Date.now();
@@ -4000,6 +4020,7 @@ async function callOrder(id){
     await runTransaction(ref(db,'orders/'+id), cur=>{
       if(cur === null || cur.status !== 'ready') return;   // 中止＝書かない
       cur.calledAt = Date.now();
+      cur.calls = (Number(cur.calls) || 0) + 1;
       cur.updatedMs = Date.now();
       return cur;
     });
@@ -4024,8 +4045,8 @@ async function changeStatus(id, from, to){
       // 受渡待ちになった時点で呼び出しも済ませる。別に「呼ぶ」を押させると、
       // 焼き上げてから呼ぶまでの間が人の気づき待ちになる。
       // ここで書けば writer は「用意できた」を押した 1 台だけで、書き込みも 1 回。
-      if(to === 'ready') cur.calledAt = Date.now();
-      if(to === 'pending') delete cur.calledAt;
+      if(to === 'ready'){ cur.calledAt = Date.now(); cur.calls = (was === 'ready' ? (cur.calls||0) : 0) + 1; }
+      if(to === 'pending'){ delete cur.calledAt; delete cur.calls; }
       // 記録表から「用意した」を押したときは made が空のまま ready になり、
       // 焼き待ちカップが厨房の板と見積もりから静かに消える。実物に合わせて埋める。
       if(to === 'ready' && was === 'pending'){

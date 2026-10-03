@@ -245,6 +245,9 @@
         "calledAt": {
           ".validate": "newData.isNumber() && newData.val() > 0"
         },
+        "calls": {
+          ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 999"
+        },
         "pickupMs": {
           ".validate": "newData.isNumber() && newData.val() > 0"
         },

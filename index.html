@@ -889,6 +889,11 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 /* 後回しにした注文。呼び出しの面と受渡で同じ見え方にする。 */
 .ops-held{color:var(--warn)}
 .ops-hold-head{margin:10px 0 4px;color:var(--dim);font-size:clamp(14px,2vh,17px);text-align:center}
+/* 何度呼んでも来ていない札。普段は出ないので、出たら必ず目に入る強さにする。 */
+.ops-many{margin:0 0 6px;font-size:clamp(16px,2.4vh,20px);letter-spacing:.04em}
+.ops-many b{font-size:1.25em}
+.ops-card[data-many="true"]{border-color:var(--late)}
+.ops-many-n{color:var(--late-text)}
 .ops-card[data-held="true"]{opacity:.72}
 .ops-state[data-kind="held"]{color:var(--warn)}
 
