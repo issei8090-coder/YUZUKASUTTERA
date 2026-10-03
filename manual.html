@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ゆず香ステラ 運用マニュアル</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* ============================================================
+   ゆず香ステラ 運用マニュアル（当日、現場で見る 1 枚）
+
+   ■ 配り方
+     ・スマホで読む … このファイルをそのまま開く（1 列に畳まれる）
+     ・紙で配る     … ブラウザで開いて ⌘P → 「PDFとして保存」。
+                      用紙 A4・余白「既定」・背景のグラフィック「あり」。
+
+   ■ 直すところ
+     ・文章 … <body> の中。ふつうの文章なので直接書き換えられる
+     ・色   … :root の色の名前（index.html と同じ値にしてある）
+
+   ■ 注意
+     art/ の画像を参照しているので、このファイルは必ずプロジェクトの
+     直下（index.html と同じ場所）に置いたまま開くこと。
+   ============================================================ */
+:root{
+  --cream:#FCF6DC;
+  --card:#FDF8E4;
+  --lift:#FFFBEC;
+  --brown:#613E28;
+  --brown-soft:#6B4E35;
+  --gold:#BB985F;
+  --gold-text:#8A6C34;
+  --gold-line:rgba(187,152,95,.38);
+  --yellow:#F1CA63;
+  --leaf:#7E8A4A;
+  --red:#A63D30;
+  --ink:#141210;          /* 業務用画面（厨房・受渡・支払い口）の地 */
+  --serif:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',YuMincho,serif;
+  --sans:'Zen Kaku Gothic New','Hiragino Sans','Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--cream);color:var(--brown-soft);
+  font-family:var(--sans);font-size:15px;line-height:1.95;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:0 20px 80px}
+
+/* ---- 表紙 ---- */
+.head{text-align:center;padding:42px 0 26px}
+.brand{font-family:var(--serif);color:var(--brown);font-weight:600;
+  font-size:clamp(28px,5.4vw,44px);letter-spacing:.14em;line-height:1.3;margin:0}
+.sub{font-family:var(--serif);color:var(--gold-text);letter-spacing:.3em;
+  font-size:clamp(11px,1.6vw,14px);margin:12px 0 0;text-indent:.3em}
+.rule{display:flex;align-items:center;gap:14px;margin:18px auto 0;max-width:560px}
+.rule::before,.rule::after{content:"";height:1px;background:var(--gold-line);flex:1}
+.rule img{width:38px}
+.lead{margin:22px auto 0;max-width:620px;text-align:center;font-size:15px}
+
+/* ---- 見出し ---- */
+h2{font-family:var(--serif);color:var(--brown);font-weight:600;
+  font-size:clamp(20px,3vw,26px);letter-spacing:.1em;margin:46px 0 4px;
+  padding-bottom:10px;border-bottom:1px solid var(--gold-line)}
+h2 .no{color:var(--gold-text);font-size:.72em;margin-right:.6em;letter-spacing:.18em}
+h3{font-family:var(--serif);color:var(--brown);font-weight:600;
+  font-size:17px;letter-spacing:.08em;margin:26px 0 8px}
+p{margin:10px 0}
+b{color:var(--brown);font-weight:700}
+.note{font-size:13.5px;color:var(--gold-text);line-height:1.85}
+
+/* ---- 役割の札 ---- */
+.roles{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));margin-top:18px}
+.role{background:var(--card);border:1px solid var(--gold-line);border-radius:18px;padding:18px 20px}
+.role h3{margin:0 0 6px}
+.role .who{font-size:12.5px;letter-spacing:.14em;color:var(--gold-text);display:block;margin-bottom:2px}
+.role ul{margin:8px 0 0;padding-left:1.2em}
+.role li{margin:3px 0}
+
+/* ---- 表 ---- */
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--gold-line);vertical-align:top}
+th{font-family:var(--serif);color:var(--brown);font-weight:600;letter-spacing:.06em;
+  background:var(--lift);white-space:nowrap}
+td code,p code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;
+  background:var(--lift);border:1px solid var(--gold-line);border-radius:6px;padding:1px 6px;white-space:nowrap}
+.tbl-wrap{overflow-x:auto}
+
+/* ---- 手順 ---- */
+ol.steps{counter-reset:s;list-style:none;margin:16px 0;padding:0}
+ol.steps>li{counter-increment:s;position:relative;padding:0 0 14px 44px;margin:0}
+ol.steps>li::before{content:counter(s);position:absolute;left:0;top:1px;
+  width:30px;height:30px;border-radius:50%;background:var(--brown);color:var(--cream);
+  font-family:var(--serif);font-size:15px;display:grid;place-items:center}
+
+/* ---- 注意・禁止 ---- */
+.call{border-left:4px solid var(--gold);background:var(--lift);border-radius:0 14px 14px 0;
+  padding:14px 18px;margin:16px 0}
+.call[data-kind="stop"]{border-left-color:var(--red)}
+.call[data-kind="stop"] b{color:var(--red)}
+.call[data-kind="go"]{border-left-color:var(--leaf)}
+.call p{margin:4px 0}
+
+/* ---- 画面の見本（厨房・受渡は暗い地） ---- */
+.screen{background:var(--ink);color:#F2ECE0;border-radius:14px;padding:16px 18px;margin:16px 0;
+  font-size:13.5px;line-height:1.9}
+.screen .cap{display:block;color:#A99E8C;letter-spacing:.14em;font-size:11.5px;margin-bottom:10px}
+.screen .row{display:flex;flex-wrap:wrap;gap:8px 18px}
+.screen .cell{background:#1F1B16;border:1px solid #332C24;border-left:4px solid #5BB98C;
+  border-radius:8px;padding:8px 12px;min-width:132px}
+.screen .cell b{display:block;color:#F2ECE0;font-size:22px;line-height:1.25;font-weight:800}
+.screen .cell span{color:#A99E8C;font-size:12px}
+.screen .line{margin-top:10px;color:#A99E8C;font-size:12.5px}
+
+/* ---- チェックリスト ---- */
+ul.check{list-style:none;margin:14px 0;padding:0}
+ul.check li{position:relative;padding:0 0 8px 34px}
+ul.check li::before{content:"";position:absolute;left:0;top:5px;width:19px;height:19px;
+  border:1.5px solid var(--gold);border-radius:5px}
+
+/* ---- 困ったとき ---- */
+dl.fix{margin:14px 0}
+dl.fix dt{font-family:var(--serif);color:var(--brown);font-weight:600;margin-top:16px}
+dl.fix dd{margin:4px 0 0;padding-left:1.1em;border-left:2px solid var(--gold-line)}
+
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--gold-line);
+  font-size:12.5px;color:var(--gold-text);text-align:center;line-height:2}
+
+@media (max-width:560px){
+  body{font-size:14.5px}
+  .wrap{padding:0 16px 56px}
+  th,td{padding:8px 10px}
+}
+
+/* ---- 印刷（A4・背景ありで刷る） ---- */
+@media print{
+  @page{size:A4;margin:14mm}
+  body{background:#fff;font-size:10.5pt;line-height:1.8}
+  .wrap{max-width:none;padding:0}
+  .head{padding:0 0 12px}
+  h2{margin-top:22px;break-after:avoid}
+  .role,.call,.screen,table,ol.steps>li,dl.fix dt,dl.fix dd{break-inside:avoid}
+  .screen{background:#fff;color:#000;border:1px solid #999}
+  .screen .cell{background:#fff;border-color:#999;color:#000}
+  .screen .cell b,.screen .cap,.screen .cell span,.screen .line{color:#000}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <h1 class="brand">ゆず香ステラ</h1>
+    <p class="sub">注文管理システム 運用マニュアル</p>
+    <div class="rule"><img src="art/divider-yuzu.png" alt=""></div>
+    <p class="lead">
+      受付・厨房・受渡・支払い口の端末が、同じ注文を同時に見ています。<br>
+      <b>自分の持ち場の画面だけ</b>を見れば仕事が進むように作ってあります。
+    </p>
+  </header>
+
+  <h2><span class="no">01</span>だれが、何をするか</h2>
+  <div class="roles">
+
+    <div class="role">
+      <h3><span class="who">お客様に向ける</span>受付</h3>
+      <ul>
+        <li>商品を選んでいただく</li>
+        <li>番号札を 1 枚取り、<b>その実物の番号</b>を打つ</li>
+        <li>確定して、札をお渡しする</li>
+      </ul>
+    </div>
+
+    <div class="role">
+      <h3><span class="who">立てかけて置く</span>厨房</h3>
+      <ul>
+        <li>画面は<b>見るだけ。触らない</b></li>
+        <li>台ごとに「何を何個」が出る。そのとおり焼く</li>
+        <li>焼けたら受渡口へ渡す（打つのは受渡）</li>
+      </ul>
+    </div>
+
+    <div class="role">
+      <h3><span class="who">置きっぱなしにする</span>受渡</h3>
+      <ul>
+        <li>受け取ったカップを <b>＋1</b> で数える</li>
+        <li>そろったら自動でお呼び出しが始まる</li>
+        <li>お渡しと、代金の受け取り</li>
+      </ul>
+    </div>
+
+    <div class="role">
+      <h3><span class="who">現金に専念する</span>支払い口</h3>
+      <ul>
+        <li>未収の注文だけが並ぶ</li>
+        <li>受け取ったら「受け取る」を押す</li>
+        <li>金額はお客様側の画面にも出る</li>
+      </ul>
+    </div>
+
+    <div class="role">
+      <h3><span class="who">スマホで持つ</span>本部</h3>
+      <ul>
+        <li><b>厨房の人数</b>を入れる（いちばん大事）</li>
+        <li>番号札を使うかどうかの切り替え</li>
+        <li>受付機の待機、呼び出しの対応</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <h2><span class="no">02</span>どの端末で、どれを開くか</h2>
+  <p>URL のうしろの <code>#</code> で画面が決まります。開いたら、その端末はもう触りません。</p>
+  <div class="tbl-wrap">
+  <table>
+    <tr><th>画面</th><th>URL</th><th>置く場所と向き</th></tr>
+    <tr><td>受付</td><td><code>（なし）</code></td><td>受付台。<b>お客様に向ける</b></td></tr>
+    <tr><td>厨房</td><td><code>#kitchen</code></td><td>厨房の壁に立てかける</td></tr>
+    <tr><td>受渡</td><td><code>#ready</code></td><td>お渡し口。店員側に向ける</td></tr>
+    <tr><td>支払い口</td><td><code>#pay</code></td><td>会計口。2 口目は <code>#pay:2</code></td></tr>
+    <tr><td>金額表示</td><td><code>#amount</code></td><td>会計口。<b>お客様に向ける</b></td></tr>
+    <tr><td>呼び出し表示</td><td><code>#call</code></td><td>列の見える位置。<b>お客様に向ける</b></td></tr>
+    <tr><td>記録・売上</td><td><code>#records</code></td><td>本部。締めと CSV</td></tr>
+    <tr><td>管理</td><td><code>#control</code></td><td>本部のスマホ</td></tr>
+  </table>
+  </div>
+  <p class="note">受付機は 4 台まで。起動すると「受付機1」のように名乗り、<b>同じ番号で 2 台は立てません</b>。
+     受付の画面から他の画面へ移ると、その席は自動で空きます。</p>
+
+  <h2><span class="no">03</span>受付のしかた</h2>
+  <ol class="steps">
+    <li><b>「注文を始める」</b>を押していただく。ここから接客時間を計っています。</li>
+    <li>商品を <b>＋</b> で選んでいただく。合計はその場で出ます。</li>
+    <li><b>番号札のケースから 1 枚取り、その札の番号を打つ。</b>
+        画面が出した番号ではなく、<b>手に持っている札の番号</b>です。</li>
+    <li>確定。番号と<b>受け取り時刻</b>（混んでいるときだけ）が大きく出ます。
+        お客様に読んでいただいてから札をお渡しします。</li>
+  </ol>
+  <div class="call" data-kind="stop">
+    <p><b>やってはいけないこと</b></p>
+    <p>・札を取らずに確定する（受渡口で誰の注文か分からなくなります）</p>
+    <p>・受付で代金を受け取る（お支払いは会計口です。二重取りになります）</p>
+  </div>
+
+  <h2><span class="no">04</span>厨房 ― 見るだけの板</h2>
+  <p>手が汚れている場所なので、<b>この画面には押すところがありません</b>。出ているとおりに焼いてください。</p>
+
+  <div class="screen">
+    <span class="cap">厨房の画面（上から順に）</span>
+    <div class="row">
+      <div class="cell"><span>台1</span><b>ゆず 12個</b><span>＝2カップ</span></div>
+      <div class="cell"><span>台2</span><b>ゆず 12個</b><span>＝2カップ</span></div>
+      <div class="cell"><span>台3</span><b>チョコ 12個</b><span>＝2カップ</span></div>
+      <div class="cell"><span>台4</span><b>チョコ 6個</b><span>＝1カップ</span></div>
+    </div>
+    <p class="line">ゆず 焼き待ち 72個（12カップ）・この先あと48カップ ／ チョコ 42個（7カップ）</p>
+    <p class="line">下半分に伝票（番号・経過時間・残りの個数）。入り切らない分は「ほか N 件」。</p>
+  </div>
+
+  <ul>
+    <li><b>台の数＝厨房に立っている人数</b>です。人数が変わったら本部に言ってください。</li>
+    <li>1 つの台には <b>1 つの味だけ</b>。受付順に拾って配っているので、出ている順に焼けば古い注文から片づきます。</li>
+    <li>数字は<b>個（マス）</b>です。6 個＝1 カップ。</li>
+    <li>伝票の数字は<b>残り</b>です。受渡が受け取った分は引かれています。</li>
+    <li>「空き」と出ている台は、いま焼く注文がありません。</li>
+  </ul>
+  <div class="call" data-kind="stop">
+    <p><b>作り置きはしません。</b>出ている数より多く焼かないでください。
+       焼いたものは置いておけず、生地も余らせられません。</p>
+  </div>
+
+  <h3>生地（ボウル）</h3>
+  <p><b>1 ボウル 400g で 3 カップ（18 個）。</b>板には「焼き待ち 72個（12カップ ＝ 生地4杯）」のように、
+     必要なボウルの数も出ます。混ぜる人はこの数字を見てください。</p>
+  <div class="tbl-wrap">
+  <table>
+    <tr><th>出すカップ数</th><th>ボウル</th><th>生地</th></tr>
+    <tr><td>50 カップ</td><td>17 杯</td><td>約 6.8 kg</td></tr>
+    <tr><td>100 カップ</td><td>34 杯</td><td>約 13.6 kg</td></tr>
+    <tr><td>150 カップ</td><td>50 杯</td><td>約 20 kg</td></tr>
+  </table>
+  </div>
+  <div class="call" data-kind="stop">
+    <p><b>混ぜる人は「厨房の人数」に数えないでください。</b>
+       4 人で焼くと <b>1.5 分に 1 ボウル</b>空きます。混ぜ続ける人が常時 1 人必要で、
+       その人は焼けません。4 人いても、焼くのは 3 人です。</p>
+  </div>
+
+  <h2><span class="no">05</span>受渡 ― ここが全部を進める</h2>
+  <p>焼き上がりを受け取る人が、画面を打ちます。注文は普通<b>分かれて焼き上がる</b>ので、カップの数で数えます。</p>
+
+  <div class="screen">
+    <span class="cap">ご用意中のカード</span>
+    <div class="row">
+      <div class="cell"><span>#023 ・ 15:31 お渡し予定</span><b>ゆず 1 / 3</b><span>−　＋1</span></div>
+      <div class="cell"><span>そろったら</span><b>自動でお渡し待ち</b><span>お呼び出しも始まる</span></div>
+    </div>
+  </div>
+
+  <ol class="steps">
+    <li>厨房からカップを受け取るたびに、その味の <b>＋1</b> を押す。</li>
+    <li>まとめて届いたときは <b>「ぜんぶ用意できた」</b> 1 回でよい。</li>
+    <li>そろうと自動で「お渡し待ち」になり、呼び出し表示に番号が出る。</li>
+    <li>お客様が来たら
+      <b>「渡した」</b>、未払いなら <b>「◯円 受け取って渡した」</b>（1 タップで両方済みます）。</li>
+  </ol>
+  <p class="note">数え間違いは <b>−</b> で戻せます。足りなくなれば自動で「ご用意中」に戻ります。<br>
+     押し間違いは、下に出る知らせの「戻す」（7 秒）か、本部の記録表から直せます。</p>
+
+  <h3>横に送ると「呼び出しの状況」が出ます</h3>
+  <p>画面を<b>指で左へ送る</b>（下の「呼び出し」を押してもよい）と、
+     いまお客様側の呼び出し表示に出ている番号が、<b>呼んでから長い順</b>に並びます。
+     取りに来ない札はここから <b>「もう一度呼ぶ」</b>。</p>
+  <div class="call">
+    <p><b>5 分取りに来ない札は、自動でもう一度呼びます。</b>（30 分で打ち切り）
+       それでも来ない場合だけ、ここから手で呼んでください。</p>
+  </div>
+  <div class="call" data-kind="stop">
+    <p><b>「お待たせ ◯件」</b>が上に赤く出たら、<b>約束した時刻を過ぎた</b>お客様です。
+       そのカードは一覧のいちばん上に来ます。先に片づけてください。</p>
+  </div>
+
+  <h2><span class="no">06</span>支払い口</h2>
+  <ul>
+    <li>並ぶのは<b>未収の注文だけ</b>。金額の大きい字がそのまま受け取る額です。</li>
+    <li>「受け取る」を押すと、お客様側の画面（<code>#amount</code>）に金額が出ます。やめる・確定で必ず消えます。</li>
+    <li><b>赤い「渡したのに未払い」</b>が出たら、取りはぐれです。先頭に寄せてあるので、先に回収してください。</li>
+    <li>同時に会計できるのは 1 件だけです（お客様側の表示が 1 つしかないため）。</li>
+  </ul>
+
+  <h3>横に送ると「おつり」が出ます</h3>
+  <ol class="steps">
+    <li>一覧で <b>「◯円 受け取る」</b> を押す（請求額がおつり面に入ります）。</li>
+    <li>画面を<b>指で左へ送る</b>（下の「おつり」でもよい）。</li>
+    <li><b>お預かりだけ</b>を打つ。＋500／＋1000／＋5000／ちょうど、も使えます。</li>
+    <li>おつりが大きく出ます。お渡ししたら、一覧に戻って「受け取った」を押す。</li>
+  </ol>
+  <p class="note">請求は打てません。打ち間違いがそのまま釣り銭の間違いになるためです。
+     お預かりが足りないときは <b>赤で「◯円 不足」</b> と出ます。</p>
+
+  <h2><span class="no">07</span>混んできたら</h2>
+  <p>ベビーカステラは作り置きができないので、混むと<b>行列ではなく「渡せる時刻」</b>が遠くなります。
+     立って待たせ続けないために、札を持って出直していただきます。</p>
+  <div class="tbl-wrap">
+  <table>
+    <tr><th>いつ</th><th>画面が勝手にやること</th><th>こちらの言い方</th></tr>
+    <tr>
+      <td><b>最長待ち 8 分</b>を超えたら</td>
+      <td>受付で「◯時◯分ごろ」をご案内する</td>
+      <td>「お作りに時間がかかっております。番号札をお持ちになって、<b>◯時◯分ごろ</b>にお越しください」</td>
+    </tr>
+    <tr>
+      <td>5 分を切ったら</td>
+      <td>ご案内をやめ、その場でお渡しに戻る</td>
+      <td>（いつもどおり）</td>
+    </tr>
+    <tr>
+      <td><b>見積もり 30 分</b>を超えたら</td>
+      <td>受付を止める（画面が覆われる）</td>
+      <td>「ただいま受付を止めております。少々お待ちください」</td>
+    </tr>
+  </table>
+  </div>
+  <div class="call" data-kind="go">
+    <p><b>すでに受付に立っているお客様は、最後まで通ります。</b>覆いが出るのは次のお客様からです。</p>
+    <p>25 分まで下がれば、受付は自動で再開します。人が戻す必要はありません。</p>
+  </div>
+
+  <h2><span class="no">08</span>本部（<code>#control</code>）でやること</h2>
+
+  <h3>厨房の人数 ― いちばん大事</h3>
+  <p>焼ける量を決めているのは台ではなく<b>人</b>です。1 人が見られるのは 12 マスほど（＝2 カップ）で、
+     大きい台はマスを余らせて使います。<b>シフトで人数が変わったら、必ずここを変えてください。</b>
+     受け取り時刻の見積もりも、厨房の板の台数も、ここから動きます。</p>
+  <div class="tbl-wrap">
+  <table>
+    <tr><th>厨房の人数</th><th>4 分で焼ける量</th><th>毎分</th></tr>
+    <tr><td>2 人</td><td>24 マス ＝ 4 カップ</td><td>1.0 カップ</td></tr>
+    <tr><td>4 人</td><td>48 マス ＝ 8 カップ</td><td>2.0 カップ</td></tr>
+    <tr><td>6 人</td><td>72 マス ＝ 12 カップ</td><td>3.0 カップ</td></tr>
+  </table>
+  </div>
+  <p class="note">同じ画面に「実測 ◯カップ/分（直近10分）」が出ます。見積もりとずれていたら、
+     人数か「見込み（％）」を合わせてください。<br>
+     <b>入れるのは「焼く人」の数だけ</b>です（生地を混ぜる人は数えない）。
+     生地の残りも「残り 40カップ（生地 14杯・5.6kg）」のように出ます。</p>
+
+  <h3>そのほか</h3>
+  <ul>
+    <li><b>受け取り時刻のご案内</b> … 混んだら自動／いつでも出す／出さない</li>
+    <li><b>番号札を使うかどうか</b> … 使わないと厨房を通さず、受渡口でその場でお渡しします。
+        <b>焼けた分が手元にあるときだけ</b>使ってください</li>
+    <li><b>受付機</b> … 待機にすると、その受付機だけ閉じます（人が決めた待機は自動では戻りません）。
+        置き忘れ・電池切れで残った席は<b>「強制解除」</b>で取り上げられます</li>
+    <li><b>店員の呼び出し</b> … 受付でお客様が押すと、ここと受渡の画面に出ます。対応したら解除</li>
+    <li><b>省エネ</b> … 受渡・支払い口が暗くなるまでの分。仕事が入れば自動で戻ります</li>
+    <li><b>終了時刻</b> … 入れておくと、その時刻で受付を自動で閉じます
+        （お客様の画面は「本日の販売は終了しました」）。受付中の人は最後まで通ります</li>
+  </ul>
+
+  <h3>放っておいても出る数字</h3>
+  <ul>
+    <li><b>生地が尽きるまで</b> … 「ゆず 残り 12カップ・約18分で尽きます」。
+        15 分を切ると赤。厨房の板にも出ます</li>
+    <li><b>設定と実測のずれ</b> … 実測が設定と 30% ずれると「人数を確かめてください」。
+        <b>勝手には直しません</b>（直すのは人）</li>
+  </ul>
+
+  <h2><span class="no">09</span>開店前の手順</h2>
+  <ul class="check">
+    <li>端末を全部つなぎ、それぞれの URL を開く（02 の表）</li>
+    <li><b>画面の上に赤い帯が出ていないこと</b>を確かめる（出ていたら本部へ）</li>
+    <li>受付機を 1 台ずつ起動し、番号を名乗らせる</li>
+    <li>番号札のケースを 1 列に並べ、枚数を管理画面の設定と合わせる</li>
+    <li>管理画面で <b>厨房の人数</b>と、その日の在庫（生地で作れるカップ数）を入れる</li>
+    <li>管理画面に <b>終了時刻</b>を入れる（閉め忘れの歯止め）</li>
+    <li>厨房・呼び出し・金額表示の画面を <b>1 回タップして音を起こす</b>（iPad は一度触らないと鳴りません）</li>
+    <li>記録画面で「締めて次の回を始める」。リハーサルの注文を本番に混ぜない</li>
+  </ul>
+
+  <h2><span class="no">10</span>困ったとき</h2>
+  <dl class="fix">
+    <dt>押し間違えた（用意できた・渡した・支払い）</dt>
+    <dd>下に出る知らせの「戻す」（7 秒）。消えていたら、本部の記録表から戻せます。</dd>
+
+    <dt>同じ番号札を 2 回使ってしまった</dt>
+    <dd>確定のときに弾かれます。弾かれたら別の札を取ってください。
+        通ってしまった場合は、記録表で古いほうの注文を中止にします。</dd>
+
+    <dt>受付機が「起動中」のまま誰も使っていない</dt>
+    <dd>管理画面の受付機の欄で <b>「強制解除」</b>。その端末から受付機を取り上げ、空きに戻します。
+        解除された端末は<b>自動では戻りません</b>（その端末で選び直すまで受付を使えません）。</dd>
+
+    <dt>画面が薄暗い</dt>
+    <dd>省エネです。どこを触っても戻ります。仕事が入れば自動でも戻ります。</dd>
+
+    <dt>音が鳴らない</dt>
+    <dd>画面に「音が止まっています」と出ていたら押してください。
+        それでも鳴らなければ、端末の消音スイッチと音量を確かめます。</dd>
+
+    <dt>上に赤い帯が出た（データベースのルールが古い）</dt>
+    <dd><b>注文が保存されません。</b>すぐ本部へ。ルールを公開し直す必要があります。</dd>
+
+    <dt>通信が切れた</dt>
+    <dd>画面はそのまま使えます。つながると自動で送られます。
+        ただし<b>確定の瞬間は通信が要ります</b>。確定できないときは少し待ってもう一度。</dd>
+  </dl>
+
+  <p class="foot">
+    ゆず香ステラ ／ 注文管理システム 運用マニュアル<br>
+    画面の作りと細かい決まりは、プロジェクトの <b>README.md</b> と <b>docs/FLOW.md</b> にあります。
+  </p>
+
+</div>
+</body>
+</html>

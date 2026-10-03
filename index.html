@@ -1,0 +1,2884 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ゆず香ステラ — 注文管理</title>
+<!-- 宣言しないと、ブラウザは読み込みごとに /favicon.ico を取りに行って失敗する。
+     Service Worker は控えを持っていないので、その失敗が毎回コンソールに積まれ、
+     本当に見たいエラーが埋もれていた。既にある絵を指しておく。 -->
+<link rel="icon" href="art/yuzu-sm.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- 書体の読み込みで初回描画を止めない。会場の回線で fonts.googleapis.com が
+     返らないとき、従来は画面が白いまま待ち続けていた。届かなければ
+     Hiragino Mincho ProN / Hiragino Sans（iPad 標準）で組まれる。 -->
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap"></noscript>
+
+<script src="wasm_exec.js"></script>
+<style>
+/* ============================================================
+   ゆず香ステラ — デザイントークン
+   配色はモックアップ（157331/157332.jpg）から実測した値。
+   金色 #BB985F はクリーム地に対して約2.4:1 しかないため、
+   罫線・装飾専用とし、文字色には一切使わない。
+   ============================================================ */
+:root{
+  --cream:#FCF6DC;      /* 地 */
+  --card:#FDF8E4;       /* カード地 */
+  --lift:#FFFBEC;       /* 一段明るい面 */
+  --brown:#613E28;      /* 主文字・CTA（クリーム地に 9.0:1） */
+  --brown-soft:#6B4E35; /* 本文（クリーム地に 6.3:1） */
+  --gold:#BB985F;       /* 罫線・装飾のみ。地に対し 2.5:1 なので文字には使わない */
+  --gold-text:#8A6C34;  /* 金系の文字用。地に対し 4.5:1 を満たす濃さ */
+  --gold-line:rgba(187,152,95,.38);
+  --yellow:#F1CA63;     /* ステッパー */
+  --yellow-soft:#F5E2A5;
+  --leaf:#7E8A4A;
+  --red:#A63D30;        /* 中止・取消 */
+
+  --serif:'Shippori Mincho','Hiragino Mincho ProN','Yu Mincho',YuMincho,'MS PMincho',serif;
+  --sans:'Zen Kaku Gothic New','Hiragino Sans','Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif;
+
+  --r-card:22px;
+  --r-ctl:999px;
+  --tap:56px;           /* 主要操作の最小タップ寸法 */
+  /* --- 動きの寸法。値を1か所に集め、用途ごとに使い分ける ---
+     到着は減速、退出は加速。退出は入場より必ず短くする（待たされないため）。 */
+  --m-drop:520ms;   --m-drop-ease:cubic-bezier(.34,1.3,.5,1);
+  --m-lift:340ms;   --m-lift-ease:ease-in;
+  --m-count:420ms;
+  --m-tap:260ms;    --m-tap-ease:cubic-bezier(.34,1.56,.64,1);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+/* 引っ張りすぎ（オーバースクロール）を止める。
+   iPad は端で引っ張ると画面全体がゴムのように動き、position:fixed の覆いは
+   一緒に動かないので、上に地の色の帯が覗く。「全画面のはずなのに上に少し余白」は
+   これ。html にも地の色を置いて、万一覗いても同じ色にしておく。 */
+html{touch-action:manipulation;-webkit-text-size-adjust:100%;
+  background:var(--cream);overscroll-behavior:none}
+body{
+  margin:0;background:var(--cream);color:var(--brown-soft);
+  overscroll-behavior:none;
+  font-family:var(--sans);font-size:16px;line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:env(safe-area-inset-bottom);
+  overflow-x:hidden;
+}
+button{font:inherit;color:inherit}
+img{max-width:100%;display:block}
+
+/* --- 背景の水彩装飾（モックアップから切り出し） --- */
+.deco{position:fixed;pointer-events:none;user-select:none;z-index:0;opacity:.95}
+body[data-tab="kitchen"] .deco,
+body[data-tab="records"] .deco{opacity:.35}
+.deco-tl{top:0;left:0;width:min(23vw,300px)}
+.deco-tr{top:0;right:0;width:min(19vw,246px)}
+.deco-bl{bottom:0;left:0;width:min(19vw,255px)}
+.deco-br{bottom:0;right:0;width:min(20vw,256px)}
+@media (max-width:820px){ .deco-tr,.deco-bl{display:none} .deco-tl,.deco-br{width:38vw;opacity:.6} }
+
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 24px 64px}
+
+/* --- 表札 --- */
+.masthead{text-align:center;padding:38px 0 26px}
+.brand{
+  font-family:var(--serif);font-weight:600;color:var(--brown);
+  font-size:clamp(34px,5.4vw,58px);letter-spacing:.14em;line-height:1.2;margin:0;
+}
+.romaji{
+  font-family:var(--serif);color:var(--gold-text);font-size:clamp(12px,1.4vw,16px);
+  letter-spacing:.42em;margin:10px 0 0;text-indent:.42em;
+}
+.rule{display:flex;align-items:center;justify-content:center;gap:14px;margin:18px auto 0;max-width:640px}
+.rule::before,.rule::after{content:"";height:1px;background:var(--gold-line);flex:1}
+.rule img{width:42px}
+
+/* 厨房・受渡では表札を畳んで作業領域を広く取る */
+body[data-tab="kitchen"] .masthead,
+body[data-tab="records"] .masthead{padding:22px 0 14px}
+body[data-tab="kitchen"] .romaji, body[data-tab="records"] .romaji,
+body[data-tab="kitchen"] .rule,   body[data-tab="records"] .rule,
+body[data-tab="kitchen"] .brand,  body[data-tab="records"] .brand{font-size:clamp(22px,3vw,30px)}
+
+/* --- 画面切替（設営時のみ使う控えめなもの。受付はお客様に向くため前面に出さない） --- */
+/* 待機の覆い (50) と呼び出しの丸 (58) より上に置く。覆いの役目は
+   お客様に注文を始めさせないことで、スタッフを閉じ込めることではない。
+   モーダル (60) よりは下。 */
+.nav-mini{position:fixed;right:14px;bottom:14px;z-index:59;
+  right:calc(14px + env(safe-area-inset-right));bottom:calc(14px + env(safe-area-inset-bottom))}
+.nav-toggle{
+  width:var(--tap);height:var(--tap);border-radius:50%;cursor:pointer;
+  background:var(--card);border:1px solid var(--gold-line);color:var(--gold-text);
+  display:grid;place-items:center;opacity:.5;transition:opacity .2s ease,background .2s ease;
+}
+.nav-toggle:hover,.nav-toggle:focus-visible,.nav-toggle[aria-expanded="true"]{opacity:1;background:var(--lift)}
+.nav-toggle svg{width:22px;height:22px}
+.nav-menu{position:absolute;right:0;bottom:calc(var(--tap) + 10px);min-width:190px;
+  background:var(--lift);border:1px solid var(--gold);border-radius:18px;padding:8px;
+  display:flex;flex-direction:column;gap:4px}
+.nav-menu button{
+  min-height:var(--tap);padding:0 20px;border-radius:12px;cursor:pointer;text-align:left;
+  font-family:var(--serif);font-size:17px;letter-spacing:.08em;
+  background:transparent;border:0;color:var(--brown-soft);
+}
+.nav-menu button:hover{background:var(--card)}
+.nav-menu button[aria-current="page"]{background:var(--brown);color:var(--lift)}
+
+/* 受付の画面では、在ることは変えずに、探さなければ見えない濃さまで落とす。
+   お客様に向く 1 枚なので、金の丸が右下に浮いていると押させてしまう。
+   スタッフは位置を覚えているので、触れば（押せば）そこで出てくる。
+   枠と地を消すのは、薄い丸が「押せる何か」として残るのを避けるため。 */
+body[data-tab="order"] .nav-toggle{
+  opacity:.07;background:transparent;border-color:transparent;box-shadow:none}
+body[data-tab="order"] .nav-toggle:hover,
+body[data-tab="order"] .nav-toggle:focus-visible,
+body[data-tab="order"] .nav-toggle[aria-expanded="true"]{
+  opacity:1;background:var(--lift);border-color:var(--gold-line)}
+
+/* 受付機を訊いている 1 枚の上だけは、はっきり出してモーダル (60) より前に置く。
+   この紙は受付機を選ぶまで閉じない。起動して最初に出るのがこれなので、
+   ここで切り替えを塞ぐと、厨房・受渡・管理のどの端末も立ち上げられない
+   （受付機を 1 台名乗らせてから選び直す、という遠回りしか残らなかった）。
+   data-modal は openModal が付ける。:has() を使わないのは、
+   会場の古い iPad（iPadOS 16.4 未満）でも必ず効かせるため。 */
+body[data-modal="m-desk"] .nav-mini{z-index:61}
+body[data-modal="m-desk"] .nav-toggle{
+  opacity:1;background:var(--lift);border-color:var(--gold-line)}
+
+/* --- 面 --- */
+.panel{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:30px}
+.panel + .panel{margin-top:26px}
+.sec-title{
+  font-family:var(--serif);font-weight:600;color:var(--brown);
+  font-size:clamp(20px,2.4vw,26px);letter-spacing:.1em;margin:0 0 20px;
+}
+
+/* --- 商品カード --- */
+/* 1fr は min-width:auto を含むため、中身の最小幅がトラックを押し広げて
+   カードが溢れる。minmax(0,1fr) で「縮んでよい」ことを明示する。 */
+/* 商品は左右に並べる。上下に積むと、2 枚目を見るのに目が下まで降りる。
+   幅が足りないときだけ 1 列に落とす。 */
+.menu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(12px,1.8vw,24px)}
+/* 2 品が同じ語尾のときは、その語を 2 枚の間に 1 つだけ置く。
+   「ゆず ─ カステラ ─ チョコ」で 1 つの品書きとして読める。 */
+/* 札は背丈を揃える。中央揃えにすると、縦書きの字数の違い
+   （「ゆず」2 字／「チョコ」3 字）でカードの高さが変わり、上端がずれる。
+   真ん中の語だけを中央に置く。 */
+.menu[data-shared="true"]{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  align-items:stretch;gap:clamp(8px,1.4vw,18px)}
+.menu-kind{align-self:center}
+/* 添え物として置く。主役は 2 枚の札なので、ここは目立たせない。
+   欧文は text-orientation を既定のまま（mixed）にして、字を寝かせて流す。
+   upright にすると 1 字ずつ立って和文と同じ強さになり、添え物でなくなる。 */
+.menu-kind{margin:0;font-family:var(--serif);color:var(--brown-soft);font-weight:400;
+  font-size:clamp(10px,1.15vw,14px);letter-spacing:.42em;line-height:1;opacity:.7;
+  writing-mode:vertical-rl;white-space:nowrap}
+@media (max-width:620px){
+  .menu,.menu[data-shared="true"]{grid-template-columns:1fr}
+  /* 縦に積むときは、間の語を横書きに戻す（縦書きのまま挟むと行が間延びする）。 */
+  .menu-kind{writing-mode:horizontal-tb;text-align:center;letter-spacing:.42em}
+}
+
+/* 行の高さが中身より大きいとき、余りは下に溜まる。ステッパーが文字の
+   すぐ下に貼り付いて、カードの底だけが空く形になる。両端に寄せて、
+   余白をカードの真ん中（説明とステッパーの間）に置く。 */
+/* 1 枚を味の色で塗り潰す。上に縦書きの名前と絵、下に値段と増減。
+   色と縦書きで、文字を読む前にどちらかが分かる。
+
+   地は木の色。柚子色（パステル）に白文字は 1.45:1 で読めず、色相を保ったまま
+   白が乗る濃さまで落とすと、もう柚子色ではなくなる。木なら白文字が乗る。
+   味ごとの色は商品の鍵で引く。鍵が増えたら既定（クリーム地に茶文字）に落ちる。 */
+.item{
+  --tile:var(--card); --ink:var(--brown); --sub:var(--brown-soft);
+  --pad:var(--lift);  --btn:#fff;        --btn-ink:var(--brown);
+  background:var(--tile);color:var(--ink);
+  border:1px solid rgba(0,0,0,.08);border-radius:var(--r-card);
+  padding:clamp(14px,2vh,24px) clamp(14px,1.8vw,24px);min-width:0;
+  display:flex;flex-direction:column;justify-content:space-between;gap:clamp(10px,1.6vh,20px);
+  box-shadow:0 2px 10px rgba(70,48,30,.10)}
+/* 胡桃。白文字 6.14、補足 5.36、操作盤の数字 7.87。 */
+.item[data-key="plain"]{--tile:#7C5B3C;--ink:#fff;--sub:rgba(255,255,255,.90);
+  --pad:rgba(0,0,0,.16);--btn:#fff;--btn-ink:#5A4028}
+/* チョコ。白文字 12.35。木との明度差 2.01 倍で、並べて別物に見える。 */
+.item[data-key="flavor_b"]{--tile:#4A2E1E;--ink:#fff;--sub:rgba(255,255,255,.90);
+  --pad:rgba(0,0,0,.16);--btn:#fff;--btn-ink:#4A2E1E}
+
+/* 上段：縦書きの味の名前（左）と絵（右）。 */
+.item-top{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:clamp(8px,1.2vw,16px);flex:1 1 auto;min-height:0}
+/* 下段：値段と増減。 */
+.item-foot{display:flex;flex-direction:column;gap:clamp(8px,1.2vh,14px);flex:none}
+/* 絵が縦長だった頃は絵のほうが背が高く、上端揃えが自然だった。
+   横長の水彩になって文字のほうが高くなったので、上端で止めると
+   絵の下に空白が居座る。中央で揃える。 */
+/* 行が高くなったぶんの余白は、ここが受け取って上下に散らす。
+   .item 側の space-between だけだと、余りが全部「説明とステッパーの間」に
+   溜まり、カードの真ん中に穴が空く。 */
+
+/* 水彩画は透過。枠に嵌めると紙の余白が切れて質感が死ぬので、額を付けず地に置く。 */
+/* 絵の比率は商品ごとに違う（ゆず 240x141＝1.70・カカオ 240x175＝1.37）。
+   高さを絵任せにすると 2 枚のカードで画像の高さがずれ、左右対称が崩れる。
+   4:3 の枠を決めて中央に収める（2 枚ともちょうど入る比率）。
+   正方形にすると上下に無駄な空きが出て、1 画面の高さを食う。 */
+.item-photo{width:clamp(88px,12vw,160px);flex:none;aspect-ratio:4/3;display:grid;place-items:center}
+.item-photo img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+/* 味の名前は縦書き。横組みの画面の中で 1 か所だけ縦にすると、そこが先に目に入る。
+
+   字数が少ないほど大きくする。縦書きでは字数が柱の長さになるので、
+   同じ級数だと「ゆず」(2 字) が「チョコ」(3 字) より軽く見える。
+   鍵で決め打ちにすると 2 字の味が増えたときに効かないので、字数で決める。 */
+.item-name{margin:0;font-family:var(--serif);font-weight:600;color:var(--ink);
+  font-size:clamp(30px,5vw,52px);letter-spacing:.14em;line-height:1.1}
+.item-name[data-len="2"]{font-size:clamp(36px,6vw,62px)}
+.item-flavor{writing-mode:vertical-rl;text-orientation:upright;white-space:nowrap}
+/* 種類をカードの中に出すとき（語尾が揃わない品が入ったとき）も縦に添える。 */
+.item-kind{writing-mode:vertical-rl;text-orientation:upright;white-space:nowrap;
+  font-size:.46em;letter-spacing:.2em;color:var(--sub);margin-top:10px}
+.item-price{font-family:var(--serif);color:var(--ink);font-size:clamp(22px,2.6vw,30px);
+  font-weight:500;margin:0;letter-spacing:.04em;line-height:1.2}
+.item-price small{font-size:.55em;margin-left:2px}
+.item-per{display:block;font-family:var(--sans);font-size:13px;line-height:1.5;
+  color:var(--sub);letter-spacing:.04em;margin-top:4px}
+/* 商品の説明は出さない。読まれないまま高さだけを食っていた
+   （絵と名前で何かは分かる）。.item-note は廃止。 */
+/* .item-mark は水彩を主役に据えたため廃止（同じ絵を 1 枚の中に 2 回出さない）。 */
+.order-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 clamp(8px,1.2vh,14px)}
+.tagmode{
+  min-height:40px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:13px;letter-spacing:.06em;border:1px solid var(--gold);background:transparent;color:var(--brown-soft);
+}
+.tagmode[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
+/* 番号札を使わない時間は、番号を出す動線そのものを消す */
+body[data-tags="false"] #confirm-now{font-family:var(--serif);font-size:clamp(19px,2.3vh,24px);
+  background:var(--brown);border-color:var(--brown);color:var(--lift);padding:0 46px}
+body[data-tags="false"] #lane-note{color:var(--brown-soft)}
+.lane-note{margin:0;font-size:13px;letter-spacing:.06em;color:var(--brown-soft);text-align:right}
+.lane-note[data-warn="true"]{color:var(--red);font-weight:700;text-align:center}
+/* この端末がどの受付機か。受付の画面はお客様に向くので、主張させない。
+   押すと選び直せる（起動中の受付機は選べない）。 */
+.deskchip{
+  /* 押す頻度は低いが、押すところではある。iOS の目安 44pt を下回らせない。 */
+  min-height:44px;padding:0 18px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:13px;letter-spacing:.06em;border:1px dashed var(--gold);background:transparent;color:var(--brown-soft);
+}
+.deskchip[data-set="true"]{border-style:solid;background:var(--lift);color:var(--brown);font-weight:700}
+.deskchip[data-set="false"]{color:var(--red);border-color:var(--red);font-weight:700}
+.item-stock{margin:10px 0 0;font-size:14px;letter-spacing:.06em}
+.item-stock[data-state="low"]{color:#8A6A1E;font-weight:700}
+/* 商品カードの地は味ごとのタイル色なので、赤文字は胡桃地で 1.03:1 にしかならず
+   事実上見えない。地の上に札として重ねる（白 / 黒 46% で 10:1 以上）。 */
+.item-stock[data-state="out"]{color:#fff;font-weight:700;background:rgba(0,0,0,.46);
+  border-radius:999px;padding:5px 16px;display:inline-block;
+  font-size:clamp(16px,2.4vh,20px);letter-spacing:.12em}
+.item[data-soldout="true"] .item-photo{filter:grayscale(1);opacity:.42}
+.item[data-soldout="true"] .stepper{opacity:.45}
+.item[data-soldout="true"] .item-name,
+.item[data-soldout="true"] .item-price{opacity:.6}
+
+/* --- ステッパー --- */
+/* min-width:0 が無いと、中の最小幅（ボタン 2 つ＋数量欄）がそのまま
+   この箱の最小幅になり、カードより広くなった分が外へ出る。 */
+/* カードの幅いっぱい。両端に寄せ、数字が真ん中に来る。
+   min-width:0 を忘れると、中身の最小幅が枠を押し広げてはみ出す
+   （以前これで、カードの下枠がステッパーの真ん中を横切っていた）。 */
+/* 値段の行。右端にアレルギーの丸を置く。 */
+/* 値段と「i」を 1 行に。下端で揃えると、丸が「1カップ（6個入り）」の
+   行と目線に乗り、値段の付属物として読める。 */
+.item-meta{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+/* アレルギーの丸。値段の右に置く。主役ではないので枠線だけにする。
+   ただし押すところなので、iOS の目安 44pt は下回らせない。 */
+.item-allergy{width:44px;height:44px;flex:none;border-radius:50%;cursor:pointer;
+  border:1.5px solid var(--sub);background:transparent;color:var(--sub);
+  display:grid;place-items:center;transition:background .2s ease}
+.item-allergy:hover{background:rgba(255,255,255,.14)}
+.item-allergy:active{transform:scale(.94)}
+.item-allergy svg{width:26px;height:26px}
+
+/* ポップアップの中身。絵と名前を対にして並べる。 */
+.allergy-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(14px,3vw,34px);
+  margin:22px 0 4px}
+.allergy-item{display:flex;flex-direction:column;align-items:center;gap:10px;min-width:96px}
+.allergy-item svg{width:clamp(52px,9vw,72px);height:auto;color:var(--brown)}
+.allergy-name{font-family:var(--serif);color:var(--brown);font-size:clamp(16px,2.2vw,20px);
+  letter-spacing:.1em}
+/* 但し書き。読み落とされると表示した意味が無いので、枠で囲って残す。 */
+.allergy-note{margin:22px 0 0;padding:16px 18px;border-radius:var(--r-card);
+  background:var(--lift);border:1px solid var(--gold-line);
+  font-size:14px;line-height:1.9;color:var(--brown-soft);text-align:left}
+
+/* 操作盤は地より「暗く」重ねる。明るく重ねると、白い数字が乗らなくなる。 */
+.stepper{flex:none;display:flex;align-items:center;justify-content:space-between;
+  gap:clamp(6px,1vw,14px);background:var(--pad);border-radius:var(--r-ctl);
+  padding:10px clamp(10px,1.2vw,16px);min-width:0;width:100%}
+.step{
+  width:var(--tap);height:var(--tap);flex:none;border-radius:50%;border:none;
+  background:var(--btn);color:var(--btn-ink);cursor:pointer;
+  display:grid;place-items:center;transition:transform .15s ease,background .15s ease;
+}
+.step:hover{filter:brightness(.94)}
+.step:active{transform:scale(.93)}
+.step[disabled]{opacity:.42;cursor:not-allowed}
+.step svg{width:24px;height:24px}
+/* 3.2em は「0 → 10」で数字の位置が動かないための幅。
+   ただし固定の下限にすると狭い画面で溢れるので、縮める余地を残す。 */
+/* 「0 → 10」で数字の位置が動かない幅。ただし固定の下限にすると
+   狭い画面で溢れるので、縮める余地を残す。 */
+.qty{font-family:var(--serif);color:var(--ink);font-size:clamp(24px,3.2vh,34px);font-weight:500;
+  flex:1 1 auto;min-width:0;width:3.2em;text-align:center;white-space:nowrap}
+.qty small{font-size:17px;margin-left:3px}
+/* 0 のときは控えめにする。ただし地が木とチョコに変わったので、
+   クリーム地のころの茶色では沈む。地色に応じた薄い白にする。 */
+.qty[data-zero="true"]{color:var(--sub);opacity:.72}
+
+/* --- 合計・CTA --- */
+.total-row{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap;margin:34px 0 0}
+.total-label{font-size:17px;letter-spacing:.14em}
+/* 大きな字に本文用の行間（1.75）が付くと、字の上下に見えない余白が積もる。
+   合計は 1 行しか出ないので、行箱を字に寄せる。見た目は変わらず高さだけ減る。 */
+.total-yen{font-family:var(--serif);color:var(--brown);font-size:clamp(38px,5.6vw,56px);font-weight:500;letter-spacing:.03em;line-height:1.05}
+.total-yen small{font-size:.45em;margin-left:4px}
+
+.cta-row{display:flex;align-items:center;justify-content:center;gap:18px;margin:26px 0 0;flex-wrap:wrap}
+.cta-row--ruled::before,.cta-row--ruled::after{content:"";height:1px;background:var(--gold-line);flex:1 1 60px;max-width:170px}
+
+
+@media (max-width:620px){ .cta-row--ruled::before,.cta-row--ruled::after{display:none} }
+.cta{
+  font-family:var(--serif);font-size:clamp(19px,2.3vw,24px);letter-spacing:.14em;
+  min-height:68px;padding:0 54px;border-radius:var(--r-ctl);cursor:pointer;
+  background:var(--brown);color:var(--lift);border:1px solid var(--brown);
+  outline:3px solid transparent;outline-offset:-7px;
+  box-shadow:inset 0 0 0 1px rgba(241,202,99,.55);
+  display:inline-flex;align-items:center;gap:20px;transition:background .2s ease;
+}
+.cta:hover{background:#4E3120}
+/* 押した手応え。沈んで、離すと戻る。無反応だと二度押しされる。 */
+.cta:active:not([disabled]){transform:scale(.975)}
+.cta{transition:background .2s ease, transform .12s ease}
+.cta-ghost:active{transform:scale(.975)}
+.cta[disabled]{background:#D8CBB4;border-color:#D8CBB4;color:#7C6A52;box-shadow:none;cursor:not-allowed}
+.cta-ghost{
+  font-family:var(--serif);font-size:19px;letter-spacing:.14em;min-height:68px;padding:0 42px;
+  border-radius:var(--r-ctl);background:transparent;border:1px solid var(--gold);color:var(--brown-soft);
+  cursor:pointer;display:inline-flex;align-items:center;gap:16px;transition:background .2s ease;
+}
+.cta-ghost:hover{background:var(--lift)}
+#m-confirm .cta-row{gap:12px}
+
+/* 番号札は手元の実物を見て入力させる。山の並び順にも在庫表示にも依存しない。
+   OS のキーボードは文脈が合わないので、数字だけの操作盤をこの画面用に作る。 */
+.pad{margin-top:20px;border-top:1px solid var(--gold-line);padding-top:16px}
+body[data-tags="false"] .pad{display:none}
+.pad-head{font-family:var(--serif);color:var(--brown);font-size:clamp(17px,2.4vh,21px);
+  letter-spacing:.1em;margin:0 0 10px}
+/* 番号札の番号を打つところ。受付でいちばん間違えると困る入力なので、
+   打った数字と押すところを、この画面で最も大きい要素にする。 */
+.pad-display{
+  font-family:var(--serif);color:var(--brown);font-size:clamp(44px,7.4vh,72px);line-height:1.1;
+  margin:0 auto 4px;min-width:3.2em;padding:6px 24px;border-bottom:3px solid var(--gold);
+  font-variant-numeric:tabular-nums;display:inline-block;
+}
+.pad-display[data-empty="true"]{color:#C3B49A}
+.pad-err{min-height:1.2em;margin:4px 0 10px;font-size:14px;color:var(--red);font-weight:700}
+.pad-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:430px;margin:0 auto}
+.pad-keys button{
+  min-height:clamp(56px,9vh,84px);border-radius:14px;cursor:pointer;
+  font-family:var(--serif);font-size:clamp(28px,4.6vh,42px);color:var(--brown);
+  /* 本文用の行間（1.75）が付くと、大きい数字の上下に見えない余白が積もり、
+     min-height より高くなって 4 段目が画面から押し出される。 */
+  line-height:1;
+  background:var(--lift);border:2px solid var(--gold);font-variant-numeric:tabular-nums;
+}
+.pad-keys button:hover{background:var(--card)}
+.pad-keys button:active{transform:scale(.96)}
+.pad-fn{font-size:clamp(17px,2.4vh,21px) !important;color:var(--brown-soft) !important;background:transparent !important}
+.pad-ok{background:var(--brown) !important;border-color:var(--brown) !important;color:var(--lift) !important;
+  font-size:clamp(20px,3vh,27px) !important}
+.pad-ok[disabled]{background:#D8CBB4 !important;border-color:#D8CBB4 !important;color:#7C6A52 !important;cursor:not-allowed}
+
+/* 番号入力が主操作なので、確認カードを詰めて操作盤を画面内に収める。
+   写真は受付画面で既に見せているため、ここでは省く。 */
+body[data-tags="true"] #m-confirm .sheet{padding:18px 30px 0}
+body[data-tags="true"] #m-confirm .sheet > h2{font-size:clamp(17px,2.2vh,21px);margin-bottom:2px}
+body[data-tags="true"] #m-confirm .sheet-sub{margin-bottom:14px;font-size:14px}
+/* 札モードでは内訳を 1 行に畳む。商品と数は受付画面で既に見せており、
+   ここで確かめたいのは「合計」と「どの札を取るか」の 2 つだけ。
+   畳んだぶんの高さは、そのまま番号を打つ操作盤に回す。 */
+body[data-tags="true"] #m-confirm .recap{padding:10px 18px;display:flex;
+  align-items:center;justify-content:space-between;gap:18px}
+body[data-tags="true"] #m-confirm .recap-items{flex:1;min-width:0;gap:6px 18px;justify-content:flex-start}
+body[data-tags="true"] #m-confirm .recap-item{min-width:0;gap:8px;align-items:baseline}
+body[data-tags="true"] #m-confirm .recap-item + .recap-item{border-left:0;padding-left:0}
+body[data-tags="true"] #m-confirm .recap-total{flex:none;border-top:0;margin:0;padding:0;gap:12px}
+body[data-tags="true"] #m-confirm .recap-item img{display:none}
+body[data-tags="true"] #m-confirm .recap-item{min-width:0;gap:10px}
+body[data-tags="true"] #m-confirm .recap-total{margin-top:8px;padding-top:8px}
+body[data-tags="true"] #m-confirm .recap-total img{display:none}
+body[data-tags="true"] #m-confirm .recap-total .total-yen{font-size:clamp(24px,3.6vh,34px)}
+/* 金額は合計だけ見えれば足りる。商品ごとの単価は受付画面で見せている。 */
+body[data-tags="true"] #m-confirm .sheet-sub{display:none}
+body[data-tags="true"] #m-confirm .recap-items{gap:10px}
+body[data-tags="true"] #m-confirm .recap-name{font-size:15px}
+body[data-tags="true"] #m-confirm .recap-price{display:none}
+body[data-tags="true"] #m-confirm .recap-qty{font-size:13px;padding:3px 14px}
+body[data-tags="true"] #m-confirm .pad{margin-top:12px;padding-top:12px}
+body[data-tags="true"] #m-confirm .pad-head{font-size:clamp(16px,2.2vh,19px);margin-bottom:6px}
+body[data-tags="true"] #m-confirm .pad-display{font-size:clamp(40px,6.6vh,64px);
+  margin:0 auto 2px;padding:2px 24px}
+body[data-tags="true"] #m-confirm .pad-err{min-height:1em;margin:2px 0 8px;font-size:14px}
+/* 番号札モードでは「決定」が確定操作。個別の「すぐ渡す」は出さない
+   （番号を使わない時間は受付画面のトグルでまとめて切り替える）。 */
+body[data-tags="true"] #confirm-now{display:none}
+body[data-tags="true"] #m-confirm .cta-ghost{min-height:46px;font-size:16px;padding:0 30px}
+body[data-tags="true"] #m-confirm .cta-row{margin-top:8px;padding:8px 0}
+body[data-tags="true"] .pad-keys button{min-height:clamp(50px,7.8vh,74px)}
+/* 受け取り時刻の見込み。札モードでは操作盤に高さを譲る（内容は変えない）。 */
+body[data-tags="true"] #m-confirm .confirm-pickup{font-size:clamp(15px,2.1vh,19px);
+  padding:8px 14px;margin-bottom:10px;line-height:1.4}
+
+/* Safari のツールバーが出た 1024x768（実効 698px）など、特に低い画面。
+   操作盤の 4 段と「決定」が画面内に残ることを最優先にする。 */
+@media (max-height:740px){
+  body[data-tags="true"] #m-confirm .sheet{padding-top:14px}
+  body[data-tags="true"] #m-confirm .pad{margin-top:8px;padding-top:8px}
+  body[data-tags="true"] #m-confirm .pad-head{margin-bottom:4px}
+  body[data-tags="true"] #m-confirm .pad-display{font-size:clamp(34px,5.4vh,46px)}
+  body[data-tags="true"] #m-confirm .pad-err{margin:0 0 6px}
+  body[data-tags="true"] .pad-keys{gap:8px}
+  body[data-tags="true"] .pad-keys button{min-height:clamp(46px,6.9vh,58px)}
+  body[data-tags="true"] #m-confirm .cta-row{margin-top:4px;padding:6px 0}
+}
+
+/* --- 支払い口：お客様に見せる金額 --- */
+/* 離れたところから読める必要があるので、画面の高さいっぱいまで大きくする。 */
+.collect-amount{font-family:var(--serif);color:var(--brown);margin:0;line-height:1;
+  font-size:clamp(64px,16vh,132px);letter-spacing:.02em}
+/* 受け取りが済んだあとの面。離れた位置から読む時刻なので、金額と同じ大きさにする。 */
+.amount-thanks{font-family:var(--serif);color:var(--brown-soft);margin:14px 0 0;
+  font-size:clamp(24px,4.4vh,44px);letter-spacing:.12em;line-height:1.3}
+.amount-when{font-family:var(--serif);color:var(--brown);margin:26px 0 0;line-height:1.2}
+.amount-when b{display:block;font-size:clamp(68px,17vh,140px);color:var(--brown);
+  letter-spacing:.02em;font-variant-numeric:tabular-nums}
+.amount-when i{font-style:normal;font-size:clamp(22px,4vh,38px);color:var(--gold-text);
+  letter-spacing:.12em;display:block;margin-top:6px}
+.amount-when span{display:block;font-size:clamp(18px,3vh,30px);color:var(--brown-soft);
+  letter-spacing:.1em;margin-top:16px}
+.collect-amount small{font-size:.36em;margin-left:.1em}
+
+/* 縦に伸びても操作ボタンは常に見える位置に残す。 */
+#m-confirm .sheet{max-height:90vh;overflow-y:auto;padding-bottom:0}
+#m-confirm .cta-row{position:sticky;bottom:0;z-index:2;background:var(--cream);
+  margin-top:16px;padding:14px 0;border-top:1px solid var(--gold-line)}
+
+/* --- 直前の注文 --- */
+
+/* --- 注文カード（厨房・受渡） --- */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px}
+.ocard{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:24px;display:flex;flex-direction:column;gap:16px}
+.ocard.is-ready{background:var(--lift);border-color:var(--gold)}
+.ocard-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.ocard-num{font-family:var(--serif);color:var(--brown);font-size:40px;line-height:1;letter-spacing:.03em}
+.ocard-time{font-size:13px;text-align:right;line-height:1.5}
+.ocard-time b{display:block;font-weight:700}
+.t-warn{color:#8A6A1E}
+.t-late{color:var(--red)}
+/* ---------- 支払い口：会計中のカード ----------
+   モーダルで覆うと「いまどれを会計中か」が一覧から見えなくなり、
+   お客様側の端末に何を出しているのかも分からなくなる。一覧の上で選ぶ。 */
+.ocard[data-collecting="true"]{
+  background:var(--lift);border-color:var(--brown);border-width:2px;
+  box-shadow:0 0 0 4px rgba(97,62,40,.10);
+}
+.ocard-state{font-family:var(--serif);color:var(--lift);background:var(--brown);
+  border-radius:999px;padding:3px 16px;font-size:14px;letter-spacing:.14em;white-space:nowrap}
+/* 選ばれたカードだけ金額を大きく出す。お客様側の端末と同じ数字を、
+   スタッフも手元で読めるようにする。 */
+.ocard-amount{font-family:var(--serif);color:var(--brown);margin:2px 0 0;line-height:1;
+  font-size:clamp(44px,9vh,88px);text-align:center;letter-spacing:.02em}
+.ocard-amount small{font-size:.34em;margin-left:.1em}
+.ocard-hint{margin:0;font-size:13px;color:var(--brown-soft);text-align:center;letter-spacing:.06em}
+
+/* 明細は「絵 × 個数」で出す。
+   受渡口と支払い口は、番号を照合して品物を取るだけの場所なので、
+   商品名を読ませる必要がない。絵と数のほうが速く、間違えにくい。 */
+.ocard-lines{list-style:none;margin:0;padding:0;border-top:1px solid var(--gold-line);
+  padding-top:14px;display:flex;flex-wrap:wrap;gap:10px 26px}
+.ocard-lines li{display:flex;align-items:center;gap:10px;padding:2px 0}
+/* 絵の比率は商品ごとに違うので、枠を決めて中に収める（並べたとき高さが揃う）。 */
+.ocard-mark{width:58px;aspect-ratio:4/3;flex:none;display:grid;place-items:center}
+.ocard-mark img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.ocard-x{font-size:17px;color:var(--gold-text);line-height:1}
+.ocard-n{font-family:var(--serif);color:var(--brown);font-weight:500;
+  font-size:38px;line-height:1;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+.ocard-n small{font-family:var(--sans);font-size:13px;color:var(--brown-soft);margin-left:3px;letter-spacing:.04em}
+.ocard-actions{display:flex;gap:10px;margin-top:auto}
+
+.btn{
+  flex:1;min-height:var(--tap);border-radius:var(--r-ctl);cursor:pointer;
+  font-family:var(--serif);font-size:17px;letter-spacing:.1em;
+  border:1px solid var(--brown);background:var(--brown);color:var(--lift);transition:background .2s ease;
+}
+.btn:hover{background:#4E3120}
+.btn-soft{background:transparent;color:var(--brown-soft);border-color:var(--gold)}
+.btn-soft:hover{background:var(--lift)}
+
+.empty{background:var(--card);border:1px dashed var(--gold-line);border-radius:var(--r-card);padding:44px 28px;text-align:center;font-size:16px}
+
+/* --- 焼き数 --- */
+.queue{display:flex;flex-wrap:wrap;gap:34px;align-items:flex-end}
+.queue-cell{display:flex;align-items:baseline;gap:12px}
+.queue-name{font-size:16px;letter-spacing:.08em}
+.queue-n{font-family:var(--serif);color:var(--brown);font-size:52px;line-height:1}
+.queue-n small{font-size:18px;margin-left:3px}
+
+/* --- 売上 --- */
+.figures{display:flex;flex-wrap:wrap;gap:14px 52px;align-items:flex-end;border-top:1px solid var(--gold-line);padding-top:24px}
+.fig-k{font-size:14px;letter-spacing:.1em;display:block}
+.fig-v{font-family:var(--serif);color:var(--brown);font-size:34px;line-height:1.25}
+.fig-v small{font-size:16px;margin-left:2px}
+.fig-wait{margin:0;font-size:15px}
+
+/* --- 表 --- */
+.tags-count{margin:0;font-size:14px;letter-spacing:.06em}
+.tags-grid{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}
+.tag-chip{min-width:44px;min-height:34px;display:grid;place-items:center;padding:0 8px;
+  border-radius:9px;border:1px solid var(--gold-line);background:var(--lift);
+  font-size:14px;color:var(--brown-soft);font-variant-numeric:tabular-nums}
+/* 出ている札＝お客様が持っている札。手元にある札と一目で分ける。 */
+.tag-chip[data-out="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift);font-weight:700}
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:15px;min-width:760px}
+caption{text-align:left;font-size:14px;padding-bottom:12px}
+th{font-family:var(--serif);font-weight:500;color:var(--brown);text-align:left;font-size:15px;letter-spacing:.08em;padding:12px 14px;border-bottom:1px solid var(--gold);white-space:nowrap}
+td{padding:14px;border-bottom:1px solid var(--gold-line);vertical-align:middle}
+tbody tr:hover{background:var(--lift)}
+.num-cell{font-family:var(--serif);color:var(--brown);font-size:19px}
+.tag{display:inline-block;border-radius:var(--r-ctl);padding:5px 15px;font-size:13px;border:1px solid var(--gold-line);background:var(--lift);white-space:nowrap}
+.tag-unpaid{background:#7f1d1d;color:#fff}
+.tag-pending{border-color:#D8B871}
+.tag-ready{background:var(--yellow-soft);border-color:var(--yellow)}
+.tag-completed{border-color:var(--leaf);color:#4E5A2C}
+.tag-cancelled{border-color:#D8A79E;color:var(--red)}
+.row-actions{display:flex;gap:8px;justify-content:flex-end}
+.mini{min-width:var(--tap);min-height:var(--tap);padding:0 18px;white-space:nowrap;border-radius:var(--r-ctl);font-family:var(--serif);font-size:15px;cursor:pointer;background:transparent;border:1px solid var(--gold);color:var(--brown-soft)}
+.mini:hover{background:var(--lift)}
+.mini-stop{border-color:#D8A79E;color:var(--red)}
+.mini-stop:hover{background:#FBF0EE}
+
+/* --- モーダル --- */
+/* ---- 確認の紙が出入りする動き ----
+   display:none → flex で出すと、紙が一瞬で現れる。押した結果が
+   「画面が入れ替わった」としか読めず、受付でいちばん気を遣う場面
+   （内容を確かめて確定する）がいちばん雑に見えていた。
+
+   display を切り替えるとどんな遷移も効かないので、visibility で出し入れする。
+   こうすると出入りの両方が JS 無しで動く（閉じる側は JS で遅らせる必要がない）。
+
+   出るのは 0.26 秒、引くのは 0.16 秒。出るときより引くときを速くするのは、
+   済んだものを見せ続けないため。 */
+.modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:rgba(70,48,30,.42);
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .16s ease, visibility 0s linear .16s}
+.modal.open{opacity:1;visibility:visible;pointer-events:auto;backdrop-filter:blur(3px);
+  transition:opacity .26s ease, visibility 0s}
+
+.sheet{background:var(--cream);border:1px solid var(--gold);border-radius:28px;padding:40px;
+  max-width:760px;width:100%;max-height:90vh;overflow:auto;text-align:center;position:relative;
+  /* 下から起き上がり、わずかに大きくなりながら止まる。 */
+  transform:translateY(22px) scale(.97);opacity:0;
+  transition:transform .16s ease-in, opacity .16s ease-in}
+.modal.open .sheet{transform:none;opacity:1;
+  transition:transform .38s cubic-bezier(.22,1,.36,1), opacity .22s ease-out}
+.sheet h2{font-family:var(--serif);color:var(--brown);font-size:clamp(23px,3vw,31px);letter-spacing:.1em;margin:0 0 8px;font-weight:600}
+.sheet-sub{font-size:15px;margin:0 0 26px}
+/* 紙が止まったころに中身が続く。紙だけ動いて中身が貼り付いていると、
+   「板が出た」で終わってしまう。 */
+.modal.open .sheet > *{animation:sheet-in .46s cubic-bezier(.22,1,.36,1) both}
+.modal.open .sheet > *:nth-child(1){animation-delay:.10s}
+.modal.open .sheet > *:nth-child(2){animation-delay:.15s}
+.modal.open .sheet > *:nth-child(3){animation-delay:.20s}
+.modal.open .sheet > *:nth-child(4){animation-delay:.25s}
+.modal.open .sheet > *:nth-child(5){animation-delay:.30s}
+@keyframes sheet-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+/* 番号札の数字だけは専用の動きを残す。ここが受付のいちばん大事な一瞬で、
+   他と同じ立ち上がり方にすると、ただの 1 行になってしまう。 */
+.modal.open .sheet > .done-num{animation:num-in .62s cubic-bezier(.22,1,.36,1) both;animation-delay:.16s}
+
+.recap{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:26px}
+.recap-items{display:flex;flex-wrap:wrap;gap:22px;justify-content:center}
+.recap-item{display:flex;gap:16px;align-items:center;text-align:left;min-width:230px}
+.recap-item + .recap-item{border-left:1px solid var(--gold-line);padding-left:22px}
+@media (max-width:620px){ .recap-item + .recap-item{border-left:0;padding-left:0;border-top:1px solid var(--gold-line);padding-top:18px} }
+/* 確認画面の絵も、商品ごとの比率差で高さがずれる。商品カードと同じ枠に収める。 */
+.recap-item img{width:82px;height:auto;aspect-ratio:4/3;flex:none;object-fit:contain}
+.recap-name{font-family:var(--serif);color:var(--brown);font-size:19px;letter-spacing:.06em}
+.recap-price{font-family:var(--serif);color:var(--brown);font-size:20px;margin:2px 0 6px}
+.recap-price small{font-size:13px}
+.recap-qty{display:inline-block;background:var(--lift);border-radius:var(--r-ctl);padding:4px 20px;font-size:15px}
+.recap-total{display:flex;align-items:baseline;justify-content:center;gap:24px;border-top:1px solid var(--gold-line);margin-top:22px;padding-top:20px}
+
+/* 完了オーバーレイ */
+.done{background:var(--cream)}
+.done .sheet{max-width:600px;cursor:pointer}
+/* 確認の絵。文字の上に置かず、文言のすぐ下に添える。 */
+.place-ill{display:block;width:min(270px,68%);height:auto;margin:20px auto 6px;
+  color:var(--brown)}
+/* 札の番号。手元の札と見比べる対象なので、画面の他の数字と同じ書体にする。 */
+.place-tag-num{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:.02em}
+/* 取る向きだけが引かれる。止まった絵だと「何をするところか」が伝わらない。 */
+.place-arrow{stroke-dasharray:100;stroke-dashoffset:100;
+  animation:guide-draw 2.4s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){ .place-arrow{animation:none;stroke-dashoffset:0} }
+
+.place-amount{display:inline-block;margin-top:10px;font-size:.92em;color:var(--brown-soft)}
+.done-label{font-size:17px;letter-spacing:.16em;margin:0}
+.done-num{font-family:var(--serif);color:var(--brown);font-size:clamp(84px,17vw,150px);line-height:1;margin:14px 0 6px;letter-spacing:.03em}
+.done-meta{font-size:17px;margin:0 0 20px}
+/* 何時に来ればよいか。番号の次に大きい字にする。ここを小さくすると、
+   お客様は番号だけ覚えて、その場に立って待ってしまう。 */
+.done-pickup{margin:0 0 14px;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(20px,3.4vw,27px);letter-spacing:.08em;line-height:1.45}
+.done-pickup b{font-size:1.8em;letter-spacing:.04em}
+/* 「お越しください」は時刻と別の行にする。1 行に流すと、幅の狭い端末で
+   最後の 1 文字だけが次の行に落ちて読みにくい。 */
+.done-pickup span{display:block;margin-top:4px;font-size:.92em;letter-spacing:.14em}
+.done-pickup[hidden]{display:none}
+/* 確定の前に出す見込み。断る機会をお客様に残すためのもの。 */
+.confirm-pickup{margin:0 0 16px;padding:12px 16px;border-radius:var(--r-card);
+  background:var(--lift);border:1px solid var(--gold-line);
+  font-size:clamp(15px,2vw,18px);letter-spacing:.06em;color:var(--brown-soft);text-align:center}
+.confirm-pickup b{font-family:var(--serif);color:var(--brown);font-size:1.5em;letter-spacing:.04em}
+.confirm-pickup[hidden]{display:none}
+/* 次にすることの案内。番号札の数字の次に目が行く位置に置く。
+   枠で囲って「ここから先の話」だと分かるようにする。 */
+.done-guide{border-top:1px solid var(--gold-line);margin-top:4px;padding-top:22px;
+  display:flex;flex-direction:column;align-items:center;gap:12px}
+.guide-ill{width:min(340px,88%);height:auto;color:var(--brown);opacity:.92}
+/* 矢印だけが引かれていく。止まった絵だと向きを読み落とされる。
+   pathLength を 100 に正規化してあるので、長さを変えても速さは変わらない。
+   軸を引き切ってから矢じりへ移る（1 本の path の中で順に描かれる）。 */
+.guide-arrow{stroke-width:2.8;stroke-dasharray:100;stroke-dashoffset:100;
+  animation:guide-draw 2.6s ease-in-out infinite}
+@keyframes guide-draw{
+  0%  {stroke-dashoffset:100;opacity:0}
+  8%  {stroke-dashoffset:92; opacity:1}
+  52% {stroke-dashoffset:0;  opacity:1}
+  86% {stroke-dashoffset:0;  opacity:1}
+  100%{stroke-dashoffset:0;  opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .guide-arrow{animation:none;stroke-dashoffset:0}
+}
+/* 出し分けは親の data-mode で行う。
+   SVG 要素に hidden を代入しても属性にならず（hidden は HTML 要素の性質）、
+   CSS が反応しない。実際これで札なしのときに札の絵が出たままになっていた。 */
+.done-guide[data-mode="tag"]   #guide-notag{display:none}
+.done-guide[data-mode="notag"] #guide-tag{display:none}
+.done-next{margin:0;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(18px,2.6vw,25px);letter-spacing:.1em;line-height:1.6}
+
+/* 単価設定 */
+.field{text-align:left;margin-bottom:18px}
+.field label{display:block;font-size:15px;margin-bottom:8px;letter-spacing:.06em}
+.field input{
+  width:100%;font-family:var(--serif);font-size:26px;color:var(--brown);
+  padding:14px 18px;border-radius:14px;border:1px solid var(--gold);background:var(--lift);
+}
+.err{display:none;color:var(--red);font-size:15px;text-align:left;margin:0 0 18px}
+.field-group{font-family:var(--serif);color:var(--brown);font-size:17px;letter-spacing:.1em;font-weight:600;
+  margin:22px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--gold-line)}
+.field-group:first-child{margin-top:0}
+.field-hint{margin:6px 0 0;font-size:13px;color:var(--brown-soft)}
+/* 設定は項目が多い。入力欄だけを送り、保存・やめるは常に見える位置に残す。 */
+#m-price .sheet{display:flex;flex-direction:column;max-height:88vh;overflow:hidden}
+#m-price #price-fields{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
+#m-price .err{flex:none;margin:14px 0 0}
+#m-price .cta-row{flex:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--gold-line)}
+.err.show{display:block}
+
+/* ============================================================
+   厨房＝キッチンディスプレイ。
+   受付はお客様に向ける「見せる画面」だが、厨房は離れた位置から
+   何度も見て手を動かす「捌く画面」。用途が違うので意匠も分ける。
+   暗い地・装飾なし・サンセリフ・太い数字で、グレアと視認距離に耐えさせる。
+
+   厨房の画面は壁に立てかけて置く「掲示板」で、誰も触らない。
+   生地と油を扱う手で画面を押させられないため、「用意できた」の打ち返しは
+   受渡口に移した（受渡が品物を受け取った時点で打つ）。
+   その結果この画面には押すところが 1 つも無いので、
+     ・ボタンに取っていた高さを、離れて読む文字寸法に回す
+     ・手でめくれないので、画面に入り切る枚数だけ出す（溢れは枚数で添える）
+   の 2 つが要る。立てかけた板に出す情報の量は、画面の高さが決める。
+   ============================================================ */
+/* 厨房・受渡・支払い口は「置いて立って使う」同じ性格の画面なので、地も揃える。
+   ばらばらだと、担当を交代したときに毎回読み直すことになる。 */
+body[data-tab="kitchen"],
+body[data-tab="ready"],
+body[data-tab="pay"]{background:#141210;color:#F2ECE0}
+body[data-tab="kitchen"] .deco, body[data-tab="ready"] .deco, body[data-tab="pay"] .deco,
+body[data-tab="kitchen"] .masthead,
+body[data-tab="ready"] .masthead,
+body[data-tab="pay"] .masthead{display:none}
+body[data-tab="kitchen"] .wrap,
+body[data-tab="ready"] .wrap,
+body[data-tab="pay"] .wrap{max-width:none;padding-left:16px;padding-right:16px}
+body[data-tab="kitchen"] .nav-toggle,
+body[data-tab="ready"] .nav-toggle,
+body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#C9BFAE}
+
+/* --line は罫線、--edge は「押せるもの」の枠。同じ色にすると面に対して
+   1.24:1 にしかならず、おつりのテンキーや絞り込み札が「文字が浮いているだけ」に
+   見えて、押せること自体に気づけない／端を狙えない。 */
+.kds{--ok:#5BB98C;--warn:#F0B429;--late:#E2574C;--line:#332C24;--edge:#5A5044;--panel:#1F1B16;--dim:#A99E8C;
+  /* 罫線用の --late は暗い地の上で 4:1 前後しか出ない。文字にはこちらを使う。 */
+  --late-text:#FF9C92;
+  display:flex;flex-direction:column;gap:12px;min-height:0}
+
+/* 上部の状況バー */
+.kds-bar{display:flex;align-items:center;gap:26px;flex-wrap:wrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 18px}
+.kds-label{font-size:22px;letter-spacing:.24em;color:var(--dim)}
+.kds-stat{font-size:22px;color:var(--dim)}
+.kds-stat b{font-size:39px;color:#F2ECE0;font-variant-numeric:tabular-nums;margin-right:2px}
+.kds-sound{margin-left:auto;display:inline-flex;align-items:center;gap:10px;
+  min-height:48px;padding:0 12px;cursor:pointer;font-size:22px;color:var(--dim)}
+.kds-sound input{width:28px;height:28px;accent-color:var(--ok)}
+
+/* いま焼くもの。台（＝人）1 つにつき 1 枚。
+   調理者が最初に見るのは「次にどの口へ何を何個載せるか」なので、ここを最大にする。
+   味ごとの残り合計は、その下に 1 行で添えるだけにする（手を動かす内容ではない）。 */
+.kds-plates{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:12px}
+.kds-plate{background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--ok);
+  border-radius:10px;padding:8px 14px;display:grid;
+  grid-template-columns:1fr auto;grid-template-rows:auto auto auto;column-gap:12px;align-items:center}
+.kds-plate[data-idle="true"]{border-left-color:var(--line)}
+.kds-plate-name{grid-column:1/3;grid-row:1;
+  font-size:clamp(14px,2vh,17px);letter-spacing:.14em;color:var(--dim)}
+/* 味は左、個数は右。味の名前は折り返させない（「チョ／コ」になると読めない）。 */
+.kds-plate-flavor{grid-column:1;grid-row:2;display:flex;align-items:center;gap:8px;white-space:nowrap;
+  font-size:clamp(19px,2.9vh,27px);font-weight:700;color:#F2ECE0}
+.kds-plate-flavor img{width:clamp(26px,4vh,38px);height:auto;flex:none}
+.kds-plate-n{grid-column:2;grid-row:2/4;align-self:center;text-align:right;white-space:nowrap;
+  font-size:clamp(40px,7.6vh,68px);line-height:.95;
+  font-weight:800;font-variant-numeric:tabular-nums;color:#F2ECE0}
+.kds-plate-n small{font-size:.3em;margin-left:.1em;font-weight:700;color:var(--dim)}
+.kds-plate-sub{grid-column:1;grid-row:3;font-size:clamp(13px,1.8vh,15px);color:var(--dim);
+  letter-spacing:.02em;line-height:1.4;white-space:nowrap}
+.kds-plate-idle{grid-column:1;grid-row:2;font-size:clamp(19px,2.8vh,25px);font-weight:700;
+  color:var(--dim);opacity:.6}
+
+/* 味ごとの残り。あとどれだけ焼くかと、この先どれだけ売れるか。 */
+.kds-left{margin:0;display:flex;flex-wrap:wrap;gap:6px 28px;
+  font-size:clamp(15px,2.2vh,19px);color:var(--dim);letter-spacing:.04em}
+.kds-left-cell b{color:#F2ECE0;font-weight:700;margin-right:6px}
+.kds-left-cell[data-zero="true"]{color:var(--late-text);font-weight:700}
+
+/* 伝票。溢れた分は app.js 側で枚数に畳んでいる（この画面は誰も送れない）。
+   overflow-y はそれでも入り切らない端末のための逃げ道で、常用はしない。 */
+.kds-grid{flex:1;min-height:0;overflow-y:auto;display:grid;gap:12px;align-content:start;
+  grid-template-columns:repeat(auto-fill,minmax(318px,1fr));padding-bottom:4px}
+/* 厨房だけ列を細くする。2 枚目以降が小さい控えなので、受渡・支払い口の
+   カード（金額とボタンを 1 行で持つ）と同じ幅を取らせる理由がない。
+   ここを共通で細くすると、受渡の「N円 受け取って渡した」が切れる。 */
+#kitchen-list{grid-template-columns:repeat(auto-fill,minmax(232px,1fr))}
+/* 次に用意する 1 枚だけを大きくする。
+   全部が同じ大きさだと、7 枚並んだときに「次どれ」を毎回探すことになる。
+   受付順に左上から並ぶので、探さなくても目が最初にここへ行く形にする。 */
+.kds-ticket[data-next="true"]{grid-column:span 2;grid-row:span 2}
+@media (max-width:620px){ .kds-ticket[data-next="true"]{grid-column:span 1;grid-row:auto} }
+.kds-ticket[data-next="true"] .kds-num{font-size:clamp(60px,11vh,102px)}
+.kds-ticket[data-next="true"] .kds-timer{font-size:clamp(33px,5.4vh,45px)}
+.kds-ticket[data-next="true"] .kds-qty{font-size:clamp(56px,9.4vh,84px)}
+.kds-ticket[data-next="true"] .kds-name{font-size:clamp(24px,3.9vh,32px)}
+.kds-next-tag{font-size:18px;letter-spacing:.2em;color:var(--ok);font-weight:700}
+/* 2 枚目以降は「このあとの控え」。次の 1 枚が 2 段ぶんを占めるので、
+   その脇に 2 段積めるところまで詰める。詰めた結果、1024×768 でも
+   次の 1 枚＋控え 4 枚が同時に出る（送れない画面なので、出ている枚数が全て）。 */
+.kds-ticket:not([data-next="true"]){padding:10px 12px;gap:6px}
+.kds-ticket:not([data-next="true"]) .kds-num{font-size:clamp(30px,4.4vh,40px)}
+.kds-ticket:not([data-next="true"]) .kds-timer{font-size:clamp(19px,2.6vh,23px)}
+/* 控えの明細は横に並べる。縦に積むと 1 枚で 2 段ぶんの高さを食う。 */
+.kds-ticket:not([data-next="true"]) .kds-lines{flex-direction:row;flex-wrap:wrap;
+  column-gap:16px;row-gap:2px;padding-top:6px}
+.kds-ticket:not([data-next="true"]) .kds-qty{font-size:clamp(26px,3.6vh,32px);min-width:0}
+.kds-ticket:not([data-next="true"]) .kds-name{font-size:clamp(16px,2.2vh,19px)}
+.kds-ticket{background:var(--panel);border:1px solid var(--line);border-top:7px solid var(--ok);
+  border-radius:10px;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.kds-ticket[data-age="warn"]{border-top-color:var(--warn)}
+.kds-ticket[data-age="late"]{border-top-color:var(--late);background:#251A17}
+.kds-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.kds-num{font-size:clamp(42px,6.6vh,57px);font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.kds-timer{font-size:clamp(26px,3.9vh,33px);font-weight:700;font-variant-numeric:tabular-nums;color:var(--dim)}
+.kds-ticket[data-age="warn"] .kds-timer{color:var(--warn)}
+.kds-ticket[data-age="late"] .kds-timer{color:var(--late-text)}
+
+/* 個数を商品名より大きく。読むのではなく数えるため */
+.kds-lines{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);padding-top:8px;
+  display:flex;flex-direction:column;gap:4px}
+.kds-lines li{display:flex;align-items:baseline;gap:10px}
+.kds-qty{font-size:clamp(40px,6.2vh,56px);font-weight:800;line-height:1.1;min-width:1.5em;
+  font-variant-numeric:tabular-nums}
+.kds-name{font-size:clamp(22px,3.2vh,27px);color:#D8CFBF}
+/* 受渡口が受け取ったぶん。残り 0 の行は沈める（もう焼かなくてよい）。 */
+.kds-got{font-size:clamp(15px,2.2vh,19px);color:var(--ok);letter-spacing:.04em}
+.kds-lines li[data-done="true"]{opacity:.45}
+.kds-lines li[data-done="true"] .kds-qty{color:var(--dim)}
+/* 押すところが無いので、明細が伝票の残りを使う（下に余白を溜めない）。 */
+.kds-lines{flex:1}
+
+/* 画面に入り切らなかった伝票は出さず、枚数だけを下の 1 行に出す。
+   立てかけた画面では誰も下まで送れないので、隠れた分があること自体を伝える。 */
+.kds-more{flex:none;margin:0;background:var(--panel);border:1px dashed var(--line);
+  border-radius:10px;padding:8px 18px;text-align:center;
+  font-size:clamp(16px,2.2vh,20px);color:var(--dim);letter-spacing:.04em}
+.kds-more b{font-size:1.6em;font-weight:800;color:#F2ECE0;
+  font-variant-numeric:tabular-nums;margin-right:4px}
+/* 下にはみ出した伝票。出したままだと、読めない行が画面の端に残る。 */
+.kds-ticket[data-over="true"]{display:none}
+
+/* 触らない画面であることを、上のバーで先に言う。 */
+.kds-board{font-size:17px;color:var(--dim);letter-spacing:.04em;line-height:1.4}
+
+.kds-empty{margin:0;padding:48px 20px;text-align:center;font-size:28px;color:var(--dim);
+  background:var(--panel);border:1px dashed var(--line);border-radius:10px;line-height:1.9}
+.kds-empty b{display:block;color:#F2ECE0;font-size:34px;margin-bottom:10px}
+
+/* 新しい伝票は下から立ち上げる。焼いている最中に増えても、
+   目を上げたときに「増えた」ことが分かる。 */
+@keyframes kds-in{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+.kds-ticket[data-fresh="true"]{animation:kds-in .34s cubic-bezier(.22,1,.36,1) both}
+@media (prefers-reduced-motion:reduce){ .kds-ticket[data-fresh="true"]{animation:none} }
+
+/* 取り消しつきの通知。押し間違えても厨房の中で直せるようにする。 */
+/* 取り返しが付きにくい側。枠と文字で色を変え、「戻る」から離す。 */
+.cta-danger{border-color:var(--red) !important;color:var(--red) !important}
+.cta-plain{border:0;background:transparent;color:var(--brown-soft);cursor:pointer;
+  min-height:56px;font-size:16px;letter-spacing:.08em;margin-top:20px}
+.cta-plain:hover{color:var(--brown)}
+
+/* 一部だけやめる。受渡口で立ったまま押すので、受渡の操作盤と同じ大きさにする。 */
+.void-rows{display:grid;gap:12px;margin:14px 0}
+.void-row{display:flex;align-items:center;gap:14px;background:var(--card);
+  border:1px solid var(--gold-line);border-radius:var(--r-card);padding:12px 16px}
+.void-row img{width:clamp(40px,6vh,56px);height:auto;flex:none}
+.void-name{flex:1;min-width:0;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(17px,2.4vh,21px);letter-spacing:.06em}
+.void-n{flex:none;min-width:3.6em;text-align:center;font-family:var(--serif);
+  color:var(--brown);font-size:clamp(26px,4vh,38px);line-height:1;font-variant-numeric:tabular-nums}
+.void-n small{font-size:.45em;color:var(--brown-soft);margin-left:.15em}
+.void-step{flex:none;min-height:clamp(48px,6.6vh,62px);min-width:clamp(56px,8vw,78px);
+  border-radius:var(--r-ctl);cursor:pointer;font-size:clamp(20px,2.9vh,26px);
+  background:var(--lift);border:2px solid var(--gold);color:var(--brown);line-height:1}
+.void-step:disabled{opacity:.35;cursor:not-allowed}
+.void-total{margin:4px 0 0;font-family:var(--serif);color:var(--brown);
+  font-size:clamp(20px,3vh,28px);letter-spacing:.04em;text-align:center}
+.void-note{margin:8px 0 0;color:var(--red);font-size:15px;text-align:center;min-height:1.2em}
+/* 遅らせる幅を選ぶ。立ったまま 1 タップで決められるよう横に並べる。 */
+.later-rows{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:16px 0 10px}
+/* 厨房の台。実物のマス数がそのまま並ぶ。 */
+.plate-rows{display:grid;gap:10px;margin:14px 0}
+.plate-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);padding:12px 16px}
+.plate-row[data-use="false"]{opacity:.55}
+.plate-name{font-family:var(--serif);color:var(--brown);font-size:18px;min-width:3.5em}
+.plate-row .field{margin:0}
+.plate-row .field input{width:5.5em}
+.plate-state{margin-left:auto;font-size:15px;letter-spacing:.06em;color:#1F7A4D;font-weight:700}
+.plate-state[data-use="false"]{color:var(--red)}
+.plate-mode{min-height:var(--tap);padding:0 20px;border-radius:var(--r-ctl);cursor:pointer;
+  background:var(--brown);border:1px solid var(--brown);color:var(--lift);
+  font-size:15px;letter-spacing:.06em}
+.plate-mode:hover{background:#4E3120}
+.plate-mode[aria-pressed="true"]{background:#1F7A4D;border-color:#1F7A4D}
+.plate-mode[aria-pressed="true"]:hover{background:#176139}
+.later-step{min-height:clamp(56px,8vh,72px);min-width:clamp(78px,12vw,110px);
+  border-radius:var(--r-ctl);cursor:pointer;font-family:var(--serif);
+  font-size:clamp(20px,3vh,28px);color:var(--brown);background:var(--lift);
+  border:2px solid var(--gold);line-height:1}
+.later-step[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
+/* 後回しにした注文。呼び出しの面と受渡で同じ見え方にする。 */
+.ops-held{color:var(--warn)}
+.ops-hold-head{margin:10px 0 4px;color:var(--dim);font-size:clamp(14px,2vh,17px);text-align:center}
+/* 何度呼んでも来ていない札。普段は出ないので、出たら必ず目に入る強さにする。 */
+.ops-many{margin:0 0 6px;font-size:clamp(16px,2.4vh,20px);letter-spacing:.04em}
+.ops-many b{font-size:1.25em}
+.ops-card[data-many="true"]{border-color:var(--late)}
+.ops-many-n{color:var(--late-text)}
+.ops-card[data-held="true"]{opacity:.72}
+.ops-state[data-kind="held"]{color:var(--warn)}
+
+/* 稽古中の帯。赤（＝送れていない）とは別の色にする。 */
+.test-state{position:sticky;top:0;z-index:62;padding:10px 16px;text-align:center;
+  background:#6E5A33;color:var(--lift);font-size:15px;font-weight:700;letter-spacing:.06em}
+.test-state[hidden]{display:none}
+.session-name[data-test="true"]::after{content:"　テスト中";color:#8A6410}
+
+.toast-undo{margin-left:16px;min-height:48px;padding:0 22px;border-radius:999px;
+  border:1px solid currentColor;background:transparent;color:inherit;
+  font-size:16px;font-weight:700;cursor:pointer}
+
+/* 押せるものの枠だけを罫線より明るくする（面に対して 1.24:1 → 3.2:1）。
+   border の一括指定より後ろで上書きする必要がある。 */
+.ops-sub,.ops-chip,.chg-keys button,.ops-fold summary,.ops-mini,.deal-step[data-step="-1"]{
+  border-color:var(--edge)}
+
+.kds :focus-visible{outline:3px solid #F0B429;outline-offset:3px}
+
+@media (max-width:760px){
+  .kds-plates{grid-auto-flow:row}
+  .kds-sound{margin-left:0}
+}
+
+/* ============================================================
+   業務用の画面（受渡・支払い口）。
+   厨房と同じ地と同じ寸法づかいにする。立ったまま 1m 離れて見て、
+   手袋のままでも押し外さない大きさが要る点が厨房と同じだから。
+
+   出すのは「番号・品物・金額・押すところ」だけ。
+   迷う余地を作らないため、1 枚のカードに主たるボタンは 1 つに絞る。
+   ============================================================ */
+
+/* 未収・警告の見出し。数字の色だけで状態が読めるようにする。 */
+.ops-due b{color:var(--warn)}
+.ops-alert{color:var(--late-text)}
+.ops-alert b{color:var(--late-text)}
+
+/* 番号で絞る入力。会計の列の中で目で探させない。 */
+.ops-find{margin-left:auto;display:inline-flex;align-items:center;gap:8px}
+.ops-find input{min-height:48px;width:clamp(150px,20vw,230px);padding:0 14px;border-radius:8px;
+  background:#141210;border:1px solid var(--line);color:#F2ECE0;font-size:19px;
+  font-variant-numeric:tabular-nums}
+.ops-find input::placeholder{color:var(--dim);opacity:.8}
+.ops-mini{min-height:48px;padding:0 16px;border-radius:8px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim);font-size:16px}
+.ops-mini:hover{color:#F2ECE0;border-color:var(--dim)}
+
+/* カード。厨房の伝票と同じ骨格を使う。 */
+.ops-card{background:var(--panel);border:1px solid var(--line);border-top:7px solid var(--ok);
+  border-radius:10px;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.ops-card[data-age="warn"]{border-top-color:var(--warn)}
+.ops-card[data-age="late"]{border-top-color:var(--late);background:#251A17}
+/* 渡したのに未払い＝取りはぐれ。ここだけは並びの先頭で赤く出す。 */
+.ops-card[data-lost="true"]{border-top-color:var(--late);background:#251A17}
+/* 会計中の 1 枚。お客様の画面に出ているのがどれかを、一覧の上で示す。 */
+.ops-card[data-busy="true"]{border-color:var(--warn);box-shadow:0 0 0 2px var(--warn) inset}
+
+.ops-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.ops-num{font-size:clamp(38px,5.8vh,52px);font-weight:800;line-height:1;
+  font-variant-numeric:tabular-nums;color:#F2ECE0}
+.ops-timer{font-size:clamp(22px,3.4vh,29px);font-weight:700;color:var(--dim);
+  font-variant-numeric:tabular-nums}
+.ops-card[data-age="warn"] .ops-timer{color:var(--warn)}
+.ops-card[data-age="late"] .ops-timer{color:var(--late-text)}
+/* 「お渡し済み・未払い」「会計中」のような、状態そのものを示す札。 */
+.ops-state{font-size:clamp(16px,2.4vh,20px);font-weight:700;letter-spacing:.08em;
+  color:var(--late-text)}
+.ops-state[data-kind="busy"]{color:var(--warn)}
+
+/* 明細は「絵 × 個数」。番号を照合して品物を取る場所なので、
+   商品名を読むより絵と数を見るほうが速い。個数は名前より大きくする。 */
+.ops-lines{list-style:none;margin:0;padding:8px 0 0;border-top:1px solid var(--line);
+  display:flex;flex-wrap:wrap;gap:6px 24px}
+.ops-lines li{display:flex;align-items:center;gap:8px}
+.ops-mark{width:clamp(46px,7vh,62px);aspect-ratio:4/3;flex:none;display:grid;place-items:center}
+.ops-mark img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.ops-x{font-size:clamp(15px,2.2vh,19px);color:var(--dim);line-height:1}
+.ops-qty{font-size:clamp(28px,4.2vh,38px);font-weight:800;line-height:1.1;
+  font-variant-numeric:tabular-nums;color:#F2ECE0}
+.ops-name{font-size:clamp(14px,2vh,17px);color:var(--dim);letter-spacing:.04em}
+
+/* 1 カップずつ受け取る行。注文は普通それ自体が分割して焼き上がるので、
+   「いくつ入ったか」を数えられる形にする。
+   ＋は親指で押す場所なので、他のどのボタンよりも先に指が届く右端に置く。 */
+.ops-fill{display:flex;flex-direction:column;gap:8px;padding-top:8px;
+  border-top:1px solid var(--line)}
+.ops-fill-row{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:10px}
+.ops-fill-row[data-done="true"]{opacity:.55}
+.ops-fill-n{font-size:clamp(20px,3vh,26px);color:var(--dim);font-variant-numeric:tabular-nums}
+.ops-fill-n b{font-size:1.5em;color:#F2ECE0}
+.ops-fill-row[data-done="true"] .ops-fill-n b{color:var(--ok)}
+.ops-fill-minus,.ops-fill-plus{min-height:52px;border-radius:8px;cursor:pointer;
+  font-size:clamp(17px,2.5vh,21px);font-weight:700;font-variant-numeric:tabular-nums}
+.ops-fill-minus{width:56px;background:transparent;border:1px solid var(--line);color:var(--dim)}
+.ops-fill-plus{width:92px;background:#2E7D55;border:1px solid #3E9D6C;color:#fff}
+.ops-fill-plus:disabled,.ops-fill-minus:disabled{opacity:.3;cursor:default}
+.ops-fill-plus:active:not(:disabled){transform:scale(.97)}
+
+/* 約束した受け取り時刻。渡す順を決めるのはこれなので、番号のすぐ下に出す。
+   過ぎたら赤。お客様は時刻どおりに来るので、ここが分かっていないと
+   「お待たせしました」と言う相手すら分からない。 */
+.ops-when{font-size:clamp(15px,2.2vh,19px);color:var(--warn);letter-spacing:.06em;font-weight:700}
+.ops-when[data-late="true"]{color:var(--late-text)}
+.ops-card[data-late="true"]{border-top-color:var(--late);background:#251A17}
+.ops-state[data-late="true"]{color:var(--late-text)}
+
+/* 受け取る金額。支払い口で最初に目が行くべき数字なので、番号より大きくする。 */
+.ops-amount{margin:0;text-align:right;font-size:clamp(44px,7vh,66px);font-weight:800;
+  line-height:1;font-variant-numeric:tabular-nums;color:var(--warn)}
+.ops-amount small{font-size:.36em;margin-left:.12em;font-weight:700}
+.ops-amount[data-paid="true"]{color:var(--dim)}
+.ops-hint{margin:0;text-align:center;font-size:clamp(13px,1.9vh,16px);color:var(--dim);
+  letter-spacing:.04em;line-height:1.5}
+
+/* 押すところ。厨房の打ち返しと同じ寸法・同じ色にする。
+   赤は「中止」に見えるので、急ぎでもボタンの色は変えない（枠と時計で伝える）。 */
+.ops-do{margin-top:auto;width:100%;min-height:clamp(62px,8.8vh,76px);border-radius:8px;cursor:pointer;
+  background:#2E7D55;border:1px solid #3E9D6C;color:#fff;font-size:clamp(21px,3.2vh,27px);
+  font-weight:700;letter-spacing:.06em}
+.ops-do{white-space:nowrap;padding:0 10px}
+.ops-do:hover{background:#369564}
+.ops-do:active{transform:scale(.98)}
+/* 代金を受け取る操作は、渡す操作と色を変える。同じ色だと押し分けが効かない。 */
+.ops-do[data-kind="cash"]{background:#8A6410;border-color:#B5881E;
+  font-size:clamp(17px,2.5vh,22px)}
+.ops-do[data-kind="cash"]:hover{background:#9C7213}
+/* 逃げ道（そのまま渡す・戻る）は主たるボタンより明らかに弱くする。 */
+.ops-sub{width:100%;min-height:52px;border-radius:8px;cursor:pointer;background:transparent;
+  border:1px solid var(--line);color:var(--dim);font-size:clamp(15px,2.2vh,18px)}
+.ops-sub{white-space:nowrap;padding:0 10px}
+.ops-sub:hover{color:#F2ECE0;border-color:var(--dim)}
+.ops-row{display:flex;gap:10px}
+.ops-row .ops-sub{width:auto;flex:1}
+
+/* ============================================================
+   横に送って面を替える（受渡・支払い口）
+
+   受渡は「お渡し」と「呼び出しの状況」、支払い口は「未収」と「おつり」を
+   持つ。1 画面に全部出すと字が小さくなり、立って 1m 離れて使えなくなる。
+   面を分けて、指で送る。送れることが分かるように下に札を出し、
+   札を押しても移れるようにする（スワイプだけだと誰も気づかない）。
+   ============================================================ */
+.deck{flex:1;min-height:0;display:flex;overflow-x:auto;overflow-y:hidden;
+  scroll-snap-type:x mandatory;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;
+  overscroll-behavior-x:contain}
+.deck::-webkit-scrollbar{display:none}
+.deck-page{flex:0 0 100%;min-width:100%;scroll-snap-align:start;scroll-snap-stop:always;
+  display:flex;flex-direction:column;gap:12px;min-height:0}
+.deck-head{margin:0;font-size:clamp(17px,2.4vh,21px);letter-spacing:.1em;color:var(--dim)}
+/* --- 受渡 2 面目：届いた分を配る --- */
+/* 立ったまま、品物を持った手で押す。数は 1m 離れても読める大きさにする。 */
+.deal-rows{flex:none;display:grid;gap:12px}
+.deal-row{display:flex;align-items:center;gap:clamp(10px,2vw,20px);
+  background:var(--face);border:1px solid var(--line);border-radius:var(--r-card);
+  padding:clamp(10px,1.8vh,16px) clamp(12px,2vw,20px)}
+.deal-mark{flex:none;width:clamp(44px,6vh,62px)}
+.deal-mark img{width:100%;height:auto;display:block}
+.deal-name{flex:1;min-width:0;font-family:var(--serif);color:var(--fg);
+  font-size:clamp(20px,3vh,28px);letter-spacing:.06em;line-height:1.2}
+.deal-need{display:block;font-family:var(--sans);color:var(--dim);
+  font-size:clamp(14px,2vh,18px);letter-spacing:.04em;margin-top:2px}
+.deal-n{flex:none;min-width:2.2em;text-align:center;font-family:var(--serif);color:var(--fg);
+  font-size:clamp(34px,5.4vh,56px);line-height:1;font-variant-numeric:tabular-nums}
+.deal-n[data-zero="true"]{color:var(--dim)}
+.deal-step{flex:none;min-height:clamp(52px,7.4vh,68px);min-width:clamp(62px,9vw,88px);
+  border-radius:var(--r-ctl);cursor:pointer;font-size:clamp(22px,3.2vh,30px);
+  background:transparent;border:2px solid #5A5044;color:var(--fg);line-height:1}
+.deal-step[data-step="1"],.deal-step5{background:#2E7D55;border-color:#3E9D6C;color:#fff}
+.deal-step5{font-size:clamp(17px,2.4vh,22px)}
+.deal-note{margin:0;color:var(--warn);font-size:clamp(14px,2vh,18px);letter-spacing:.04em;
+  border:1px solid var(--warn);border-radius:var(--r-card);padding:8px 14px}
+.deal-note[hidden]{display:none}
+/* 返金の面。普段は空なので、1 件でも出たら目に入る強さにする。 */
+.refund-sum{flex:none;margin:0;font-family:var(--serif);color:var(--warn);
+  font-size:clamp(22px,3.4vh,32px);letter-spacing:.06em;line-height:1.2}
+.refund-sum[hidden]{display:none}
+.ops-card[data-refund="true"]{border-color:var(--warn)}
+/* 呼び出し表示に入り切らない札。お客様は触れないので自分で送れない。 */
+#call-more{color:var(--red);font-weight:700;margin-right:1em}
+#call-more[hidden]{display:none}
+.deal-step:disabled{opacity:.3;cursor:not-allowed}
+/* 配り先の束。押す前に「どの番号がそろうか」をそのまま出す。 */
+.deal-plan{flex:1;min-height:0;overflow-y:auto;display:grid;gap:8px;align-content:start}
+.deal-bundle{display:flex;align-items:center;gap:14px;padding:10px 16px;
+  background:var(--face);border:1px solid var(--line);border-radius:var(--r-card)}
+.deal-bundle[data-done="true"]{border-color:#3E9D6C}
+.deal-bnum{font-family:var(--serif);color:var(--fg);font-size:clamp(24px,3.6vh,36px);
+  line-height:1;font-variant-numeric:tabular-nums;flex:none}
+.deal-badd{flex:1;min-width:0;color:var(--dim);font-size:clamp(15px,2.2vh,19px);letter-spacing:.04em}
+.deal-bdone{flex:none;color:var(--ok);font-size:clamp(15px,2.2vh,19px);letter-spacing:.06em}
+.deal-left{color:var(--warn);font-size:clamp(15px,2.2vh,19px);letter-spacing:.04em;
+  text-align:center;margin:0}
+.deal-go{flex:none;width:100%}
+/* 配り先が無いときは押せない。緑のまま残すと、押せると思って何度も押す。 */
+.deal-go:disabled{background:transparent;border:2px solid var(--line);color:var(--dim);
+  cursor:not-allowed}
+
+.deck-dots{flex:none;display:flex;gap:8px;justify-content:center}
+.deck-dots button{min-height:46px;padding:0 24px;border-radius:999px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim);
+  font-size:clamp(15px,2.1vh,18px);letter-spacing:.08em}
+.deck-dots button[aria-current="page"]{background:#2F2922;border-color:var(--dim);
+  color:#F2ECE0;font-weight:700}
+
+/* 呼び出し中の札は、お客様側の表示と同じく目立たせる。 */
+.ops-card[data-call="true"]{border-top-color:var(--warn);box-shadow:0 0 0 2px var(--warn) inset}
+
+/* ---- おつり。暗算は行列のなかでいちばん間違える ---- */
+.chg{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:10px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.chg-row{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
+.chg-row span{font-size:clamp(15px,2.2vh,19px);color:var(--dim);letter-spacing:.08em}
+.chg-row b{font-size:clamp(30px,5vh,46px);font-weight:800;font-variant-numeric:tabular-nums;
+  color:#F2ECE0;line-height:1.1}
+.chg-row[data-out="true"]{border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
+.chg-row[data-out="true"] b{font-size:clamp(40px,8vh,78px);color:var(--ok)}
+.chg-row[data-out="true"][data-short="true"] b{color:var(--late-text)}
+.chg-hint{margin:0;font-size:clamp(13px,1.9vh,16px);color:var(--dim);line-height:1.6}
+.chg-quick{display:flex;gap:8px;flex-wrap:wrap}
+.chg-quick button{flex:1 1 0;min-width:84px;min-height:52px;border-radius:8px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:#F2ECE0;
+  font-size:clamp(15px,2.2vh,19px);font-variant-numeric:tabular-nums}
+/* キーは残りの高さを 4 段で割る。段の高さを決め打ちにすると、
+   低い画面で最後の段と「クリア」が重なる（実際に重なっていた）。 */
+.chg-keys{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);
+  grid-template-rows:repeat(4,minmax(0,1fr));gap:8px}
+.chg-keys button{min-height:46px;border-radius:8px;cursor:pointer;
+  background:#141210;border:1px solid var(--line);color:#F2ECE0;
+  font-size:clamp(20px,3.2vh,28px);font-weight:700;font-variant-numeric:tabular-nums}
+.chg-quick button:active,.chg-keys button:active{transform:scale(.97)}
+#chg-clear{flex:none;min-height:50px}
+
+/* 受渡の絞り込み。受渡は「いま渡す 1 件」を探す画面であると同時に、
+   いま店に何件あるかを見る画面でもある。既定は「すべて」で、
+   お渡し待ち → ご用意中 → お渡し済み の順に積む（押す対象が必ず上に来る）。 */
+.ops-chips{display:flex;gap:8px;flex-wrap:wrap}
+.ops-chip{min-height:48px;padding:0 20px;border-radius:999px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--dim);
+  font-size:clamp(16px,2.2vh,19px);letter-spacing:.06em}
+.ops-chip:hover{color:#F2ECE0;border-color:var(--dim)}
+.ops-chip[aria-pressed="true"]{background:#2F2922;border-color:var(--dim);color:#F2ECE0;font-weight:700}
+.ops-chip b{font-variant-numeric:tabular-nums;margin-left:6px;color:inherit}
+
+/* まだ厨房が焼いている注文。厨房は手が汚れていて画面を押せないので、
+   「用意できた」はこの画面で打つ＝ご用意中も押せるカードになった。
+   以前は見るだけだったので opacity で沈めていたが、押すカードを沈めると
+   手が止まる。枠の色と「ご用意中」の札だけで、お渡し待ちと区別する。 */
+.ops-card[data-state="pending"]{border-top-color:var(--dim)}
+/* 金額はまだ受け取る場面ではない（渡すときに受け取る）ので、ここだけ沈める。 */
+.ops-card[data-state="pending"] .ops-amount{color:var(--dim)}
+/* 渡し終えた注文。記録として残すだけなので、いちばん沈める。 */
+.ops-card[data-state="completed"]{border-top-color:var(--line);opacity:.62}
+.ops-card[data-state="completed"]:hover{opacity:1}
+.ops-state[data-kind="prep"]{color:var(--dim)}
+.ops-state[data-kind="done"]{color:var(--ok)}
+/* 渡し終えたカードは押すところが弱い 1 つだけなので、下に余白を溜めない。 */
+.ops-card[data-state="completed"] .ops-row{margin-top:auto}
+
+/* 支払い済みの控え。普段は畳んでおく。 */
+.ops-fold{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0 16px}
+.ops-fold summary{min-height:56px;display:flex;align-items:center;cursor:pointer;
+  font-size:18px;color:var(--dim);letter-spacing:.04em}
+.ops-fold[open] summary{border-bottom:1px solid var(--line)}
+/* 控えは「どれを戻すか」を選ぶだけの並び。1 行に収まる幅を確保しておかないと、
+   番号・金額・ボタンが三つとも折り返して読めなくなる。 */
+.ops-paid-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:10px;padding:14px 0 72px}
+.ops-paid-row{background:#141210;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+  display:flex;align-items:center;gap:12px}
+.ops-paid-num{font-size:22px;font-weight:700;color:#F2ECE0;font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.ops-paid-yen{font-size:16px;color:var(--dim);font-variant-numeric:tabular-nums;
+  white-space:nowrap;margin-right:auto}
+.ops-paid-row .ops-mini{white-space:nowrap;flex:none}
+.ops-note{margin:0;padding:14px 0;color:var(--dim);font-size:16px}
+
+@media (max-width:760px){
+  .ops-find{margin-left:0;width:100%}
+  .ops-find input{flex:1;width:auto}
+  /* 幅が足りない端末では、はみ出させるより折り返させる。
+     ボタンの文言は金額を含むので、桁が増えると 1 行に収まらないことがある。 */
+  .ops-do, .ops-sub{white-space:normal;line-height:1.35;padding:8px 10px}
+}
+
+/* ============================================================
+   呼び出し表示。お客様側に向けて離れた位置から読ませる画面。
+   受付と同じ意匠のまま、番号だけを極端に大きくする。
+   ============================================================ */
+body[data-tab="call"] .masthead{display:none}
+/* 厨房でも表札を畳む。768px の画面で 141px を装飾に使う余裕は無く、
+   その分が伝票の文字寸法に回る。調理者はブランド名を見に来ていない。 */
+body[data-tab="kitchen"] .masthead{display:none}
+body[data-tab="amount"] .masthead{display:none}
+.call{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;gap:clamp(10px,2vh,22px);min-height:0;flex:1}
+.call-brand{font-family:var(--serif);color:var(--gold-text);letter-spacing:.34em;
+  font-size:clamp(13px,1.9vh,18px);margin:0;text-indent:.34em}
+.call-head{font-family:var(--serif);color:var(--brown);font-weight:600;letter-spacing:.2em;
+  font-size:clamp(22px,4vh,38px);margin:0;text-indent:.2em}
+.call-head::after{content:"";display:block;width:80px;height:1px;background:var(--gold);margin:14px auto 0}
+
+.call-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(12px,2vw,26px);
+  max-width:100%;overflow-y:auto;min-height:0}
+.call-num{
+  font-family:var(--serif);font-weight:600;line-height:1;letter-spacing:.02em;
+  font-size:clamp(46px,11vh,104px);
+  color:var(--brown);background:var(--card);border:2px solid var(--gold-line);
+  border-radius:20px;padding:clamp(10px,1.8vh,22px) clamp(18px,2.4vw,34px);
+  transition:background .25s ease,color .25s ease,border-color .25s ease;
+}
+/* 呼ばれた番号だけ反転させる。動きではなく明暗で目立たせる（遠目でも効く）。 */
+.call-num[data-on="true"]{background:var(--brown);color:var(--lift);border-color:var(--brown)}
+
+.call-empty{font-size:clamp(15px,2.2vh,20px);color:var(--brown-soft);margin:0;
+  padding:clamp(24px,5vh,56px) 20px}
+.call-foot{font-size:clamp(13px,1.8vh,17px);color:var(--brown-soft);margin:0;letter-spacing:.08em}
+.call-foot b{font-family:var(--serif);color:var(--brown);font-size:1.5em;margin-right:2px}
+
+/* --- 音を起こすボタン --- */
+/* iOS は操作を経ていない AudioContext を鳴らさない。厨房・呼び出し・金額表示は
+   誰も触らない端末なので、放っておくと「注文が来ても鳴らない」まま気づけない。
+   音が止まっている間だけ出し、押せばその操作そのものが解錠になる。
+   ナビは右下にいるので左下に置く。 */
+.audio-wake{
+  position:fixed;z-index:95;
+  left:calc(14px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));
+  min-height:var(--tap);padding:0 20px;border-radius:var(--r-ctl);cursor:pointer;
+  background:var(--lift);border:1px solid var(--gold);color:var(--brown);
+  font-size:14px;letter-spacing:.06em;
+  display:flex;align-items:center;gap:10px;
+  box-shadow:0 6px 20px rgba(122,94,56,.16);
+}
+.audio-wake:hover{background:var(--card)}
+.audio-wake svg{width:20px;height:20px;flex:none}
+
+/* --- 接続状態の警告帯 --- */
+.net-state{
+  position:sticky;top:0;z-index:90;
+  background:var(--red);color:var(--lift);
+  padding:10px 20px;text-align:center;font-size:15px;font-weight:700;
+  letter-spacing:.04em;
+}
+/* 送信中は異常ではない。赤（中止・取消の色）は、繋がっていないときのために
+   取っておく。ここを赤で出していたせいで、上端の赤い帯が見慣れた風景になり、
+   本当に送れていないときの赤と区別が付かなくなっていた。 */
+.net-state[data-kind="busy"]{background:var(--brown)}
+
+/* --- トースト --- */
+.toast{
+  position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);z-index:70;
+  max-width:min(520px,92vw);padding:18px 26px;border-radius:var(--r-ctl);
+  background:var(--brown);color:var(--lift);font-size:16px;text-align:center;
+  /* display:none だと role="alert" が読み上げに乗らない端末がある。
+     要素は残したまま見えなくする。 */
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .22s ease,transform .22s cubic-bezier(.22,1,.36,1),visibility .22s;
+}
+/* 出したら押せるようにする。pointer-events を戻さないと、中の「戻す」が
+   見えているのに押せない（押し間違いの唯一の取り消し口がここにある）。 */
+.toast.show{opacity:1;visibility:visible;pointer-events:auto;
+  transform:translateX(-50%) translateY(0)}
+.toast[data-kind="error"]{background:var(--red)}
+
+/* --- アクセシビリティ --- */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+:where(button,input,[href],summary):focus-visible{outline:3px solid var(--brown);outline-offset:3px;border-radius:8px}
+.cta:focus-visible,.tab:focus-visible,.btn:focus-visible,.mini:focus-visible,.step:focus-visible,.cta-ghost:focus-visible{outline:3px solid var(--brown);outline-offset:4px}
+.hidden{display:none !important}
+[hidden]{display:none !important}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+}
+/* 幅が足りないときは、溢れさせるのではなく寸法を落とす。
+   タップ寸法は iOS の 44pt を下回らせない。 */
+@media (max-width:430px){
+  .stepper{gap:10px;padding:8px 10px}
+  .step{width:48px;height:48px}
+  .step svg{width:21px;height:21px}
+  .qty{font-size:27px;width:2.9em}
+  .qty small{font-size:14px}
+}
+@media (max-width:620px){
+  .wrap{padding:0 16px 48px}
+  .panel,.item{padding:20px}
+  /* 絵が横長になったので、縦に積んだときは中央に揃える。
+     左寄せのままだと、幅いっぱいの文字の上に小さな絵が寄って落ち着かない。 */
+  .item-head{flex-direction:column;align-items:center;text-align:center}
+  .item-photo{width:min(100%,186px)}
+  .item-name::after{margin-left:auto;margin-right:auto}
+  .item-stock{text-align:center}
+  .cta{width:100%;justify-content:center;padding:0 24px}
+  .cta-ghost{width:100%;justify-content:center}
+  .recap-item{min-width:0;width:100%}
+}
+/* ============================================================
+   iPad 縦向き（受付はこちらを主に使う）
+   受付はお客様に向ける画面なので、巻かせずに 1 画面へ収める。
+   巻かせると「注文を確定する」が画面の外に出て、確定できない人が出る。
+   カードを横 1 行にして説明を落としたぶん、縦なら余裕を持って収まる。
+   ============================================================ */
+@media (orientation:portrait) and (min-width:700px){
+  body{overflow:hidden}
+  .wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+    padding-bottom:calc(env(safe-area-inset-bottom) + clamp(12px,2vh,26px))}
+  main{flex:1;min-height:0;display:flex;flex-direction:column}
+  /* 表札は飾り。詰めたぶんがそのままカードの余裕になる。 */
+  .masthead{padding:clamp(10px,2.2vh,30px) 0 clamp(6px,1.4vh,18px)}
+  .brand{font-size:clamp(26px,4.4vh,46px)}
+  .romaji{font-size:clamp(11px,1.3vh,15px)}
+
+  #view-order{flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(10px,1.8vh,22px)}
+  .order-top,.total-row,.tally,.cta-row{flex:none}
+  /* 余った高さはカードに渡す。足りないときだけ、ここが最後の砦として巻く。 */
+  .menu{flex:0 1 auto;min-height:0;overflow-y:auto}
+}
+
+/* ============================================================
+   iPad 横向き（および低い横長画面）向けの収まり調整
+   受付はお客様に向ける画面なので、スクロールせず 1 画面に収める。
+   高さを vh 基準の clamp で可変にし、768〜1024 のどの高さでも破綻させない。
+   ============================================================ */
+@media (orientation:landscape) and (min-width:700px) and (max-height:1120px){
+  body{overflow:hidden}
+  /* 警告帯は浮かせる。流れに載せると 100dvh の 1 画面組みが崩れるため。 */
+  .net-state{position:fixed;left:0;right:0;top:0;padding:8px 20px;font-size:14px;z-index:95}
+  /* 警告帯が出ている間は表札の装飾行を畳み、帯のぶんの高さを相殺する */
+  body:has(.net-state:not([hidden])) .wrap{padding-top:38px}
+  /* 畳むのはこの 2 行だけ。ここで宣言を閉じずに次の .wrap と繋げていたため、
+     帯が出ている間だけ .romaji と .rule にも 100dvh と flex が当たり、
+     表札が画面 1 枚ぶんに伸びていた。 */
+  body:has(.net-state:not([hidden])) .romaji,
+  body:has(.net-state:not([hidden])) .rule{display:none}
+  .wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+    padding-bottom:calc(env(safe-area-inset-bottom) + clamp(10px,1.7vh,22px))}
+  main{flex:1;min-height:0;display:flex;flex-direction:column}
+
+  /* 表札を高さに追従させる */
+  /* 表札は飾り。ここを詰めたぶんがそのままカードの余裕になる。
+     読めなくなる手前まで落とす。 */
+  .masthead{padding:clamp(4px,1.3vh,20px) 0 clamp(3px,.8vh,12px)}
+  .brand{font-size:clamp(22px,4vh,42px)}
+  .romaji{font-size:clamp(10px,1.15vh,14px);margin-top:clamp(2px,.5vh,8px)}
+  .rule{margin-top:clamp(4px,.8vh,12px)}
+  .rule img{width:clamp(20px,2.8vh,36px)}
+
+  /* ---- 受付：1 画面に収める ---- */
+  /* 余った高さは全部メニュー（＝カード）に渡す。justify-content:center で
+     上下に散らすと、カードは中身ちょうどのままで窮屈に見え、余白だけが
+     画面の端に溜まる。カード以外は縮ませない（縮むと中身がはみ出す）。 */
+  #view-order{flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(8px,1.5vh,20px)}
+  .order-top,.total-row,.tally,.cta-row{flex:none}
+  /* カードに min-height:0 を置くと、グリッド行の最小寸法が 0 になる。高さが
+     足りないとき、行はカードの中身を無視してどこまでも縮み、カードの箱だけが
+     潰れる。中身（特にステッパー）はこれ以上縮めないので、枠の外へはみ出す。
+     実機 iPad では、下枠がステッパーの真ん中を横切る形で出ていた。
+     カードは中身より小さくしない。足りないぶんはメニュー側を送る。 */
+  /* overflow-y は最後の砦。ここが無いと、収まらないときに確定ボタンが
+     .wrap{overflow:hidden} に切り落とされて注文が取れなくなる。
+     上で高さを空けてあるので、通常は働かない（＝スクロールしない）。 */
+  .menu{gap:clamp(12px,1.6vw,24px);flex:1 1 auto;min-height:0;overflow-y:auto}
+  .item{padding:clamp(12px,2.1vh,26px);gap:clamp(8px,1.5vh,20px);min-height:auto}
+  .item-head{gap:clamp(12px,1.6vw,22px)}
+  /* 正方形なので、幅を決めると高さも決まる。1 画面の高さ配分に直結する。 */
+  .item-photo{width:clamp(76px,14vh,164px)}
+  .item-name{font-size:clamp(22px,4.4vh,40px)}
+  .item-name[data-len="2"]{font-size:clamp(26px,5.3vh,48px)}
+  .item-name::after{margin:clamp(6px,1vh,12px) 0 clamp(7px,1.1vh,14px)}
+  .stepper{padding:clamp(6px,1vh,10px) clamp(10px,1.2vw,14px)}
+  .step{width:clamp(44px,7.8vh,60px);height:clamp(44px,7.8vh,60px)}
+  .qty{font-size:clamp(20px,3.8vh,36px)}
+  .total-row{margin:0;gap:clamp(12px,1.6vw,22px)}
+  .total-yen{font-size:clamp(24px,5vh,52px)}
+  /* 数え札は後から足した行。1 画面の高さ配分に入っていなかったので、
+     ここで上限を抑えないと確定ボタンが画面外へ押し出される。 */
+  .tally{margin-top:clamp(2px,.4vh,8px);min-height:clamp(14px,2.2vh,28px);gap:clamp(5px,.8vw,10px)}
+  .tally-mark{width:clamp(20px,3.2vh,38px)}
+  .cta-row{margin:0}
+  .cta{min-height:clamp(50px,7.8vh,70px);font-size:clamp(16px,2.7vh,25px);padding:0 clamp(28px,4vw,54px)}
+  .cta-ghost{min-height:clamp(50px,7.6vh,68px);font-size:clamp(15px,2.3vh,19px)}
+
+  /* 直前の注文は細い帯にして高さを食わない */
+
+  /* ---- 厨房・受渡・支払い口：上のバーは固定、一覧だけスクロール ----
+     この 3 つは立って使う画面なので、件数と最長待ちは常に見えている必要がある。
+     画面ごと送ると、下を見ている間に上の数字が消える。 */
+  #view-kitchen, #view-ready, #view-pay{
+    flex:1;min-height:0;display:flex;flex-direction:column;gap:clamp(8px,1.4vh,18px)}
+  #view-kitchen .sec-title{margin:0}
+  #kitchen-list, #ready-list, #pay-list, #recall-list{overflow-y:auto;min-height:0;padding-bottom:6px}
+  /* 面の中も同じ組み方にする（上の札は固定、一覧だけ送る）。 */
+  .deck-page{gap:clamp(8px,1.4vh,18px)}
+  /* 支払い済みの控えは畳んである。一覧の送りに巻き込まない。 */
+  #view-pay .ops-fold{flex:none}
+  /* 記録と管理は座って読む画面なので、こちらは画面ごと送ってよい。
+     管理をここに入れ忘れていたため、.wrap{overflow:hidden} に切り落とされ、
+     iPad 横向きでは「省エネ」より下の面に一切手が届かなかった。
+     最後の面が右下の切り替えボタンに隠れないよう、下に逃げを取る。 */
+  #view-records,#view-control{flex:1;min-height:0;overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    padding-bottom:calc(var(--tap) + 24px)}
+  #view-records .sec-title{margin:0 0 14px}
+  .panel{padding:clamp(14px,2.2vh,30px)}
+  .queue-n{font-size:clamp(30px,5.6vh,52px)}
+
+  /* ---- 厨房は「立てかけて見るだけの板」なので、高さの配分を決め直す ----
+     1024×768 の横向きでは、バーと焼き待ちの帯を引いて伝票に残るのは 300px 前後。
+     誰も送れない以上、入り切らない伝票は出ないのと同じなので、
+     焼き待ちの数字を少し抑えて、その分を伝票の段に回す。 */
+  body[data-tab="kitchen"] .kds-plate-n{font-size:clamp(40px,7.4vh,68px)}
+  body[data-tab="kitchen"] .kds-plate{padding:8px 14px}
+  /* 伝票は「いま焼くもの」の下に来る控え。次の 1 枚は横 2 列ぶんのままで、
+     段は 1 つに収める（2 段取ると、この高さでは 1 枚しか出せなくなる）。 */
+  .kds-ticket[data-next="true"]{grid-column:span 2;grid-row:auto}
+}
+
+/* 画面が特に低いとき（Safari のツールバーが出た 1024x768 など）は説明文を省いて確実に収める */
+@media (orientation:landscape) and (min-width:700px) and (max-height:730px){
+  body[data-tab="order"] .romaji,
+  /* ここまで低いと数え札を置く余地がない。合計の数字だけで伝える。
+     確定ボタンが画面外に出るほうが、手応えを失うより悪い。 */
+  .tally{display:none}
+}
+
+/* ============================================================
+   受付の手応え
+
+   祭りの喧騒のなかで、押したことが必ず伝わることだけを目的にする。
+   動きは「押した／数えた／確定した」の 3 つだけに絞り、
+   prefers-reduced-motion のときは結果だけを即座に出す。
+   ============================================================ */
+
+/* --- 数え札。1つ＝ベビーカステラ 1カップ（6個入り）。
+       お店の水彩をそのまま数える単位にする。数字を読まなくても
+       「いくつ頼んだか」が物の数で分かる。 --- */
+.tally{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;
+  gap:10px;margin-top:14px;min-height:clamp(30px,5vh,52px)}
+.tally-group{display:flex;flex-wrap:wrap;align-items:center;gap:2px}
+.tally-mark{width:clamp(28px,4.4vh,46px);height:auto;display:block;transform-origin:50% 60%}
+/* 置かれるように降りて止める。到着なので減速のみ。
+   行き過ぎ（overshoot）や潰れは漫画的になり、水彩の品を落とす。 */
+.tally-mark[data-in="true"]{animation:mark-in var(--m-drop) var(--m-drop-ease) both}
+@keyframes mark-in{
+  from{opacity:0;transform:translateY(-12px) scale(.9) rotate(var(--tilt-from,-5deg))}
+  to  {opacity:1;transform:translateY(0)     scale(1)  rotate(var(--tilt,0deg))}
+}
+/* 外したものは持ち上がって消える。退出は加速、入場より短く。 */
+.tally-mark[data-out="true"]{animation:mark-out var(--m-lift) var(--m-lift-ease) both}
+@keyframes mark-out{to{opacity:0;transform:translateY(-16px) scale(.86)}}
+
+/* --- 確定した瞬間に金の罫を一度だけ走らせる --- */
+.cta-row--ruled::before,.cta-row--ruled::after{background-size:200% 100%}
+.total-row[data-lit="true"] .total-yen{
+  background:linear-gradient(100deg,var(--brown) 30%,var(--gold-text) 46%,var(--brown) 62%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+}
+
+/* --- 受付完了。番号がゆず色の粒とともに現れる --- */
+.bloom-layer{position:absolute;inset:0;pointer-events:none;overflow:visible}
+/* 散る粒もベビーカステラ。焼き色のついた球が短く舞う。 */
+.bloom-dot{position:absolute;left:50%;top:38%;border-radius:50%;
+  background:radial-gradient(circle at 34% 30%,#FBE7A6 0%,var(--yellow) 46%,#D9A343 80%,#B07C2C 100%);
+  box-shadow:0 1px 3px rgba(97,62,40,.22);opacity:0}
+#done-sheet{position:relative;overflow:visible}
+.done-num{animation:num-in .62s cubic-bezier(.22,1,.36,1)}
+@keyframes num-in{from{opacity:0;transform:translateY(16px) scale(.88)}to{opacity:1;transform:none}}
+
+@media (prefers-reduced-motion:reduce){
+  .tally-mark[data-in="true"],.tally-mark[data-out="true"],.done-num{animation:none}
+  .sheet,.modal.open .sheet{transform:none;transition:none}
+  .modal.open .sheet > *{animation:none}
+  .total-row[data-lit="true"] .total-yen{background:none;color:var(--brown);-webkit-text-fill-color:currentColor}
+}
+
+/* ============================================================
+   お客様に向ける端末（呼び出し表示・金額表示）
+   触られると売上や記録まで見えてしまうため、操作の入口を畳む。
+   ============================================================ */
+body[data-tab="call"] .nav-mini,
+body[data-tab="amount"] .nav-mini{display:none}
+/* 締め出されないよう、画面の左上隅を長押しすると戻れる（スタッフ用の逃げ道）。 */
+.kiosk-escape{position:fixed;left:0;top:0;width:76px;height:76px;z-index:96;
+  background:transparent;border:0;padding:0;cursor:default}
+body:not([data-tab="call"]):not([data-tab="amount"]) .kiosk-escape{display:none}
+
+/* ---------- 金額表示（お客様に向ける端末） ----------
+   離れた位置から一瞥する画面。商品名を読ませるより、絵と数のほうが速い。 */
+#amount-live{text-align:center;display:flex;flex-direction:column;align-items:center;
+  gap:clamp(8px,1.6vh,20px)}
+.amount-num{font-family:var(--serif);color:var(--gold-text);margin:0;line-height:1;
+  font-size:clamp(26px,4.4vh,44px);letter-spacing:.06em}
+.amount-items{display:flex;flex-wrap:wrap;justify-content:center;
+  gap:clamp(12px,2.4vw,40px);margin:0}
+.amount-line{display:flex;align-items:center;gap:clamp(6px,1vw,12px)}
+/* 絵の比率は商品ごとに違うので、枠を決めて中に収める（並べて高さが揃う）。 */
+.amount-mark{width:clamp(56px,10vh,108px);aspect-ratio:4/3;flex:none;display:grid;place-items:center}
+.amount-mark img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.amount-x{font-size:clamp(18px,2.6vh,28px);color:var(--gold-text);line-height:1}
+.amount-n{font-family:var(--serif);color:var(--brown);line-height:1;
+  font-size:clamp(38px,7vh,76px);font-variant-numeric:tabular-nums}
+.amount-n small{font-family:var(--sans);font-size:.3em;color:var(--brown-soft);margin-left:.15em}
+
+/* ============================================================
+   追加した操作まわり
+   ============================================================ */
+/* 未払いの絞り込み。行列のなかで番号を探す手間をなくす。 */
+.finder{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.finder input{flex:1;min-width:140px;min-height:var(--tap);border-radius:var(--r-ctl);
+  border:1px solid var(--gold-line);background:var(--lift);color:var(--brown);
+  padding:0 20px;font-size:18px;font-family:var(--serif)}
+.finder input:focus-visible{outline:3px solid var(--brown);outline-offset:2px}
+.finder .mini{min-height:var(--tap);padding:0 20px}
+
+/* 営業回。リハーサルと本番を混ぜないための仕切り。 */
+.session-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;
+  padding:14px 18px;border:1px solid var(--gold-line);border-radius:14px;background:var(--lift);margin-bottom:18px}
+.session-name{font-family:var(--serif);color:var(--brown);font-size:18px;margin:0}
+.session-sub{margin:2px 0 0;font-size:13px;color:var(--brown-soft)}
+
+/* 未送信の件数。オフライン中に受けた注文が何件宙に浮いているかを出す。 */
+.net-state b{font-family:var(--serif);font-size:1.25em;margin:0 3px}
+
+/* 自動呼び出しの状態表示 */
+.auto-note{margin:0;font-size:13px;color:var(--brown-soft);letter-spacing:.04em}
+/* ============================================================
+   管理（コントロール）
+   受付機を何台置くかが運用で変わるようになったので、店全体の決めごとを
+   1 枚にまとめる。受付の画面はお客様に向くため、そこには置けない。
+   地は記録・売上と同じ（立って一瞥する画面ではなく、座って決める画面）。
+   ============================================================ */
+.ctl-note{margin:0 0 18px;font-size:14px;line-height:1.9;color:var(--brown-soft)}
+.ctl-hint{margin:14px 0 0;font-size:13px;line-height:1.8;color:var(--brown-soft)}
+.ctl-hint[data-warn="true"]{color:var(--red);font-weight:700}
+/* 番号札の切り替えは店全体に効く。受付の小さな札と同じ見た目では軽すぎる。 */
+.ctl-switch{min-height:68px;padding:0 34px;border-radius:var(--r-ctl);cursor:pointer;
+  font-family:var(--serif);font-size:clamp(17px,2.2vw,21px);letter-spacing:.12em;
+  border:1px solid var(--gold);background:transparent;color:var(--brown-soft)}
+.ctl-switch[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift)}
+
+/* 人数の増減。シフトが変わるたびに触る場所なので、数字を大きく、
+   押すところを離して置く（走りながらスマートフォンで触る）。 */
+.ctl-count{display:flex;align-items:center;gap:18px}
+.ctl-step{width:68px;min-height:68px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:28px;line-height:1;border:1px solid var(--gold);background:transparent;color:var(--brown)}
+.ctl-step:active{transform:scale(.97)}
+.ctl-count-n{font-size:20px;color:var(--brown-soft)}
+.ctl-count-n b{font-family:var(--serif);color:var(--brown);font-size:48px;
+  font-variant-numeric:tabular-nums;margin-right:4px}
+/* 細かい数字は横に並べる。人数ほど触らないので、小さくてよい。 */
+.ctl-fields{display:flex;flex-wrap:wrap;gap:14px;margin-top:16px}
+.ctl-fields .field{flex:1 1 150px;margin:0}
+
+/* 3 つから 1 つを選ぶ並び（受け取り時刻のご案内）。
+   切り替えスイッチ 1 つでは「自動」を表せないので、押し分けの形にする。 */
+.ctl-row{display:flex;flex-wrap:wrap;gap:10px}
+.ctl-pick{min-height:56px;padding:0 22px;border-radius:var(--r-ctl);cursor:pointer;
+  font-size:15px;letter-spacing:.08em;
+  border:1px solid var(--gold-line);background:transparent;color:var(--brown-soft)}
+.ctl-pick[aria-pressed="true"]{background:var(--brown);border-color:var(--brown);color:var(--lift);font-weight:700}
+.ctl-hint[data-on="true"]{color:var(--brown);font-weight:700}
+
+/* 受付機の在席。4 台ぶんを横に並べ、空き・使用中・この端末を色で分ける。 */
+.desk-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.desk-cell{border:1px solid var(--gold-line);border-radius:var(--r-card);padding:18px 20px;
+  background:var(--lift);display:flex;flex-direction:column;gap:8px;text-align:left}
+.desk-cell[data-busy="true"]{border-color:var(--brown)}
+.desk-cell[data-mine="true"]{border-color:var(--gold);box-shadow:inset 0 0 0 2px var(--gold)}
+.desk-name{font-family:var(--serif);font-size:20px;letter-spacing:.1em;color:var(--brown);font-weight:600}
+.desk-state{font-size:14px;letter-spacing:.06em;color:var(--brown-soft)}
+.desk-cell[data-busy="true"] .desk-state{color:var(--brown);font-weight:700}
+.desk-free{align-self:flex-start;min-height:44px;padding:0 18px;border-radius:var(--r-ctl);
+  cursor:pointer;font-size:13px;letter-spacing:.06em;
+  border:1px solid var(--gold-line);background:transparent;color:var(--brown-soft)}
+.desk-free:hover{background:var(--card)}
+.desk-free[disabled]{opacity:.35;cursor:not-allowed}
+/* 待機の切り替え。空ける（取り返しが付きにくい）より強く見せる。
+   当日いちばん触る操作がこれなので、在席の 1 枚で最初に目が行く位置に置く。 */
+.desk-mode{align-self:stretch;min-height:var(--tap);padding:0 18px;border-radius:var(--r-ctl);
+  cursor:pointer;font-size:14px;letter-spacing:.08em;font-weight:700;
+  border:1px solid var(--brown);background:var(--brown);color:var(--lift)}
+.desk-mode:hover{background:#4E3120}
+.desk-mode[aria-pressed="true"]{background:#B22222;border-color:#B22222}
+.desk-mode[aria-pressed="true"]:hover{background:#9A1C1C}
+.desk-mode[disabled]{opacity:.35;cursor:not-allowed}
+/* 待機中の 1 枚は、在席の並びの中でひと目で分かるようにする。 */
+.desk-cell[data-standby="true"]{border-color:#B22222;box-shadow:inset 0 0 0 2px rgba(178,34,34,.5)}
+.desk-cell[data-standby="true"] .desk-state{color:#B22222;font-weight:700}
+/* 接客中。いま誰かが注文している席。台数の自動判断はこれを数えている。 */
+.desk-cell[data-serving="true"]{border-color:#1F7A4D;box-shadow:inset 0 0 0 2px rgba(31,122,77,.45)}
+.desk-cell[data-serving="true"] .desk-state{color:#1F7A4D;font-weight:700}
+/* 自動で開いた席の印。人が開けた席と区別が付かないと、勝手に閉じたように見える。 */
+.desk-auto{margin-left:8px;font-family:var(--sans);font-size:11px;letter-spacing:.1em;
+  padding:3px 8px;border-radius:999px;background:var(--brown);color:var(--lift);vertical-align:middle}
+
+/* 受付機を選ぶ画面。起動して最初に出る 1 枚なので、押すところだけを大きく出す。
+   既に起動している受付機は押せない（同じ番号で 2 台立てると、受付係が
+   どちらの端末の注文か分からなくなる）。 */
+.desk-pick{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-top:22px}
+.desk-pick button{min-height:104px;border-radius:var(--r-ctl);cursor:pointer;
+  font-family:var(--serif);font-size:clamp(19px,2.4vw,24px);letter-spacing:.1em;
+  background:var(--brown);border:1px solid var(--brown);color:var(--lift);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.desk-pick button small{font-family:var(--sans);font-size:13px;letter-spacing:.06em;opacity:.8}
+.desk-pick button:hover{background:#4E3120}
+.desk-pick button[disabled]{background:#D8CBB4;border-color:#D8CBB4;color:#7C6A52;cursor:not-allowed}
+
+/* 管理はスマートフォンから触る。番号札の切り替えも、受付機を空けるのも、
+   受付の列に並んでいる人の横で片手で済ませたい操作なので、
+   幅が狭いときは押すところを画面いっぱいに広げ、指の下に寸法を残す。 */
+@media (max-width:620px){
+  /* 飾りの見出しは、画面の上半分を使ってしまう。管理のときだけ畳む。 */
+  body[data-tab="control"] .masthead{padding:18px 0 12px}
+  body[data-tab="control"] .masthead .rule,
+  body[data-tab="control"] .masthead .romaji{display:none}
+  body[data-tab="control"] .brand{font-size:24px}
+
+  .ctl-note{font-size:13px;line-height:1.95}
+  /* 切り替えは、画面のどこを押しても当たる大きさにする。 */
+  .ctl-switch{width:100%;justify-content:center;text-align:center;padding:0 16px;
+    min-height:var(--tap);font-size:17px;letter-spacing:.08em}
+  /* 在席は 1 台 1 行。横に並べると、名前・状態・ボタンの三つとも折り返して読めなくなる。 */
+  .desk-grid{grid-template-columns:1fr;gap:10px}
+  .desk-cell{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:14px 16px}
+  .desk-name{font-size:18px}
+  .desk-state{margin-left:auto}
+  .desk-free{width:100%;align-self:stretch;text-align:center}
+  .desk-mode{width:100%;align-self:stretch;text-align:center}
+
+  /* 受付機を選ぶ画面。4 台ぶんを縦に積んで、どれも 1 画面に収める。 */
+  .desk-pick{grid-template-columns:1fr;gap:10px;margin-top:16px}
+  .desk-pick button{min-height:72px;font-size:19px;flex-direction:row;gap:12px}
+  .desk-pick button small{font-size:12px}
+  .sheet{padding:26px 20px;border-radius:20px}
+  .modal{padding:14px}
+}
+/* 画面が低い電話（横向き・小型）では、選ぶ一覧だけを巻けるようにする。
+   覆いごと巻くと、押したい「やめる」が下に流れて見つからない。 */
+@media (max-height:520px){
+  #m-desk .desk-pick button{min-height:60px}
+  #m-desk .sheet{padding:18px 20px}
+}
+
+/* ============================================================
+   待機と、店員を呼ぶ
+   ============================================================ */
+
+/* 待機の覆いも、店員を呼ぶ丸も、受付の画面にだけ出す。
+   どれも position:fixed なので、これが無いと厨房・受渡・管理の上にも乗る。
+   厨房の伝票の上に「他の注文窓口をご利用ください」が出たら作業が止まる。 */
+body:not([data-tab="order"]) .standby,
+body:not([data-tab="order"]) .gate,
+body:not([data-tab="order"]) .helpcall,
+body:not([data-tab="order"]) .helpwait{display:none}
+
+/* 待機の覆い。この受付機を閉じているあいだ、お客様を他の窓口へ送る。
+   赤は「ここは違う」を一瞬で伝える。地が透けるのは、閉じているのが
+   「この窓口」であって店ではない、と分かるようにするため。 */
+.standby{
+  position:fixed;inset:0;z-index:54;   /* 門 (52) より上。両方出るときは待機が勝つ */
+  /* #B22222 の 70% だと、副文（小さいほう）が白で 3.95:1 しか出ない。
+     透過は指定どおり 70% のまま、元の赤を深くして 4.70:1 にする。 */
+  background:rgba(142,27,27,.70);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  padding:24px;text-align:center;color:#fff;
+  /* 覆いの下は触らせない。CSS だけに頼らず app.js でも受付を止めている。 */
+  cursor:not-allowed;
+}
+.standby[hidden]{display:none}
+/* 受付を止めている覆い。待機（赤＝この窓口は違う）と同じ色にすると、
+   「他の窓口へ回ればよい」と読まれる。店ごと詰まっているので琥珀にする。 */
+.standby[data-kind="full"]{background:rgba(120,78,10,.76)}
+body[data-saver="true"] .standby[data-kind="full"]{background:rgba(58,37,4,.93)}
+/* 省エネ中の待機。幕を重ねる代わりに、赤そのものを暗くする。
+   画面は暗くなり、白文字は白のままなので 13.6:1 を保てる。 */
+body[data-saver="true"] .standby{background:rgba(66,10,10,.92)}
+.standby-main{margin:0;font-family:var(--serif);font-weight:600;
+  font-size:clamp(38px,8vw,88px);letter-spacing:.1em;line-height:1.35;
+  text-shadow:0 2px 18px rgba(0,0,0,.28)}
+.standby-sub{margin:0;font-size:clamp(15px,2.2vw,22px);letter-spacing:.14em;opacity:.92}
+
+/* 店員を呼ぶ。右上の角に大きな丸を置き、左下の弧だけを見せる。
+   角に逃がすことで、商品・合計・確定のどれにも被らない。
+   丸の中身は見えている側（左下）に寄せる。 */
+/* 店員を呼ぶ。受付の 1 行目の右端に置く札。
+
+   角に食い込ませた円はやめた。円は position:fixed で流れの外に居るので、
+   どう寸法を詰めても商品カードに被る余地が残る。流れの中の札にすれば、
+   重なりようがない。目立たせるのは位置ではなく色（琥珀）と脈で受け持つ。
+
+   色は葉の緑。水彩の葉と同系なので意匠に溶け込む。
+   琥珀は山吹色の「＋」と同じ系統で並ぶと紛れ、地との差も 2.22 倍しか
+   なかった。葡萄は 9.10 倍で逆に強すぎた。葉の緑は 5.44 倍で、
+   探せば必ず見つかるが、画面の主役を奪わない。白文字とは 6.03:1。
+
+   飾りは付けない。脈・影・グラデーションを重ねると、
+   押すところが 1 つしかない画面で、そこだけが騒がしくなる。
+   目立たせるのは色と位置だけで足りる。 */
+.helpcall{z-index:57;
+  position:relative;margin-left:auto;
+  display:inline-flex;align-items:center;gap:10px;
+  min-height:52px;padding:0 clamp(18px,2.2vw,26px);border-radius:999px;
+  border:0;cursor:pointer;
+  background:#4A6B46;
+  color:#fff;
+}
+.helpcall:hover{background:#3E5C3C}
+.helpcall:active{transform:scale(.97)}
+.helpcall-q{font-family:var(--serif);font-weight:700;line-height:1;font-size:26px}
+.helpcall-t{font-size:17px;letter-spacing:.06em;white-space:nowrap;font-weight:700}
+
+.helpcall{transition:background .2s ease, transform .12s ease}
+/* 呼び出し中は押し直させない。押しても何も起きないことを色で示す。 */
+.helpcall[data-called="true"]{background:#6E5A33;color:#fff;cursor:default}
+
+/* 押したあとの受け。届いたことを返さないと、何度も押される。 */
+.helpwait{
+  position:fixed;left:0;right:0;bottom:0;z-index:56;
+  background:var(--brown);color:var(--lift);
+  padding:18px 24px calc(18px + env(safe-area-inset-bottom));text-align:center}
+.helpwait[hidden]{display:none}
+.helpwait-main{margin:0;font-family:var(--serif);font-size:clamp(20px,3vw,28px);letter-spacing:.12em}
+.helpwait-sub{margin:4px 0 0;font-size:clamp(13px,1.8vw,16px);letter-spacing:.1em;opacity:.85}
+
+/* 呼び出しの板（管理画面）。来ているときだけ出す。 */
+.callboard{background:#B22222;color:#fff;border-radius:var(--r-card);padding:22px 24px;margin-bottom:26px}
+.callboard[hidden]{display:none}
+.callboard-h{margin:0 0 14px;font-family:var(--serif);font-size:clamp(20px,3vw,26px);letter-spacing:.1em;font-weight:600}
+.callboard-list{display:grid;gap:10px}
+.callboard-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:rgba(0,0,0,.18);border-radius:12px;padding:12px 16px}
+.callboard-num{font-size:20px;font-weight:700;letter-spacing:.06em}
+.callboard-ago{font-size:14px;opacity:.85;font-variant-numeric:tabular-nums}
+.callboard-done{margin-left:auto;min-height:48px;padding:0 22px;border-radius:999px;cursor:pointer;
+  background:#fff;border:0;color:#B22222;font-size:16px;font-weight:700;letter-spacing:.06em}
+.callboard-done:hover{background:#FFEAEA}
+.callboard-notice{display:flex;align-items:center;gap:10px;margin-top:14px;
+  min-height:48px;cursor:pointer;font-size:15px;letter-spacing:.04em}
+.callboard-notice input{width:24px;height:24px;accent-color:#fff;flex:none}
+
+/* 呼び出しの帯（受渡の画面）。業務用の暗い地に赤を置く。 */
+.callbar{background:#4A1512;border:1px solid #8E2B24;border-radius:10px;padding:12px 18px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.callbar[hidden]{display:none}
+.callbar-h{font-size:clamp(18px,2.6vh,23px);font-weight:700;letter-spacing:.08em;color:#FF9C92}
+.callbar-list{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.callbar-row{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.26);
+  border-radius:8px;padding:8px 12px}
+.callbar-num{font-size:clamp(17px,2.4vh,21px);font-weight:700;color:#F2ECE0}
+.callbar-ago{font-size:14px;color:#D2B5B1;font-variant-numeric:tabular-nums}
+.callbar-done{min-height:48px;padding:0 18px;border-radius:8px;cursor:pointer;
+  background:#8E2B24;border:1px solid #B5443B;color:#fff;font-size:15px;font-weight:700}
+.callbar-done:hover{background:#A33329}
+.callbar-notice{margin-left:auto;display:flex;align-items:center;gap:10px;min-height:48px;
+  cursor:pointer;font-size:15px;color:#D2B5B1}
+.callbar-notice input{width:22px;height:22px;accent-color:#FF9C92;flex:none}
+
+/* 呼び出し表示に出す「しばらくお待ちください」。番号より前に、同じ大きさで出す。 */
+.call-notice{margin:0 0 18px;padding:18px 24px;border-radius:var(--r-card);
+  background:rgba(178,34,34,.16);border:1px solid rgba(178,34,34,.42);color:#8E2B24;
+  font-family:var(--serif);font-size:clamp(22px,3.4vw,38px);letter-spacing:.1em;text-align:center}
+.call-notice[hidden]{display:none}
+
+@media (max-width:620px){
+  .callboard{padding:18px 16px}
+  .callboard-done{width:100%;margin-left:0}
+  .callbar-notice{margin-left:0;width:100%}
+  /* 丸は角に食い込ませたまま、寸法だけ落とす。指は十分に当たる。 */
+}
+/* 押すところが減る指示は入れない。動きだけ止める。 */
+@media (prefers-reduced-motion:reduce){
+  .helpcall:active{transform:none}
+}
+
+/* ============================================================
+   受付の門（いらっしゃいませ ／ ありがとうございました）
+   ============================================================ */
+/* 受付の門。
+
+   色が意味を持つ。緑＝この窓口は開いています、赤＝閉じています。
+   数メートル離れて立っている人が、文字を読む前に色だけで判断できることを
+   いちばん上に置く。だから地は塗り潰し、文字は大きく、白で抜く。
+   会場は明るく、画面は斜めから見られる。淡い色は飛んで読めなくなる。 */
+.gate{
+  position:fixed;inset:0;z-index:52;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:clamp(12px,2.6vh,30px);padding:24px;text-align:center;color:#fff;
+  /* 中心をわずかに明るくして、平らな一色より奥行きを出す。 */
+  background:radial-gradient(ellipse at 50% 42%, #17A054 0%, #0E7A3D 52%, #0A5E2F 100%);
+  animation:gate-in .34s cubic-bezier(.22,1,.36,1) both;
+}
+.gate[hidden]{display:none}
+
+/* 覆いの裏が巻けているのが、上に余白が出る正体。
+   overflow:hidden だけでは iOS の慣性スクロールは止まらない。
+   body ごと固定して、裏の面を動かせなくする。受付の門の裏には
+   戻るべき位置が無い（商品の一覧は毎回いちばん上から）ので、
+   固定を解いたときに巻き位置が消えても困らない。 */
+body[data-tab="order"][data-ordering="false"]{
+  overflow:hidden;position:fixed;inset:0;width:100%;
+}
+/* 覆いの上での指の動きを、裏へ渡さない。 */
+.gate,.standby{overscroll-behavior:contain;touch-action:none}
+/* 確定の直後。同じ緑のまま、文言と◯の描かれ方だけが変わる。
+   色まで変えると「窓口が開いている」という一本の意味が切れる。 */
+.gate[data-state="thanks"]{animation:gate-flash .5s ease-out both}
+@keyframes gate-in{from{opacity:0}to{opacity:1}}
+@keyframes gate-flash{
+  0%  {background:radial-gradient(ellipse at 50% 42%, #2ACB73 0%, #17A054 52%, #0E7A3D 100%)}
+  100%{background:radial-gradient(ellipse at 50% 42%, #17A054 0%, #0E7A3D 52%, #0A5E2F 100%)}
+}
+
+/* 円を角から外したので、左右に逃げを作る必要がなくなった。 */
+.gate-top{margin:0;font-family:var(--serif);font-weight:600;letter-spacing:.08em;
+  font-size:clamp(28px,min(7.4vh,6vw),92px);line-height:1.25;padding:0 24px;
+  text-shadow:0 3px 22px rgba(0,0,0,.26)}
+
+/* ◯。確定のときだけ線が一周描かれる。描き切るまでが「受け付けた」の合図。 */
+.gate-ring{position:relative;width:clamp(150px,30vh,320px);aspect-ratio:1;display:grid;place-items:center}
+.gate-svg{width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
+.gate-track,.gate-draw{fill:none;stroke-width:8;stroke-linecap:round}
+.gate-track{stroke:rgba(255,255,255,.22)}
+.gate-draw{stroke:#fff;stroke-dasharray:327;stroke-dashoffset:0;
+  filter:drop-shadow(0 2px 14px rgba(0,0,0,.22))}
+.gate[data-state="thanks"] .gate-draw{animation:gate-draw .72s cubic-bezier(.22,1,.36,1) both}
+@keyframes gate-draw{from{stroke-dashoffset:327}to{stroke-dashoffset:0}}
+
+/* 待っている間、輪が外へ広がり続ける。動いているものは遠くからでも目に入る。 */
+.gate-pulse{position:absolute;inset:0;border-radius:50%;border:3px solid rgba(255,255,255,.9);
+  opacity:0;pointer-events:none}
+.gate[data-state="welcome"] .gate-pulse{animation:gate-pulse 2.4s ease-out infinite}
+@keyframes gate-pulse{
+  0%  {transform:scale(1);   opacity:.7}
+  75% {transform:scale(1.34);opacity:0}
+  100%{transform:scale(1.34);opacity:0}
+}
+
+.gate-sub{margin:0;font-size:clamp(16px,2.8vh,30px);letter-spacing:.14em;
+  color:rgba(255,255,255,.92);min-height:1.4em}
+
+/* 押すところ。白で抜いて、地の緑といちばん強い差を作る。
+   上下に動かして「ここを押す」ことを言葉以外でも伝える。 */
+.gate-start{
+  font-family:var(--serif);font-size:clamp(21px,3.8vh,40px);letter-spacing:.16em;
+  min-height:clamp(64px,10vh,112px);padding:0 clamp(32px,6vw,78px);
+  border-radius:999px;cursor:pointer;
+  background:#fff;color:#0A5E2F;border:0;font-weight:600;
+  box-shadow:0 10px 34px rgba(0,0,0,.26);
+  animation:gate-rise 2.4s ease-in-out infinite;
+}
+@keyframes gate-rise{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+
+/* ---- 門が引き、受付の面が立ち上がる ----
+   門をぱっと消すと「画面が切り替わった」になる。わずかに迫り出しながら
+   抜いていくと「開いた」になる。時間は 0.46 秒。これより長いと、
+   行列のなかでは待たされたと感じる。
+
+   曲線は ease-out 寄りにする（最初に速く動いて、終わりで静かに止まる）。
+   等速や ease-in-out だと機械が動いた感じが残る。 */
+.gate[data-leaving="true"]{
+  animation:gate-out .46s cubic-bezier(.32,.72,0,1) both;
+  pointer-events:none;
+}
+@keyframes gate-out{
+  0%  {opacity:1;transform:scale(1)}
+  60% {opacity:.52}
+  100%{opacity:0;transform:scale(1.07)}
+}
+/* ◯ は門の主役。抜けるときだけ、わずかに先に開いていく。 */
+.gate[data-leaving="true"] .gate-ring{animation:ring-out .46s cubic-bezier(.32,.72,0,1) both}
+@keyframes ring-out{to{transform:scale(1.22);opacity:0}}
+
+/* 門の裏で、受付の面が下から順に起き上がる。
+   いっせいに出すと 1 枚の絵が差し替わっただけに見える。
+   少しずつ遅らせると、組み上がっていくように読める。 */
+body[data-entering="true"] #view-order > *,
+body[data-entering="true"] .menu > .item{
+  animation:rise-in .58s cubic-bezier(.22,1,.36,1) both;
+}
+body[data-entering="true"] .order-top      {animation-delay:.10s}
+body[data-entering="true"] .menu           {animation:none}
+body[data-entering="true"] .menu > .item:nth-child(1){animation-delay:.17s}
+body[data-entering="true"] .menu > .item:nth-child(2){animation-delay:.25s}
+body[data-entering="true"] .menu > .item:nth-child(3){animation-delay:.33s}
+body[data-entering="true"] .total-row      {animation-delay:.36s}
+body[data-entering="true"] .tally          {animation-delay:.40s}
+body[data-entering="true"] .cta-row        {animation-delay:.44s}
+@keyframes rise-in{
+  from{opacity:0;transform:translateY(18px)}
+  to  {opacity:1;transform:none}
+}
+
+/* 押した手応え。沈んでから戻る。 */
+.gate-start:active{transform:scale(.96)}
+.step:active{transform:scale(.92)}
+
+@media (prefers-reduced-motion:reduce){
+  .gate,.gate-start,.gate-pulse,.gate[data-state="thanks"],
+  .gate[data-state="thanks"] .gate-draw,
+  .gate[data-leaving="true"],.gate[data-leaving="true"] .gate-ring,
+  body[data-entering="true"] #view-order > *,
+  body[data-entering="true"] .menu > .item{animation:none}
+  .gate-draw{stroke-dashoffset:0}
+}
+
+/* ============================================================
+   省エネ
+   薄暗くするだけにする。真っ黒にすると、何が起きているか分からなくなり、
+   「壊れた」と思って誰かが触りに行く。受渡と支払い口は仕事が入れば自動で戻る。
+   ============================================================ */
+.saver{position:fixed;inset:0;z-index:92;cursor:pointer;
+  background:rgba(0,0,0,.55);
+  display:flex;align-items:flex-end;justify-content:center;padding:0 0 42px;
+  animation:saver-in .8s ease both}
+.saver[hidden]{display:none}
+/* 受付の画面では幕を使わない。
+   幕は文字の上にも乗るので、白文字まで灰色に落ちる。待機の赤に重ねたときは
+   文字 #737373 / 地 #4E2927 の 2.65:1 になり、肝心の「他の注文窓口を
+   ご利用ください」が読めなくなっていた。
+   受付は覆いそのものを暗くして省エネにする（下の .standby）。 */
+body[data-tab="order"] .saver{display:none}
+@keyframes saver-in{from{background:rgba(0,0,0,0)}to{background:rgba(0,0,0,.55)}}
+/* 幕は薄暗いままでよいが、この一行だけは読めないと「タップで戻る」が伝わらない。
+   62% では 3.09:1 で不足。95% で 4.86:1。 */
+.saver-note{margin:0;font-size:14px;letter-spacing:.14em;color:rgba(255,255,255,.95)}
+/* 幕が下りている間は動きを止める。点滅し続けるものが残ると意味が薄れる。 */
+body[data-saver="true"] .gate-start,
+body[data-saver="true"] .gate-pulse,
+body[data-saver="true"] .kds-ticket{animation:none}
+@media (prefers-reduced-motion:reduce){ .saver{animation:none} }
+
+</style>
+
+<!-- 接続設定。module より先に評価される古典スクリプト。CI が生成する。 -->
+<script src="firebase-config.js"></script>
+
+<!-- file:// で開かれたことを検知する。
+     この状況ではブラウザが ES モジュールと WASM を遮断するため、
+     下の module スクリプトは一行も実行されない（＝画面は無言で壊れる）。
+     古典スクリプトは file:// でも動くので、ここで原因を出す。 -->
+<script>
+if (location.protocol === 'file:') {
+  document.addEventListener('DOMContentLoaded', function () {
+    document.body.innerHTML =
+      '<div role="alert" style="max-width:640px;margin:12vh auto;padding:32px;font-family:system-ui,sans-serif;line-height:1.9;color:#1f2937">' +
+      '<h1 style="font-size:22px;margin:0 0 16px">このページは file:// では動きません</h1>' +
+      '<p style="margin:0 0 16px">ブラウザが WebAssembly と ES モジュールの読み込みを遮断するため、' +
+      '注文・集計・CSV のすべてが動作しません。HTTP で開き直してください。</p>' +
+      '<pre style="background:#111827;color:#f9fafb;padding:16px;border-radius:8px;overflow-x:auto;font-size:14px">' +
+      'cd ' + '&quot;プロジェクトのフォルダ&quot;\n./build.sh serve</pre>' +
+      '<p style="margin:16px 0 0">起動したら <b>http://localhost:8080</b> を開いてください。</p>' +
+      '</div>';
+  });
+}
+</script>
+</head>
+<body data-tab="order">
+
+<div id="net-state" class="net-state" role="status" hidden></div>
+<!-- 稽古中の目印。お客様に向く画面にも出す。これが出ている間に受けた注文は
+     本番の売上にも在庫にも入らないので、本物の注文を取ってしまうと消える。 -->
+<div id="test-state" class="test-state" hidden role="status" aria-live="polite">
+  テスト中です。ここで受けた注文は売上にも在庫にも入りません</div>
+
+<!-- 音が止まっているときだけ出る。押す操作そのものが iOS の解錠条件を満たす。 -->
+<button type="button" class="audio-wake" id="audio-wake" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>
+  </svg>
+  タップして音を出す
+</button>
+
+<img class="deco deco-tl" src="art/tl.png" alt="" aria-hidden="true">
+<img class="deco deco-tr" src="art/tr.png" alt="" aria-hidden="true">
+<img class="deco deco-bl" src="art/bl.png" alt="" aria-hidden="true">
+<img class="deco deco-br" src="art/br.png" alt="" aria-hidden="true">
+
+<div class="wrap">
+
+  <header class="masthead">
+    <h1 class="brand">ゆず香ステラ</h1>
+    <p class="romaji">YUZUKA STELLA</p>
+    <div class="rule"><img src="art/divider-yuzu.png" alt="" aria-hidden="true"></div>
+
+  </header>
+
+
+  <p id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+
+  <main id="main">
+
+    <!-- ===== 受付 ===== -->
+    <section id="view-order" role="tabpanel" aria-labelledby="tab-order">
+      <div class="order-top">
+        <!-- この端末がどの受付機か。押すと選び直せる。
+             番号札を使うかどうかは店全体の決めごとなので、ここではなく管理画面で切り替える
+             （受付の画面はお客様に向くため、お客様の手の届くところに置けない）。 -->
+        <button type="button" class="deskchip" id="desk-chip" data-set="false">受付機を選ぶ</button>
+        <p class="lane-note" id="lane-note"></p>
+        <!-- 店員を呼ぶ。角の円はカードに被るのをやめられなかったので、
+             1 行目の札にする。流れの中に置けば、重なりようがない。
+             目立たせるのは色（琥珀）と脈で受け持つ。 -->
+        <button type="button" class="helpcall" id="helpcall">
+          <span class="helpcall-q" aria-hidden="true">？</span>
+          <span class="helpcall-t">店員を呼ぶ</span>
+        </button>
+      </div>
+      <div class="menu" id="menu"></div>
+
+      <div class="total-row">
+        <span class="total-label">合計</span>
+        <span class="total-yen" id="total">0<small>円</small></span>
+      </div>
+      <!-- 数え札。1カップ＝1粒。個数を「数字」ではなく「物の数」で返す。 -->
+      <div class="tally" id="tally" aria-hidden="true"></div>
+
+      <div class="cta-row cta-row--ruled">
+        <button type="button" class="cta" id="submit-btn" disabled>
+          <span class="cta-label">注文を確定する</span>
+          <svg width="30" height="12" viewBox="0 0 30 12" fill="none" aria-hidden="true">
+            <path d="M0 6h27M22 1l5 5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- 受付の「門」。注文が始まっていない間はここが出ている。
+         お客様が最初に見る 1 枚なので、置くのは「いらっしゃいませ」「◯」
+         「タップで注文を開始」の 3 つだけにする。商品も金額もまだ出さない。
+
+         この門を押した瞬間から接客の時間を計る。前の人が去ったのか、まだ
+         迷っているのかが、門の開け閉めではっきりするので、台数を増やすか
+         どうかの判断がここから立てられる。 -->
+    <div class="gate" id="gate" data-state="welcome" hidden>
+      <p class="gate-top" id="gate-top">いらっしゃいませ</p>
+
+      <!-- ◯。確定のときは線が一周描かれる。言葉より先に目に入る合図。 -->
+      <div class="gate-ring" aria-hidden="true">
+        <svg viewBox="0 0 120 120" class="gate-svg">
+          <circle class="gate-track" cx="60" cy="60" r="52"/>
+          <circle class="gate-draw"  cx="60" cy="60" r="52"/>
+        </svg>
+        <span class="gate-pulse"></span>
+      </div>
+
+      <p class="gate-sub" id="gate-sub"></p>
+      <button type="button" class="gate-start" id="gate-start">注文を始める</button>
+    </div>
+
+    <!-- 待機の覆い。この受付機を閉じているあいだ、お客様を他の窓口へ送る。
+         覆いは受付の画面の上にだけ出す（厨房や受渡を塞いでも意味がない）。
+         「店員を呼ぶ」はこの上に残す。送られた先が分からず困る人が必ず出るため。 -->
+    <div class="standby" id="standby" hidden role="status" aria-live="polite">
+      <p class="standby-main">他の注文窓口を<br>ご利用ください</p>
+      <p class="standby-sub">この受付機はただいま閉じています</p>
+    </div>
+
+    <!-- 受付を止めている間の覆い。待機（この受付機だけ閉じる）とは別で、
+         店全体が受け切れていない状態。他の窓口へ送っても同じなので、
+         文言は「他の窓口へ」ではなく「お待ちください」にする。 -->
+    <div class="standby" id="full" data-kind="full" hidden role="status" aria-live="polite">
+      <p class="standby-main">ただいま<br>受付を止めています</p>
+      <p class="standby-sub">お作りしている分で手一杯です。少々お待ちください</p>
+    </div>
+
+    <!-- 押したあと。お客様に「届いた」ことを返さないと、何度も押される。 -->
+    <div class="helpwait" id="helpwait" hidden role="status" aria-live="polite">
+      <p class="helpwait-main">店員をお呼びしました</p>
+      <p class="helpwait-sub">少々お待ちください</p>
+    </div>
+
+    <!-- ===== 厨房（キッチンディスプレイ） ===== -->
+    <section id="view-kitchen" role="tabpanel" aria-labelledby="tab-kitchen" class="kds hidden">
+      <header class="kds-bar">
+        <span class="kds-label">厨房</span>
+        <span class="kds-stat"><b id="kds-tickets">0</b> 件 未処理</span>
+        <span class="kds-stat">最長待ち <b id="kds-oldest">—</b></span>
+        <span class="kds-stat">見積 <b id="kds-wait">すぐ</b></span>
+        <span class="kds-stat ops-due" id="kds-reserve" hidden>受け取り時刻をご案内中</span>
+        <!-- 手が汚れている場所なので、この画面は触らせない。
+             押すところが無いことを先に言っておかないと、押せる何かを探される。 -->
+        <span class="kds-board">見るだけ（用意できた分は受渡口が打ちます）</span>
+        <label class="kds-sound">
+          <input type="checkbox" id="sound" checked>
+          <span>通知音</span>
+        </label>
+      </header>
+
+      <!-- いま焼くもの。台（＝人）1 つずつに、味と個数を割り当てて出す。
+           板は立てかけてあるだけで触れないので、割り振りまで出し切る。 -->
+      <div class="kds-plates" id="plates"></div>
+      <p class="kds-left" id="kds-left"></p>
+
+      <div class="kds-grid" id="kitchen-list"></div>
+      <!-- 立てかけた画面は誰も送れない。入り切らなかった枚数は必ずここに出す。 -->
+      <p class="kds-more hidden" id="kitchen-more" aria-live="off"></p>
+      <p class="kds-empty hidden" id="kitchen-empty">
+        <b>用意する注文はありません</b>
+        受付で注文が入ると、ここに伝票が出ます。押すところはありません。<br>
+        いまのうちに焼き足しておくと、混んだときに待たせずに済みます。
+      </p>
+    </section>
+
+    <!-- ===== 呼び出し表示（お客様側に向ける画面） ===== -->
+    <section id="view-call" role="tabpanel" aria-labelledby="tab-call" class="call hidden">
+      <p class="call-brand">ゆず香ステラ</p>
+      <h2 class="call-head">お呼び出し</h2>
+      <!-- 店員が呼び出しに対応している間だけ出す。番号の呼び出しより前に置く
+           （待たされている理由が分からないのが、いちばん不安になるため）。 -->
+      <p class="call-notice" id="call-notice" hidden>ただいま対応中です。しばらくお待ちください</p>
+      <div class="call-grid" id="call-grid"></div>
+      <p class="call-empty hidden" id="call-empty">ただいまお呼び出しはありません</p>
+      <p class="call-foot"><span id="call-more" hidden></span><b id="call-pending">0</b> 件 ご用意中です</p>
+    </section>
+
+    <!-- ===== 金額表示（お客様に向ける端末） ===== -->
+    <section id="view-amount" role="tabpanel" aria-labelledby="tab-amount" class="call hidden">
+      <p class="call-brand">ゆず香ステラ</p>
+      <h2 class="call-head">お会計</h2>
+      <div id="amount-live" class="hidden">
+        <p id="amount-num" class="amount-num"></p>
+        <div id="amount-items" class="amount-items"></div>
+        <p class="collect-amount" id="amount-yen">0<small>円</small></p>
+      </div>
+      <!-- 受け取りが済んだあと。お客様がこの画面を見ているのはここまでなので、
+           「いつ戻ればよいか」をいちばん大きく出す。番号札だけ渡して帰すと、
+           お客様はその場に立って待つ。 -->
+      <div id="amount-done" class="hidden">
+        <p id="amount-done-num" class="amount-num"></p>
+        <p class="amount-thanks">ありがとうございました</p>
+        <p class="amount-when" id="amount-when" hidden></p>
+      </div>
+      <p class="call-empty" id="amount-idle">ただいまお会計中のお客様はいらっしゃいません</p>
+    </section>
+
+    <!-- ===== 受渡（お渡し口の端末） =====
+         厨房と同じ業務用の画面にする。立ったまま 1m 離れて一瞥する使い方なので、
+         番号・金額・押すところだけを大きく出し、それ以外は出さない。 -->
+    <section id="view-ready" role="tabpanel" aria-labelledby="tab-ready" class="kds hidden">
+      <header class="kds-bar">
+        <span class="kds-label">受渡</span>
+        <span class="kds-stat"><b id="ready-count">0</b> 件 お渡し待ち</span>
+        <!-- 受付で確定した時点からここに出る。厨房が用意し終えるのを待っている数。 -->
+        <span class="kds-stat"><b id="ready-prep">0</b> 件 ご用意中</span>
+        <span class="kds-stat">最長待ち <b id="ready-oldest">—</b></span>
+        <span class="kds-stat">見積 <b id="ready-wait">すぐ</b></span>
+        <span class="kds-stat ops-due" id="ready-reserve" hidden>受け取り時刻をご案内中</span>
+        <!-- 未収は他の端末の操作で増減する。読み上げは「未収 3 件」の形で
+             一度に伝える（数字だけを読み上げると何の数か分からない）。
+             件数・最長待ちは常時変わるので、あえて live にしない。 -->
+        <span class="kds-stat ops-due" id="ready-due" hidden
+              role="status" aria-atomic="true">未収 <b id="ready-unpaid">0</b> 件</span>
+        <!-- 約束した時刻を過ぎた注文。普段は出ない札なので、出たら必ず目に入る。 -->
+        <span class="kds-stat ops-alert" id="ready-late" hidden
+              role="status" aria-atomic="true">お待たせ <b id="ready-late-n">0</b> 件</span>
+      </header>
+
+      <!-- 呼び出し。受渡口は人が立っている場所なので、ここにも出して誰かが動けるようにする。 -->
+      <div class="callbar" id="ready-help" hidden role="status" aria-live="assertive" aria-atomic="true">
+        <span class="callbar-h" id="ready-help-head">店員が呼ばれています</span>
+        <div class="callbar-list" id="ready-help-list"></div>
+        <label class="callbar-notice">
+          <input type="checkbox" id="ready-notice-toggle">
+          <span>呼び出し表示に「しばらくお待ちください」を出す</span>
+        </label>
+      </div>
+
+      <!-- 受渡は 1 台で何役も持つので、1 画面に全部出すと字が小さくなる。
+           面を分けて横に送る（指でスワイプ、下の札でも移れる）。 -->
+      <div class="deck" id="ready-deck">
+      <section class="deck-page" aria-label="お渡し">
+
+      <!-- 受渡口は「いま渡す 1 件」を探す場所であると同時に、
+           いま店に何件抱えているかを見る場所でもある。既定は「すべて」。 -->
+      <div class="ops-chips" id="ready-filter" role="group" aria-label="受渡に出す注文を絞り込む">
+        <button type="button" class="ops-chip" data-rf="all" aria-pressed="true">すべて<b id="rf-all">0</b></button>
+        <button type="button" class="ops-chip" data-rf="ready" aria-pressed="false">お渡し待ち<b id="rf-ready">0</b></button>
+        <button type="button" class="ops-chip" data-rf="pending" aria-pressed="false">ご用意中<b id="rf-pending">0</b></button>
+        <button type="button" class="ops-chip" data-rf="completed" aria-pressed="false">お渡し済み<b id="rf-completed">0</b></button>
+      </div>
+
+      <div class="kds-grid" id="ready-list"></div>
+      <p class="kds-empty hidden" id="ready-empty">
+        <b>この回の注文はまだありません</b>
+        受付で注文が確定すると、その時点でここに「ご用意中」として出ます。<br>
+        厨房から品物を受け取ったら「用意できた」を押します（お呼び出しも始まります）。
+      </p>
+      </section>
+
+      <!-- 2 面目：厨房から届いた分を、焼き待ちの注文へまとめて配る。
+           厨房は注文ごとではなく板ごと持ってくるので、1 カップずつ押していると
+           混んだときに押す回数そのものが行列の律速になる。
+           味ごとの総数を入れて、受付順に束へ割り当てる。 -->
+      <section class="deck-page" aria-label="手元にある分を配る">
+        <p class="deck-head">手元にある分（作り置き＋厨房から届いた分）</p>
+        <p class="deal-note" id="deal-note" hidden>
+          この端末の中だけで数えています。全端末で共有するには、
+          database.rules.json を公開し直してください。
+        </p>
+        <div class="deal-rows" id="deal-rows"></div>
+        <div class="deal-plan" id="deal-plan"></div>
+        <p class="kds-empty hidden" id="deal-empty">
+          <b>焼き待ちの注文がありません</b>
+          営業が始まる前は、焼いた分を上の ＋ で入れておきます。<br>
+          注文が入ると、手元にある分から受付順に振り分けます。
+        </p>
+        <button type="button" class="ops-do deal-go" id="deal-go" data-act="deal-go" disabled>
+          届いた分を配る
+        </button>
+      </section>
+
+      <!-- 3 面目：呼び出しの状況。お客様側の呼び出し表示に何が出ているかを、
+           受渡口から確かめられるようにする。取りに来ない札はここから呼び直す。 -->
+      <section class="deck-page" aria-label="呼び出しの状況">
+        <p class="deck-head" id="recall-head">呼び出しの状況</p>
+        <div class="kds-grid" id="recall-list"></div>
+        <p class="kds-empty hidden" id="recall-empty">
+          <b>いまお呼び出しはありません</b>
+          お渡し待ちになった注文が、ここと呼び出し表示に出ます。
+        </p>
+      </section>
+      </div>
+
+      <nav class="deck-dots" id="ready-dots" aria-label="受渡の画面">
+        <button type="button" data-page="0" aria-current="page">お渡し</button>
+        <button type="button" data-page="1">配る</button>
+        <button type="button" data-page="2">呼び出し</button>
+      </nav>
+    </section>
+
+    <!-- ===== 支払い口 =====
+         受け取る金額と、押すところ。この 2 つだけを大きく出す。 -->
+    <section id="view-pay" role="tabpanel" aria-labelledby="tab-pay" class="kds hidden">
+      <header class="kds-bar">
+        <span class="kds-label">支払い口</span>
+        <span class="kds-stat"><b id="pay-count">0</b> 件 未収</span>
+        <span class="kds-stat"><b id="pay-sum">0</b> 円</span>
+        <!-- 取りはぐれ。この画面で唯一 live にする値。
+             assertive にすると数が動くたび読み上げを遮るので status に留める。 -->
+        <span class="kds-stat ops-alert" id="pay-lost-wrap" hidden
+              role="status" aria-atomic="true">
+          渡したのに未払い <b id="pay-lost">0</b> 件</span>
+        <!-- 返金すべき額。3 面目を開かないと存在に気づけないので、ここにも出す。 -->
+        <span class="kds-stat ops-due" id="pay-refund-wrap" hidden
+              role="status" aria-atomic="true">
+          返金 <b id="pay-refund">0</b> 件 <b id="pay-refund-yen">0</b> 円</span>
+        <span class="ops-find">
+          <label class="sr-only" for="pay-find">番号で絞り込む</label>
+          <input type="text" id="pay-find" inputmode="numeric" autocomplete="off"
+                 placeholder="番号で絞り込む">
+          <button type="button" class="ops-mini" id="pay-find-clear">解除</button>
+        </span>
+      </header>
+
+      <div class="deck" id="pay-deck">
+      <section class="deck-page" aria-label="未収の回収">
+        <div class="kds-grid" id="pay-list"></div>
+        <p class="kds-empty hidden" id="pay-empty">未払いの注文はありません。</p>
+
+        <!-- 打ち間違いを戻す導線。普段は畳んでおき、未収の並びを邪魔しない。 -->
+        <details class="ops-fold">
+          <summary>支払い済み（打ち間違いはここから戻せます）</summary>
+          <div class="ops-paid-list" id="paid-list"></div>
+          <p class="ops-note hidden" id="paid-empty">まだ支払い済みの注文はありません。</p>
+        </details>
+      </section>
+
+      <!-- 2 面目：おつり。暗算は行列のなかでいちばん間違える。
+           請求は「受け取る」で選んだ注文から入るので、打つのはお預かりだけ。 -->
+      <section class="deck-page" aria-label="おつり計算">
+        <div class="chg">
+          <div class="chg-row"><span>請求</span><b id="chg-due">—</b></div>
+          <div class="chg-row"><span>お預かり</span><b id="chg-paid">0</b></div>
+          <div class="chg-row" data-out="true"><span>おつり</span><b id="chg-back">—</b></div>
+          <p class="chg-hint" id="chg-hint"></p>
+          <div class="chg-quick" id="chg-quick">
+            <button type="button" data-add="500">+500</button>
+            <button type="button" data-add="1000">+1000</button>
+            <button type="button" data-add="5000">+5000</button>
+            <button type="button" data-exact="1">ちょうど</button>
+          </div>
+          <div class="chg-keys" id="chg-keys">
+            <button type="button" data-k="1">1</button>
+            <button type="button" data-k="2">2</button>
+            <button type="button" data-k="3">3</button>
+            <button type="button" data-k="4">4</button>
+            <button type="button" data-k="5">5</button>
+            <button type="button" data-k="6">6</button>
+            <button type="button" data-k="7">7</button>
+            <button type="button" data-k="8">8</button>
+            <button type="button" data-k="9">9</button>
+            <button type="button" data-k="00">00</button>
+            <button type="button" data-k="0">0</button>
+            <button type="button" data-k="back" aria-label="1 文字消す">←</button>
+          </div>
+          <button type="button" class="ops-sub" id="chg-clear">クリア</button>
+        </div>
+      </section>
+
+      <!-- 3 面目：返金。中止したのに代金を受け取っている注文。
+           受注額にも受取済みにも入らないので、ここに出さないと
+           締めるまで誰も気づけない（当日 5 件 1,800 円が残った）。
+           返したかどうかを残す欄が無いので、この操作がその記録になる。 -->
+      <section class="deck-page" aria-label="返金">
+        <p class="deck-head">返金（中止したのに代金を受け取っている注文）</p>
+        <p class="refund-sum" id="refund-sum"></p>
+        <div class="kds-grid" id="refund-list"></div>
+        <p class="kds-empty hidden" id="refund-empty">
+          <b>返金すべき注文はありません</b>
+          代金を受け取ったあとに中止した注文が、ここに出ます。<br>
+          現金をお返ししたら「返したと記録」を押すと、金庫の理論値から外れます。
+        </p>
+      </section>
+      </div>
+
+      <nav class="deck-dots" id="pay-dots" aria-label="支払い口の画面">
+        <button type="button" data-page="0" aria-current="page">未収</button>
+        <button type="button" data-page="1">おつり</button>
+        <button type="button" data-page="2">返金</button>
+      </nav>
+    </section>
+
+    <!-- ===== 管理（コントロール） =====
+         受付機が複数になったので、店全体の決めごとと在席をここ 1 枚に集める。
+         受付の画面はお客様に向くため、そちらには置かない。 -->
+    <section id="view-control" role="tabpanel" aria-labelledby="tab-control" class="hidden">
+      <!-- 呼び出し。来ているときだけ出し、画面の先頭に置く。
+           ここを下に置くと、スマートフォンでは巻かないと見えない。 -->
+      <div class="callboard" id="help-board" hidden role="status" aria-live="assertive" aria-atomic="true">
+        <h2 class="callboard-h" id="help-head">店員が呼ばれています</h2>
+        <div class="callboard-list" id="help-list"></div>
+        <label class="callboard-notice">
+          <input type="checkbox" id="notice-toggle">
+          <span>呼び出し表示に「しばらくお待ちください」を出す</span>
+        </label>
+      </div>
+
+      <div class="panel">
+        <h2 class="sec-title">番号札を使うかどうか</h2>
+        <p class="ctl-note">
+          店全体の決めごとです。切り替えると、すべての受付機にすぐ反映されます。<br>
+          <b>使う</b>：受付で札を渡し、厨房を通して、呼び出してからお渡しします。<br>
+          <b>使わない</b>：厨房を通さず、受渡口でお品物と代金をその場でお渡しします（空いている時間帯向け）。
+        </p>
+        <button type="button" class="ctl-switch" id="tagmode-toggle" aria-pressed="true">番号札を使っています</button>
+        <p class="ctl-hint" id="tagmode-hint"></p>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
+          <h2 class="sec-title" style="margin:0">受付機</h2>
+          <p class="tags-count" id="desk-count"></p>
+        </div>
+        <div class="desk-grid" id="desk-admin" style="margin-top:20px"></div>
+        <p class="ctl-hint">
+          受付機は起動したときに名乗り、画面を閉じる・他の画面へ移ると自動で空きに戻ります。<br>
+          <b>「強制解除」</b>は、置き忘れ・電池切れ・持ち去りなどで「起動中」のまま残った席を
+          本部の判断で取り上げるものです。解除された端末は<b>自動では戻らず</b>、
+          その端末の画面で選び直すまで受付を使えません。
+        </p>
+      </div>
+
+      <div class="panel">
+        <h2 class="sec-title">自動で台数を決める</h2>
+        <p class="ctl-note">
+          開いている受付機が全部ふさがったら、待機している受付機を 1 台開けます。
+          ただし「もうすぐ空きそう」なときは開けません。実際にかかった時間から見積もります。<br>
+          自動で開けた受付機は、空いたまましばらく経つと自分で待機へ戻ります。
+          <b>手動で開けた受付機は自動では閉じません。</b>
+        </p>
+        <button type="button" class="ctl-switch" id="auto-toggle" aria-pressed="true">自動で台数を決めています</button>
+        <p class="ctl-hint" id="pace-hint"></p>
+      </div>
+
+      <!-- ルールが古いと、ここの設定は全部サーバーに拒否される。
+           押しても何も起きない状態の原因が、画面から分かるようにしておく。 -->
+      <p class="ctl-hint" id="rules-state" data-warn="true" role="alert" hidden></p>
+
+      <div class="panel">
+        <h2 class="sec-title">受け取り時刻のご案内</h2>
+        <p class="ctl-note">
+          混んでくると、お客様を立たせたまま待たせることになります。そこで
+          <b>最長待ちが 8 分</b>を超えたら、受付で「◯時◯分ごろにお越しください」と
+          ご案内し、番号札を持って出直していただきます（5 分を下回ると自動で戻ります）。<br>
+          見積もりが <b>30 分</b>を超えると、守れない時刻を約束しないために
+          受付そのものを止めます（25 分まで下がると自動で再開します）。
+        </p>
+        <div class="ctl-row" id="reserve-mode" role="group" aria-label="受け取り時刻のご案内">
+          <button type="button" class="ctl-pick" data-reserve="auto" aria-pressed="true">混んだら自動で出す</button>
+          <button type="button" class="ctl-pick" data-reserve="on"   aria-pressed="false">いつでも出す</button>
+          <button type="button" class="ctl-pick" data-reserve="off"  aria-pressed="false">出さない</button>
+        </div>
+        <p class="ctl-hint" id="reserve-state" data-on="false"></p>
+
+        <h3 class="field-group">生地が尽きるまで</h3>
+        <p class="ctl-hint" id="stock-out"></p>
+
+        <h3 class="field-group">終了時刻</h3>
+        <p class="ctl-note">
+          この時刻を過ぎたら、受付を自動で閉じます（お客様の画面は「本日の販売は終了しました」）。
+          すでに受付中のお客様は最後まで通ります。空のままなら時刻では閉めません。
+        </p>
+        <div class="field" style="max-width:200px">
+          <label for="close-at">受付を閉じる時刻</label>
+          <input type="time" id="close-at" step="60">
+        </div>
+        <p class="ctl-hint" id="close-hint"></p>
+
+        <h3 class="field-group">厨房の体制</h3>
+        <p class="ctl-note">
+          焼ける量を決めているのは台ではなく<b>人数</b>です。1 人が同時に見られるのは
+          12 マスほど（＝2 カップ）で、大きい台はマスを余らせて使います。
+          <b>台を増やす・減らすときは、ここを変えてください。</b>
+          見積もりも、厨房の板に出る割り当ても一緒に変わります。<br>
+          「人」に入れるのは<b>焼く人の数</b>です。<b>生地を混ぜる人は数えないでください</b>
+          （その人は焼けません）。
+        </p>
+        <!-- 台はマス数が揃っていない。実物をそのまま並べる。
+             使わない台は外しておくと、割り当てにも見積もりにも出ない。 -->
+        <div class="plate-rows" id="kit-plates"></div>
+        <p class="ctl-hint" id="kit-calc"></p>
+        <div class="ctl-fields">
+          <div class="field">
+            <label for="kit-cycle">1 回にかかる分</label>
+            <input type="number" id="kit-cycle" min="1" max="30" step="1" inputmode="numeric" value="5">
+          </div>
+          <div class="field">
+            <label for="kit-margin">見込み（％）</label>
+            <input type="number" id="kit-margin" min="10" max="100" step="5" inputmode="numeric" value="75">
+          </div>
+        </div>
+
+        <h3 class="field-group" style="margin-top:22px">生地（ボウル）</h3>
+        <p class="ctl-note">
+          洗い場との往復が間に合わないと、台がいくつあっても焼けません。
+          下の数から<b>生地が届く速さ</b>を出し、焼ける速さと低いほうを見積もりに使います。
+        </p>
+        <div class="ctl-fields">
+          <div class="field">
+            <label for="kit-bowls">ボウルの数</label>
+            <input type="number" id="kit-bowls" min="1" max="99" step="1" inputmode="numeric" value="5">
+          </div>
+          <div class="field">
+            <label for="kit-bowl-pieces">1 個でできる数（個）</label>
+            <input type="number" id="kit-bowl-pieces" min="1" max="999" step="1" inputmode="numeric" value="60">
+          </div>
+          <div class="field">
+            <label for="kit-bowl-grams">1 個の重さ（g）</label>
+            <input type="number" id="kit-bowl-grams" min="10" max="9999" step="10" inputmode="numeric" value="400">
+          </div>
+          <div class="field">
+            <label for="kit-wash">洗い場まで往復（分）</label>
+            <input type="number" id="kit-wash" min="1" max="120" step="1" inputmode="numeric" value="10">
+          </div>
+        </div>
+        <p class="field-hint" id="rate-hint"></p>
+      </div>
+
+      <div class="panel">
+        <h2 class="sec-title">省エネ</h2>
+        <p class="ctl-note">
+          受付機は<b>待機にすると</b>すぐ薄暗くなります。<br>
+          受渡と支払い口は、<b>仕事が 1 件も無いまま</b>下の時間が過ぎると薄暗くなります。
+          仕事が入った瞬間に自動で戻るので、見逃しません。どこを触っても戻ります。
+        </p>
+        <!-- 通知音の切り替え。これまで厨房タブにしか無く、呼び出し表示や
+             金額表示の端末で止めるには、お客様に向けた画面でナビを開いて
+             「見るだけ」と書いた厨房タブへ移るしかなかった。 -->
+        <label class="ctl-switch" style="margin-bottom:14px">
+          <input type="checkbox" id="sound-ctl" checked>
+          <span>通知音を鳴らす（この端末）</span>
+        </label>
+
+        <div class="field" style="max-width:280px">
+          <label for="saver-min">受渡・支払い口が薄暗くなるまで（分）</label>
+          <input type="number" id="saver-min" min="0" max="120" step="1" inputmode="numeric" value="3">
+          <p class="field-hint">0 にすると薄暗くなりません。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 受渡・記録 ===== -->
+    <section id="view-records" role="tabpanel" aria-labelledby="tab-records" class="hidden">
+      <div class="session-bar">
+        <div>
+          <p class="session-name" id="session-name">営業回：—</p>
+          <p class="session-sub" id="session-sub"></p>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <!-- 稽古用の仕切り。本番と同じ DB のまま、売上も在庫も番号札も
+               別の営業回にするので、本番の数字に一切混ざらない。 -->
+          <button type="button" class="cta-ghost" id="session-test"
+                  style="min-height:var(--tap);font-size:15px;padding:0 24px">テストを始める</button>
+          <button type="button" class="cta-ghost" id="session-new"
+                  style="min-height:var(--tap);font-size:15px;padding:0 24px">締めて次の回を始める</button>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:34px">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
+          <h2 class="sec-title" style="margin:0">売上</h2>
+          <button type="button" class="cta-ghost" id="price-btn" style="min-height:var(--tap);font-size:16px;padding:0 28px">単価・在庫の設定</button>
+        </div>
+        <div class="figures" id="figures" style="margin-top:20px"></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
+          <h2 class="sec-title" style="margin:0">番号札の状況</h2>
+          <p class="tags-count" id="tags-count"></p>
+        </div>
+        <div class="tags-grid" id="tags-grid"></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center;margin-bottom:20px">
+          <h2 class="sec-title" style="margin:0">注文の記録</h2>
+          <span style="display:flex;gap:10px;flex-wrap:wrap">
+            <button type="button" class="cta-ghost" id="csv-btn" style="min-height:var(--tap);font-size:16px;padding:0 28px">明細CSV</button>
+            <button type="button" class="cta-ghost" id="csv-sum-btn" style="min-height:var(--tap);font-size:16px;padding:0 28px">集計CSV（現金照合）</button>
+          </span>
+        </div>
+        <div class="tbl-scroll">
+          <table>
+            <caption class="sr-only">全注文の記録。受付時刻、番号、商品、個数、金額、状態、操作。</caption>
+            <thead><tr>
+              <th scope="col">受付</th><th scope="col">番号</th><th scope="col">商品</th>
+              <th scope="col">カップ数</th><th scope="col">金額</th><th scope="col">状態</th>
+              <th scope="col" style="text-align:right">操作</th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="nav-mini">
+  <button type="button" class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav-menu" aria-label="担当する画面を切り替える">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+      <path d="M4 7h16M4 12h16M4 17h16"/>
+    </svg>
+  </button>
+  <div class="nav-menu" id="nav-menu" role="tablist" hidden>
+    <button type="button" role="tab" id="tab-order"   aria-controls="view-order"   data-go="order" aria-current="page">受付</button>
+    <button type="button" role="tab" id="tab-kitchen" aria-controls="view-kitchen" data-go="kitchen">厨房</button>
+    <button type="button" role="tab" id="tab-pay"     aria-controls="view-pay"     data-go="pay">支払い口</button>
+    <button type="button" role="tab" id="tab-amount"  aria-controls="view-amount"  data-go="amount">金額表示</button>
+    <button type="button" role="tab" id="tab-ready"   aria-controls="view-ready"   data-go="ready">受渡</button>
+    <button type="button" role="tab" id="tab-records" aria-controls="view-records" data-go="records">記録・売上</button>
+    <button type="button" role="tab" id="tab-control" aria-controls="view-control" data-go="control">管理</button>
+    <button type="button" role="tab" id="tab-call"    aria-controls="view-call"    data-go="call">呼び出し表示</button>
+  </div>
+</div>
+
+<button type="button" class="kiosk-escape" id="kiosk-escape"
+        aria-label="スタッフ用：画面を切り替える"></button>
+
+<!-- 省エネの幕。薄暗くするだけで、何が起きているかは読めるままにしておく。
+     どこを触っても明るさが戻る。受渡と支払い口では、仕事が入った瞬間に自動で戻る。 -->
+<div class="saver" id="saver" hidden>
+  <p class="saver-note">タップで明るさを戻します</p>
+</div>
+
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<!-- 受付機を選ぶ。起動して最初に出る 1 枚。
+     既に起動している受付機は押せない。同じ番号で 2 台立てると、受付係も
+     受渡口も「どちらの端末の注文か」を追えなくなるため。
+     選ぶまで受付は使えない（この 1 枚が受付の画面を覆う）。 -->
+<div class="modal" id="m-desk" role="dialog" aria-modal="true" aria-labelledby="desk-h">
+  <div class="sheet" style="max-width:640px">
+    <h2 id="desk-h">この端末はどの受付機ですか？</h2>
+    <p class="sheet-sub" id="desk-sub" style="margin:10px 0 0">起動している受付機は選べません。</p>
+    <div class="desk-pick" id="desk-pick"></div>
+    <p class="err" id="desk-err"></p>
+    <!-- 選び直しをやめる道。まだ名乗っていない端末には出さない（選ばないと受付は使えない）。 -->
+    <div class="cta-row" style="justify-content:center">
+      <button type="button" class="cta-ghost" id="desk-cancel" hidden>やめる</button>
+    </div>
+  </div>
+</div>
+
+<!-- アレルギー。食べ物を出す以上、出さないという選択肢が無い。
+     お客様が自分で開いて確かめられる位置に置く（受付係に口頭で訊かせない）。 -->
+<div class="modal" id="m-allergy" role="dialog" aria-modal="true" aria-labelledby="allergy-h">
+  <div class="sheet" style="max-width:560px">
+    <h2 id="allergy-h">アレルギー情報</h2>
+    <p class="sheet-sub" id="allergy-sub"></p>
+    <div class="allergy-grid" id="allergy-list"></div>
+    <p class="allergy-note">
+      すべて同じ調理場・同じ器具で作っています。<br>
+      表示のない原材料が微量に混入する可能性を、完全には防げません。
+    </p>
+    <div class="cta-row" style="justify-content:center">
+      <button type="button" class="cta" id="allergy-close">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 確認 -->
+<!-- 受付。テンキーの「決定」は押し間違えやすく、そのまま注文が立つ。最後に一度だけ確かめる。 -->
+<div class="modal" id="m-place" role="dialog" aria-modal="true" aria-labelledby="place-h">
+  <div class="sheet">
+    <h2 id="place-h">番号札を取りましたか？</h2>
+    <p class="sheet-sub" id="place-sub" style="margin:10px 0 0"></p>
+    <!-- ケースから札を 1 枚取る、という行為そのものを描く。
+         番号を読み合わせるだけでは、札がケースに残ったまま確定される事故
+         （画面では出ていることになっているのに、お客様は何も持っていない）を
+         防げない。確かめる対象を「番号」ではなく「取ったかどうか」にする。
+
+         ケースは透明。中の札が透けて見えることで「ここから 1 枚抜く」と読める。
+         透け方は、面を薄く塗って奥の稜線を細く残すことで出す。
+         取り上げた札には実際の番号を入れる。番号が入ると、手元の札と
+         見比べる対象になり、絵が案内から確認の手がかりに変わる。 -->
+    <svg class="place-ill" viewBox="40 -6 196 156" fill="none" aria-hidden="true"
+         stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+
+      <!-- 取り上げた 1 枚。わずかに傾けて、抜き上げた途中に見せる。
+           ケースから十分に離すと「抜き上げた」になる。近いと「刺さっている」に見える。 -->
+      <g transform="rotate(-9 191 40)">
+        <rect x="158" y="2" width="66" height="78" rx="12" stroke-width="2.6"/>
+        <circle cx="191" cy="17" r="4" stroke-width="2.2"/>
+        <path d="M171 28h40" stroke-width="1.4" opacity=".4"/>
+        <text class="place-tag-num" id="place-tag-num" x="191" y="62"
+              text-anchor="middle" stroke="none" fill="currentColor">0</text>
+      </g>
+
+      <!-- 抜く向き。ここだけが引かれていく。 -->
+      <path class="place-arrow" pathLength="100" stroke-width="2.6"
+            d="M114 86c13-11 27-20 40-26M150 54l11 8-7 10"/>
+
+      <!-- ケースに差さっている札。1 列に、奥へ重ねて差す。
+           奥から順に描く（手前の 1 枚が重なって前に出る）。 -->
+      <g stroke-width="2.2">
+        <rect x="64" y="74" width="30" height="40" rx="5"/>
+        <circle cx="79" cy="82" r="2.4" stroke-width="1.6"/>
+        <rect x="59" y="79" width="30" height="40" rx="5"/>
+        <circle cx="74" cy="87" r="2.4" stroke-width="1.6"/>
+        <rect x="54" y="84" width="30" height="40" rx="5"/>
+        <circle cx="69" cy="92" r="2.4" stroke-width="1.6"/>
+      </g>
+
+      <!-- 透明な札立て。1 列ぶんの幅しかない浅い器。
+           面を薄く塗り、奥の稜線を細く残すことで透け方を出す。 -->
+      <g fill="currentColor" fill-opacity=".05">
+        <path d="M46 104h52v28a6 6 0 0 1-6 6H52a6 6 0 0 1-6-6z" stroke-width="2.6"/>
+        <path d="M46 104l13-12h52l-13 12z" stroke-width="2.1"/>
+        <path d="M98 104l13-12v28l-13 12z" stroke-width="2.1"/>
+      </g>
+      <!-- 奥の稜線。細くすると、手前の面の向こう側に見える。 -->
+      <path d="M59 92v28M111 92v28" stroke-width="1.1" opacity=".38"/>
+      <!-- 面の照り。アクリルらしさはここで出る。 -->
+      <path d="M56 132l13-24" stroke-width="1.3" opacity=".32"/>
+      <path d="M65 134l13-24" stroke-width="1.3" opacity=".18"/>
+    </svg>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
+      <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">取りました・確定する</button>
+      <button type="button" class="cta-ghost" id="place-no" style="width:100%;justify-content:center">まだです・戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- 受付でご案内した時刻より後にしたい、と言われる場面。支払い口で直す。 -->
+<div class="modal" id="m-later" role="dialog" aria-modal="true" aria-labelledby="later-h">
+  <div class="sheet">
+    <h2 id="later-h">お越しの時刻を遅らせますか？</h2>
+    <p class="sheet-sub" id="later-sub"></p>
+    <div class="later-rows" id="later-rows"></div>
+    <p class="void-total" id="later-total"></p>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+      <button type="button" class="cta" id="later-yes" style="width:100%;justify-content:center">この時刻にする</button>
+      <button type="button" class="cta-plain" id="later-no" style="width:100%;justify-content:center">戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- 「3 つのうち 1 つは大丈夫です」。注文そのものは記録として変えず、
+     受け取らなかったカップ数だけを別に数える。金額も焼き待ちもこれを引いた数で動く。 -->
+<div class="modal" id="m-void" role="dialog" aria-modal="true" aria-labelledby="void-h">
+  <div class="sheet">
+    <h2 id="void-h">受け取らないぶんを選んでください</h2>
+    <p class="sheet-sub" id="void-sub"></p>
+    <div class="void-rows" id="void-rows"></div>
+    <p class="void-total" id="void-total"></p>
+    <p class="void-note" id="void-note"></p>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+      <button type="button" class="cta" id="void-yes" style="width:100%;justify-content:center">この内容にする</button>
+      <button type="button" class="cta-plain" id="void-no" style="width:100%;justify-content:center">戻る</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="m-unpaid" role="dialog" aria-modal="true" aria-labelledby="unpaid-h">
+  <div class="sheet">
+    <h2 id="unpaid-h">この注文はまだ未払いです</h2>
+    <p class="sheet-sub" id="unpaid-sub"></p>
+    <div class="recap">
+      <div class="recap-total">
+        <span class="total-label">お預かりする金額</span>
+        <span class="total-yen" id="unpaid-total" style="font-size:clamp(34px,5vw,48px)">0<small>円</small></span>
+      </div>
+    </div>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+      <button type="button" class="cta" id="unpaid-take" style="width:100%;justify-content:center">受け取って渡す</button>
+      <!-- 代金を受け取らない道。取り返しが付きにくいので赤で示し、
+           「戻る」とは離して置く（同じ形・同じ色で 12px 隣接していた）。 -->
+      <button type="button" class="cta-ghost cta-danger" id="unpaid-skip"
+              style="width:100%;justify-content:center">代金を受け取らずに渡す</button>
+      <button type="button" class="cta-plain" id="unpaid-back"
+              style="width:100%;justify-content:center">戻る</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="m-confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-h">
+  <div class="sheet">
+    <h2 id="confirm-h">この内容で注文しますか？</h2>
+    <p class="sheet-sub" id="confirm-sub">よろしければ、お渡しする番号札の番号を入力してください。</p>
+    <!-- 受け取りの見込み。確定してから初めて「30分後です」と知らせるのでは、
+         断る機会をお客様から奪うことになる。 -->
+    <p class="confirm-pickup" id="confirm-pickup" hidden></p>
+    <div class="recap">
+      <div class="recap-items" id="recap-items"></div>
+      <div class="recap-total">
+        <span class="total-label">合計</span>
+        <span class="total-yen" id="recap-total" style="font-size:clamp(34px,5vw,48px)">0<small>円</small></span>
+        <img src="art/yuzu-sm.png" alt="" aria-hidden="true" style="width:74px">
+      </div>
+    </div>
+    <div class="pad" id="pad">
+      <p class="pad-head">ケースから札を1枚取り、その番号を入力</p>
+      <p class="pad-display" id="pad-display" data-empty="true" role="status" aria-live="polite">
+        <span class="sr-only">入力中の番号 </span><span id="pad-value">—</span></p>
+      <p class="pad-err" id="pad-err" role="alert"></p>
+      <div class="pad-keys" id="pad-keys">
+        <button type="button" data-k="1">1</button>
+        <button type="button" data-k="2">2</button>
+        <button type="button" data-k="3">3</button>
+        <button type="button" data-k="4">4</button>
+        <button type="button" data-k="5">5</button>
+        <button type="button" data-k="6">6</button>
+        <button type="button" data-k="7">7</button>
+        <button type="button" data-k="8">8</button>
+        <button type="button" data-k="9">9</button>
+        <button type="button" data-k="back" class="pad-fn" aria-label="1文字消す">消す</button>
+        <button type="button" data-k="0">0</button>
+        <button type="button" data-k="ok" class="pad-ok" id="pad-ok" disabled>決定</button>
+      </div>
+    </div>
+
+    <div class="cta-row">
+      <button type="button" class="cta-ghost" id="confirm-back">
+        <svg width="30" height="12" viewBox="0 0 30 12" fill="none" aria-hidden="true">
+          <path d="M30 6H3M8 1L3 6l5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        戻る
+      </button>
+      <button type="button" class="cta-ghost" id="confirm-now">
+        注文を確定する
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 完了 -->
+<div class="modal done" id="m-done" role="dialog" aria-modal="true" aria-labelledby="done-h">
+  <div class="sheet" id="done-sheet">
+    <p class="done-label" id="done-h">ご注文ありがとうございました</p>
+    <p class="done-num" id="done-num">#001</p>
+    <!-- 何時に来ればよいか。番号の次に大きく出す。ここを小さくすると、
+         お客様は番号だけ覚えてその場に立ち続ける。 -->
+    <p class="done-pickup" id="done-pickup" hidden></p>
+    <p class="done-meta" id="done-meta"></p>
+    <!-- 次に何をすればよいかの案内。文字だけだと読まれずに立ち去られるので、
+         絵を添える。意匠に合わせて細い線で描く（写真やアイコン集は使わない）。 -->
+    <div class="done-guide" id="done-guide" data-mode="tag">
+      <!-- 番号札あり：札を持った人が、左の会計口へ進む。
+           受付機はすべて支払い口より右にあるので、矢印は必ず左を向く。
+           向きを間違えた案内は、無い案内より悪い。
+
+           構図は「物の並び」ではなく「どっちへ行くか」にしてある。
+           札と台を並べるだけでは、お客様から見て自分がどこに居るのかが
+           分からない。右端に人を置くと、自分の位置と進む先が同時に読める。 -->
+      <svg class="guide-ill" id="guide-tag" viewBox="0 0 300 96" fill="none" aria-hidden="true"
+           stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <!-- 会計口（左）。台・レジ・硬貨。
+             硬貨は台の上に乗せる（宙に浮かせると何の丸か読めない）。
+             「¥」は上の払いが要る。縦棒と横線だけだと「キ」に見える。 -->
+        <path d="M8 80h100"/>
+        <path d="M18 80V46a4 4 0 0 1 4-4h28a4 4 0 0 1 4 4v34"/>
+        <path d="M24 50h20"/>
+        <path d="M24 60h10M40 60h4"/>
+        <path d="M24 69h10M40 69h4"/>
+        <circle cx="86" cy="62" r="15"/>
+        <path d="M78 54l8 8 8-8"/>
+        <path d="M86 62v9"/>
+        <path d="M78 64.5h16M78 69h16"/>
+
+        <!-- 進む向き。ここだけが引かれていく。 -->
+        <path class="guide-arrow" pathLength="100" d="M212 56H128M139 47l-11 9 11 9"/>
+
+        <!-- いまここ。札を持って立っている人。 -->
+        <circle cx="258" cy="22" r="9"/>
+        <path d="M258 32v26"/>
+        <path d="M258 58l-9 20M258 58l9 20"/>
+        <path d="M258 40l-16 6"/>
+        <rect x="228" y="40" width="16" height="21" rx="4"/>
+        <circle cx="236" cy="46" r="1.6"/>
+        <path d="M233 52h6"/>
+      </svg>
+
+      <!-- 番号札なし：その場でお品物と会計。受渡口も同じ側（左）。 -->
+      <svg class="guide-ill" id="guide-notag" viewBox="0 0 300 96" fill="none" aria-hidden="true"
+           stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <!-- 受渡口（左）。台と、その上に置かれたカップ。 -->
+        <path d="M8 80h100"/>
+        <path d="M18 80V46a4 4 0 0 1 4-4h28a4 4 0 0 1 4 4v34"/>
+        <path d="M24 50h20"/>
+        <path d="M24 60h10M40 60h4"/>
+        <path d="M24 69h10M40 69h4"/>
+        <path d="M72 48h28l-3 24a5 5 0 0 1-5 4h-12a5 5 0 0 1-5-4z"/>
+        <path d="M69 48h34"/>
+
+        <!-- 進む向き -->
+        <path class="guide-arrow" pathLength="100" d="M212 56H128M139 47l-11 9 11 9"/>
+
+        <!-- いまここ -->
+        <circle cx="258" cy="22" r="9"/>
+        <path d="M258 32v26"/>
+        <path d="M258 58l-9 20M258 58l9 20"/>
+        <path d="M258 40l-16 6"/>
+      </svg>
+
+      <p class="done-next" id="done-next"></p>
+    </div>
+    <button type="button" class="cta">閉じる</button>
+  </div>
+</div>
+
+<!-- 確認。OS の confirm() は意匠から浮くうえ、補足を添えられない。
+     「支払い済みの注文を中止する」のような、返金指示が要る場面で効いてくる。 -->
+<div class="modal" id="m-ask" role="dialog" aria-modal="true" aria-labelledby="ask-h">
+  <div class="sheet" style="max-width:520px">
+    <h2 id="ask-h">よろしいですか？</h2>
+    <p class="sheet-sub" id="ask-sub" style="margin:10px 0 0"></p>
+    <p class="sheet-sub" id="ask-warn" style="margin:12px 0 0;color:var(--red);font-weight:700"></p>
+    <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
+      <button type="button" class="cta" id="ask-yes" style="width:100%;justify-content:center">はい</button>
+      <button type="button" class="cta-ghost" id="ask-no" style="width:100%;justify-content:center">いいえ</button>
+    </div>
+  </div>
+</div>
+
+<!-- 単価 -->
+<div class="modal" id="m-price" role="dialog" aria-modal="true" aria-labelledby="price-h">
+  <div class="sheet" style="max-width:520px;text-align:left">
+    <h2 id="price-h" style="text-align:center">単価・在庫の設定</h2>
+    <div id="price-fields"></div>
+    <p class="err" id="price-err"></p>
+    <div class="cta-row">
+      <button type="button" class="cta-ghost" id="price-cancel">やめる</button>
+      <button type="button" class="cta" id="price-save">保存する</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
