@@ -889,8 +889,14 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .plate-name{font-family:var(--serif);color:var(--brown);font-size:18px;min-width:3.5em}
 .plate-row .field{margin:0}
 .plate-row .field input{width:5.5em}
-.plate-use{display:flex;align-items:center;gap:8px;min-height:var(--tap);cursor:pointer;
-  margin-left:auto;font-size:15px;color:var(--brown-soft)}
+.plate-state{margin-left:auto;font-size:15px;letter-spacing:.06em;color:#1F7A4D;font-weight:700}
+.plate-state[data-use="false"]{color:var(--red)}
+.plate-mode{min-height:var(--tap);padding:0 20px;border-radius:var(--r-ctl);cursor:pointer;
+  background:var(--brown);border:1px solid var(--brown);color:var(--lift);
+  font-size:15px;letter-spacing:.06em}
+.plate-mode:hover{background:#4E3120}
+.plate-mode[aria-pressed="true"]{background:#1F7A4D;border-color:#1F7A4D}
+.plate-mode[aria-pressed="true"]:hover{background:#176139}
 .later-step{min-height:clamp(56px,8vh,72px);min-width:clamp(78px,12vw,110px);
   border-radius:var(--r-ctl);cursor:pointer;font-family:var(--serif);
   font-size:clamp(20px,3vh,28px);color:var(--brown);background:var(--lift);

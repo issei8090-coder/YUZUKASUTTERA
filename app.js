@@ -944,10 +944,11 @@ function paintPlates(){
         <input type="number" id="plate-p-${key}" data-plate="${key}" data-k="people"
                min="0" max="12" step="1" inputmode="numeric" value="${p.people}">
       </div>
-      <label class="plate-use">
-        <input type="checkbox" data-plate="${key}" data-k="use" ${p.use ? 'checked' : ''}>
-        <span>${p.use ? '使う' : '予備'}</span>
-      </label>
+      <span class="plate-state" data-use="${p.use}">${p.use ? '使っています' : '停止中'}</span>
+      <button type="button" class="plate-mode" data-act="platemode" data-plate="${key}"
+              data-to="${p.use ? 'stop' : 'use'}" aria-pressed="${!p.use}"
+              aria-label="台${key} を${p.use ? '停止する' : '使う'}">
+        ${p.use ? '停止する' : '使う'}</button>
     </div>`;
   }).join('');
   // 打っている最中の欄に戻る（描き直しで指が外れると数字を打ち切れない）。
@@ -1428,11 +1429,10 @@ async function setKitchen(patch){
   catch(err){ toast(writeHint(err, '厨房の体制を共有できませんでした')); }
 }
 $('kit-plates')?.addEventListener('change', e=>{
-  const el = e.target.closest('[data-plate]');
+  const el = e.target.closest('input[data-plate]');
   if(!el) return;
   const key = el.dataset.plate, k = el.dataset.k;
-  const v = k === 'use' ? el.checked : Number(el.value);
-  setKitchen({ plates: { ...kitchen.plates, [key]: { ...kitchen.plates[key], [k]: v } } });
+  setKitchen({ plates: { ...kitchen.plates, [key]: { ...kitchen.plates[key], [k]: Number(el.value) } } });
 });
 $('kit-cycle')?.addEventListener('change', e=>setKitchen({ cycleMin: Number(e.target.value) }));
 $('kit-margin')?.addEventListener('change', e=>setKitchen({ margin: Number(e.target.value) }));
@@ -4128,6 +4128,30 @@ document.addEventListener('click', e=>{
     case 'deal-go': applyDeal(); return;
 
     // 「3 つのうち 1 つは大丈夫です」。注文は変えず、やめたぶんを別に数える。
+    // 台の停止・再開。焼ける量と厨房の板の割り当てが、押した瞬間に変わる。
+    case 'platemode': {
+      const key = b.dataset.plate, use = b.dataset.to === 'use';
+      const p = kitchen.plates[key];
+      if(!p) return;
+      if(!use && usedPlates(kitchen).length <= 1){
+        toast('最後の 1 台は止められません。先に別の台を使う状態にしてください。');
+        return;
+      }
+      ask({
+        title: use ? `台${key} を使いますか？` : `台${key} を止めますか？`,
+        sub: use
+          ? `${p.holes}マス・${p.people}人 が加わります。焼ける量の見積もりと、厨房の板の割り当てが変わります。`
+          : `${p.holes}マス・${p.people}人 が外れます。いま焼いている分はそのままです。`,
+        warn: (()=>{
+          const next = { ...kitchen, plates: { ...kitchen.plates, [key]: { ...p, use } } };
+          return `毎分 ${rateFromKitchen(kitchen).toFixed(1)} → `
+               + `${rateFromKitchen(next).toFixed(1)} カップになります。`;
+        })(),
+        onYes: ()=>setKitchen({ plates: { ...kitchen.plates, [key]: { ...p, use } } })
+      });
+      return;
+    }
+
     case 'voidpart': openVoid(id); return;
 
     // 約束の時刻に来ない人を後回しにする。来たらいつでも渡せる。
