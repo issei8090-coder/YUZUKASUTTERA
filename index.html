@@ -2161,6 +2161,10 @@ if (location.protocol === 'file:') {
         <p class="ctl-hint" id="pace-hint"></p>
       </div>
 
+      <!-- ルールが古いと、ここの設定は全部サーバーに拒否される。
+           押しても何も起きない状態の原因が、画面から分かるようにしておく。 -->
+      <p class="ctl-hint" id="rules-state" data-warn="true" role="alert" hidden></p>
+
       <div class="panel">
         <h2 class="sec-title">受け取り時刻のご案内</h2>
         <p class="ctl-note">

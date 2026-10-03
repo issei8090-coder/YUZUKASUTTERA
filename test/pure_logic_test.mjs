@@ -92,7 +92,10 @@ eq('壊れた値は空', decodeLines('plain:x|:'), []);
 console.log('\n[8] 焼き待ちと受け取り時刻');
 // 作り置きができないので、注文は「まだ焼けていないカップ数」で数える。
 // 部分的に受け取った分を引かないと、焼き待ちが実際より多く出て時刻が遅れていく。
-const NOW = Date.parse('2026-10-03T12:00:00+09:00');
+// 端末の時計で 10/3 12:00。絶対時刻（+09:00 付き）で書くと、UTC で走る CI では
+// hhmm が 03:08 を返して落ちる。hhmm は会場の時計をそのまま使う設計なので、
+// テストの基準もローカル時刻で作る。
+const NOW = new Date(2026, 9, 3, 12, 0, 0, 0).getTime();
 const cup = (q, st, minAgo, made, extra = {}) => ({
   status: st, quantity: q, createdMs: NOW - minAgo * 60000,
   items: [{ flavor: 'plain', quantity: q }], made, ...extra });

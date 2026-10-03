@@ -18,12 +18,15 @@ elif [ -f "$GOROOT/misc/wasm/wasm_exec.js" ]; then cp "$GOROOT/misc/wasm/wasm_ex
 else echo "wasm_exec.js が見つかりません" >&2; exit 1
 fi
 
+# CI (.github/workflows/deploy.yml) と同じ一式を、同じ順で走らせる。
+# ここが CI より少ないと「手元は通るのに配信されない」が起きる（実際に 3 回起きた）。
+# TZ=UTC でも回すのは、CI が UTC で走るため。時刻の表示は端末のローカル時刻を
+# 使う設計なので、テストがそこに引きずられていないことを確かめる。
 echo "==> 画面側のテスト"
-node test/pure_logic_test.mjs   >/dev/null
-node test/dom_wiring_test.mjs   >/dev/null
-node test/pure_parity_test.mjs  >/dev/null
-node test/wasm_contract_test.mjs >/dev/null
-node test/audio_smoke_test.mjs  >/dev/null
+for t in wasm_contract wasm_ready_guard tag_contract pure_logic pure_parity dom_wiring audio_smoke; do
+  node "test/${t}_test.mjs" >/dev/null || { echo "!! test/${t}_test.mjs が失敗しました" >&2; exit 1; }
+done
+TZ=UTC node test/pure_logic_test.mjs >/dev/null || { echo "!! pure_logic が UTC で失敗しました（CI は UTC で走ります）" >&2; exit 1; }
 echo "    すべて通りました"
 
 if [ ! -d vendor/firebase ]; then

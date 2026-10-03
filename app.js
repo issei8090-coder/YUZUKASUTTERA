@@ -757,6 +757,7 @@ function renderDeskAdmin(){
 
    判断の計算は lib/pure.js にあり、Node からテストできる。ここは配線だけ。
    ============================================================ */
+let rulesNote     = '';             // ルールが古いときの説明。空なら公開済み
 let closeAt       = '';             // config/closeAt: 'HH:MM'。過ぎたら受付を止める
 let reserveMode   = 'auto';          // config/reserve: 'auto' | 'on' | 'off'
 let kitchen       = { ...KITCHEN_DEFAULT };   // config/kitchen: 何人で、1人いくつ焼くか
@@ -870,6 +871,11 @@ function paintReserveAdmin(){
         + (stock === 0 ? '（売り切れ）' : out !== null ? `・約${out}分で尽きます` : '')
         + '</span>';
     }).join('　／　');
+  }
+  const rules = $('rules-state');
+  if(rules){
+    rules.hidden = !rulesNote;
+    rules.textContent = rulesNote;
   }
   const closeEl = $('close-at');
   if(closeEl && document.activeElement !== closeEl) closeEl.value = closeAt;
@@ -1416,15 +1422,23 @@ async function releaseDesk(id, force){
    消えた名乗りだけでは端末が取り直してしまうので、ここが本体。 */
 async function kickDesk(id){
   const holder = desksOnline[id]?.client || '';
+  let marked = true;
   try{
     await authReady;
     // 端末が居ない席は、印を残しても意味がない（次に取る端末が困るだけ）。
     if(holder) await tracked(update(ref(db,'config/desks/'+id), { kick: holder }));
-    await releaseDesk(id, true);
-    toast(`${deskLabel(id)} を解除しました。`, 'info');
   }catch(e){
-    toast(writeHint(e, '受付機を解除できませんでした'));
+    // 印が書けなくても、席を空けるところまでは必ずやる。
+    // ここで止めると「押しても何も起きない」に戻る（ルール未公開のとき実際に起きた）。
+    marked = false;
+    console.error('強制解除の印を残せません:', e);
   }
+  await releaseDesk(id, true);
+  toast(marked
+    ? `${deskLabel(id)} を解除しました。`
+    : `${deskLabel(id)} を空けました。ただし元の端末が取り直す場合があります`
+      + '（ルールが古いままかもしれません。管理画面の下を確認してください）。',
+    marked ? 'info' : 'error');
 }
 
 /* 席を掴む。購読の値で判定すると、2 台が同時に同じ番号を押したとき両方通る。
@@ -2176,7 +2190,14 @@ const RULES_VERSION = 'v13';
 (async ()=>{
   try{
     await get(ref(db, 'rulesVersion/' + RULES_VERSION));
+    rulesNote = '';
+    renderDeskAdmin();
   }catch(e){
+    // 本部が自分で切り分けられるように、管理画面にも同じことを出す。
+    rulesNote = `データベースのルールが古いままです（${RULES_VERSION} 未公開）。`
+      + '待機・強制解除・厨房の人数・終了時刻は保存できません。'
+      + 'database.rules.json を Firebase コンソールで公開してください。';
+    renderDeskAdmin();
     document.body.insertAdjacentHTML('afterbegin',
       '<div role="alert" style="background:#b91c1c;color:#fff;padding:14px 18px;text-align:center;' +
       'font-weight:700;line-height:1.8;position:sticky;top:0;z-index:99">' +
