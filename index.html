@@ -892,6 +892,12 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .ops-card[data-held="true"]{opacity:.72}
 .ops-state[data-kind="held"]{color:var(--warn)}
 
+/* 稽古中の帯。赤（＝送れていない）とは別の色にする。 */
+.test-state{position:sticky;top:0;z-index:62;padding:10px 16px;text-align:center;
+  background:#6E5A33;color:var(--lift);font-size:15px;font-weight:700;letter-spacing:.06em}
+.test-state[hidden]{display:none}
+.session-name[data-test="true"]::after{content:"　テスト中";color:#8A6410}
+
 .toast-undo{margin-left:16px;min-height:48px;padding:0 22px;border-radius:999px;
   border:1px solid currentColor;background:transparent;color:inherit;
   font-size:16px;font-weight:700;cursor:pointer}
@@ -1943,6 +1949,10 @@ if (location.protocol === 'file:') {
 <body data-tab="order">
 
 <div id="net-state" class="net-state" role="status" hidden></div>
+<!-- 稽古中の目印。お客様に向く画面にも出す。これが出ている間に受けた注文は
+     本番の売上にも在庫にも入らないので、本物の注文を取ってしまうと消える。 -->
+<div id="test-state" class="test-state" hidden role="status" aria-live="polite">
+  テスト中です。ここで受けた注文は売上にも在庫にも入りません</div>
 
 <!-- 音が止まっているときだけ出る。押す操作そのものが iOS の解錠条件を満たす。 -->
 <button type="button" class="audio-wake" id="audio-wake" hidden>
@@ -2451,7 +2461,14 @@ if (location.protocol === 'file:') {
           <p class="session-name" id="session-name">営業回：—</p>
           <p class="session-sub" id="session-sub"></p>
         </div>
-        <button type="button" class="cta-ghost" id="session-new" style="min-height:var(--tap);font-size:15px;padding:0 24px">締めて次の回を始める</button>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <!-- 稽古用の仕切り。本番と同じ DB のまま、売上も在庫も番号札も
+               別の営業回にするので、本番の数字に一切混ざらない。 -->
+          <button type="button" class="cta-ghost" id="session-test"
+                  style="min-height:var(--tap);font-size:15px;padding:0 24px">テストを始める</button>
+          <button type="button" class="cta-ghost" id="session-new"
+                  style="min-height:var(--tap);font-size:15px;padding:0 24px">締めて次の回を始める</button>
+        </div>
       </div>
 
       <div class="panel" style="margin-top:34px">

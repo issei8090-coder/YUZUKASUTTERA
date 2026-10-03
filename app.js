@@ -4217,6 +4217,10 @@ document.addEventListener('click', e=>{
    リハーサルと本番を同じ DB で回すための仕切り。注文は 1 件も消さず、
    集計と画面の対象だけを切り替える。「本番前にデータを消す」という
    危険な手作業を無くすのが目的。 */
+/* 稽古中かどうか。営業回の名前で見分ける（端末に覚えさせない。
+   受付が 4 台あるので、端末の記憶だと隣と食い違う）。 */
+const isTest = () => /^test-/.test(session || '');
+
 function paintSession(){
   const el = $('session-name');
   if(!el) return;
@@ -4224,6 +4228,15 @@ function paintSession(){
   el.textContent = session === DEFAULT_SESSION
     ? '営業回：既定（仕切りなし）'
     : `営業回：${session}`;
+  el.dataset.test = String(isTest());
+  const tb = $('test-state');
+  if(tb) tb.hidden = !isTest();
+  document.body.dataset.test = String(isTest());
+  const tbtn = $('session-test');
+  if(tbtn) tbtn.textContent = isTest() ? 'テストを終えて本番に戻す' : 'テストを始める';
+  const nbtn = $('session-new');
+  // 稽古中に「締めて次の回」を押されると、本番の営業回が分からなくなる。
+  if(nbtn) nbtn.disabled = isTest();
   const sub = $('session-sub');
   if(sub) sub.textContent =
     `この回の注文 ${live.length}件 ／ これより前の記録 ${allOrders.length - live.length}件（消さずに残っています）`
@@ -4233,6 +4246,55 @@ function paintSession(){
 /* ひとつ前の営業回。締めを押し間違えたとき、戻すのに要るのはこの文字列だけ。
    画面にもどこにも残っていないと、CSV のファイル名から拾うしかなかった。 */
 let prevSession = (()=>{ try{ return localStorage.getItem('prevSession') || ''; }catch(e){ return ''; } })();
+
+/* ---------- テスト（稽古） ----------
+   本番と同じ DB のまま、営業回だけを test- で始まる名前に切り替える。
+   画面も売上も在庫も番号札も営業回で絞られているので、これだけで
+   「カップ数も変わらない・売上にも入らない」が成り立つ。
+   終えると、ひとつ前の営業回にそのまま戻る。 */
+$('session-test')?.addEventListener('click', ()=>{
+  if(isTest()){
+    const back = prevSession;
+    if(!back){ toast('戻る先の営業回が分かりません。記録・売上から選び直してください。'); return; }
+    ask({
+      title: 'テストを終えて本番に戻しますか？',
+      sub: `営業回を ${back} に戻します。テスト中に受けた注文は残りますが、画面からは外れます。`,
+      warn: 'テストの注文は売上にも在庫にも入りません。',
+      onYes: async ()=>{
+        try{
+          await authReady;
+          const from = session;
+          await tracked(set(ref(db,'config/session'), back));
+          prevSession = from;
+          try{ localStorage.setItem('prevSession', from); }catch(e){}
+          paintSession();
+          toast(`本番（${back}）に戻しました。`, 'ok');
+        }catch(e){ toast(writeHint(e, '本番に戻せませんでした')); }
+      }
+    });
+    return;
+  }
+  const d = new Date(Date.now() + 9*3600*1000);
+  const id = 'test-' + d.toISOString().slice(0,16).replace(/[-:T]/g,'')
+                        .replace(/(\d{8})(\d{4})/,'$1-$2');
+  ask({
+    title: 'テストを始めますか？',
+    sub: 'いまの画面から注文・受渡・支払いを一通り試せます。'
+       + '売上・在庫・番号札はテスト用に 0 から始まります。',
+    warn: `終えると ${session} に戻ります。テスト中に本物の注文を受けないでください。`,
+    onYes: async ()=>{
+      try{
+        await authReady;
+        const from = session;
+        await tracked(set(ref(db,'config/session'), id));
+        prevSession = from;
+        try{ localStorage.setItem('prevSession', from); }catch(e){}
+        paintSession();
+        toast(`テストを始めました（${id}）。終えると ${from} に戻ります。`, 'ok', null, 9000);
+      }catch(e){ toast(writeHint(e, 'テストを始められませんでした')); }
+    }
+  });
+});
 
 $('session-new')?.addEventListener('click', ()=>{
   // 進行中の件数を実数で出す。「集計が 0 から始まります」を
