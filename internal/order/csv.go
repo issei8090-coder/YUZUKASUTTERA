@@ -82,13 +82,19 @@ func SummaryCSV(res DecodeResult) ([]byte, error) {
 		{"未収金額(円)", strconv.Itoa(s.UnpaidSales)},
 		{"　うち渡したのに未払い(円)", strconv.Itoa(s.UnpaidDeliveredSales)},
 		{"　うち渡したのに未払い(件)", strconv.Itoa(s.UnpaidDeliveredOrders)},
-		{"　うち支払い済みのまま中止(円)", strconv.Itoa(s.CancelledPaidSales)},
-		{"　うち支払い済みのまま中止(件)", strconv.Itoa(s.CancelledPaidOrders)},
-		{"支払い済み(件)", strconv.Itoa(s.PaidOrders)},
-		{"未払い(件)", strconv.Itoa(s.UnpaidOrders)},
-		{"注文件数(件)", strconv.Itoa(s.TotalOrders)},
-		{"平均客単価(円)", strconv.Itoa(s.AvgOrderYen)},
-		{"総カップ数", strconv.Itoa(s.TotalPacks)},
+		{"", ""},
+		// 中止された注文は受注額にも受取済みにも入らない。現金だけが手元に残るので、
+		// 未収の「うち」ではなく、返金すべき額として別に立てる。
+		// 親より子が大きい表（未収 400 の「うち」が 1,800）になっていた。
+		{"▲ 返金すべき金額(円)", strconv.Itoa(s.CancelledPaidSales)},
+		{"▲ 返金すべき件数(件)", strconv.Itoa(s.CancelledPaidOrders)},
+		{"金庫にあるべき額(円・返金前)", strconv.Itoa(s.PaidSales + s.CancelledPaidSales)},
+		{"", ""},
+		{"支払い済み(件・中止を除く)", strconv.Itoa(s.PaidOrders)},
+		{"未払い(件・中止を除く)", strconv.Itoa(s.UnpaidOrders)},
+		{"注文件数(件・中止を含む)", strconv.Itoa(s.TotalOrders)},
+		{"平均客単価(円・中止を除く)", strconv.Itoa(s.AvgOrderYen)},
+		{"注文カップ数(中止を除く)", strconv.Itoa(s.TotalPacks)},
 		{"受渡完了(カップ)", strconv.Itoa(s.CompletedPacks)},
 		{"未受渡(カップ)", strconv.Itoa(s.PendingPacks)},
 		{"　うち未処理(カップ)", strconv.Itoa(s.QueuePacks)},
@@ -96,6 +102,29 @@ func SummaryCSV(res DecodeResult) ([]byte, error) {
 	}
 	for _, st := range StatusOrder {
 		rows = append(rows, []string{fmt.Sprintf("注文件数：%s(件)", StatusLabel(st)), strconv.Itoa(s.OrderCounts[string(st)])})
+	}
+
+	// 差額の内訳。件数だけでは現物を探しに行けない。番号札は日中に使い回される
+	// （当日 42 番号のうち 28 番号が複数の注文で重複した）ので、注文IDと受付時刻で出す。
+	need := []Order{}
+	for _, o := range res.Orders {
+		if o.Paid && o.Status == StatusCancelled {
+			need = append(need, o)
+		} else if !o.Paid && o.Status == StatusCompleted {
+			need = append(need, o)
+		}
+	}
+	if len(need) > 0 {
+		rows = append(rows, []string{"", ""}, []string{"■ 要対応の注文", ""},
+			[]string{"区分", "注文番号", "注文ID", "受付日時", "金額(円)", "商品", ""})
+		for _, o := range need {
+			kind := "要返金（支払い済みのまま中止）"
+			if o.Status == StatusCompleted {
+				kind = "取りはぐれ（渡したのに未払い）"
+			}
+			rows = append(rows, []string{kind, o.Number, o.ID, o.CreatedDisplay(),
+				strconv.Itoa(o.Price), o.FlavorText(), ""})
+		}
 	}
 	if s.InvalidRecords > 0 {
 		rows = append(rows, []string{"読み取れなかったレコード(件)", strconv.Itoa(s.InvalidRecords)})

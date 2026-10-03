@@ -104,6 +104,13 @@
           }
         }
       },
+      "onhand": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "$flavor": {
+          ".validate": "$flavor.matches(/^[a-z][a-z0-9_]{0,31}$/) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 9999"
+        }
+      },
       "saver": {
         ".read": "auth != null",
         ".write": "auth != null",
@@ -183,10 +190,10 @@
           "$index": {
             ".validate": "newData.hasChildren(['flavor', 'quantity', 'unitPrice', 'price']) && newData.child('price').val() === newData.child('unitPrice').val() * newData.child('quantity').val() && (!root.child('orders').child($orderId).child('status').exists() || data.exists())",
             "flavor": {
-              ".validate": "newData.isString() && newData.val().length <= 32 && (!root.child('config/prices').exists() || root.child('config/prices').hasChild(newData.val())) && (!data.exists() || newData.val() === data.val())"
+              ".validate": "newData.isString() && newData.val().length <= 32 && ( (!data.exists() && (!root.child('config/prices').exists() || root.child('config/prices').hasChild(newData.val()))) || newData.val() === data.val() )"
             },
             "quantity": {
-              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 99 && (!root.child('config/limits/maxPerOrder').exists() || newData.val() <= root.child('config/limits/maxPerOrder').val()) && (!data.exists() || newData.val() === data.val())"
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 99 && ( (!data.exists() && (!root.child('config/limits/maxPerOrder').exists() || newData.val() <= root.child('config/limits/maxPerOrder').val())) || newData.val() === data.val() )"
             },
             "unitPrice": {
               ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 100000 && (!data.exists() || newData.val() === data.val())"
@@ -230,7 +237,7 @@
           ".validate": "newData.isNumber() && newData.val() > 0"
         },
         "paid": {
-          ".validate": "newData.isBoolean() && (newData.val() === false || !root.child('orders').child($orderId).child('status').exists() || root.child('orders').child($orderId).child('status').val() !== 'cancelled')"
+          ".validate": "newData.isBoolean() && (newData.val() === false || (data.exists() && newData.val() === data.val()) || !root.child('orders').child($orderId).child('status').exists() || root.child('orders').child($orderId).child('status').val() !== 'cancelled')"
         },
         "paidMs": {
           ".validate": "newData.isNumber() && newData.val() > 0"

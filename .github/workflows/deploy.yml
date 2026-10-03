@@ -123,6 +123,9 @@ jobs:
         run: |
           mkdir -p public
           cp index.html app.js sw.js main.wasm wasm_exec.js firebase-config.js public/
+          # 当日その場で開く紙（運用マニュアルと店頭ポスター）。
+          cp manual.html public/ 2>/dev/null || true
+          [ -f poster.html ] && cp poster.html public/ || true
           # 画面が参照するものは全部入れる。ここから漏れると本番だけ壊れ、
           # ローカルでは動くので気づけない（実際に art/ が漏れていた）。
           cp -r art lib vendor public/

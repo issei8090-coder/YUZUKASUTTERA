@@ -12,6 +12,7 @@ import {
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
   soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
+  planDeal, dealDemand,
 } from '../lib/pure.js';
 
 let failures = 0;
@@ -92,10 +93,9 @@ eq('壊れた値は空', decodeLines('plain:x|:'), []);
 console.log('\n[8] 焼き待ちと受け取り時刻');
 // 作り置きができないので、注文は「まだ焼けていないカップ数」で数える。
 // 部分的に受け取った分を引かないと、焼き待ちが実際より多く出て時刻が遅れていく。
-// 端末の時計で 10/3 12:00。絶対時刻（+09:00 付き）で書くと、UTC で走る CI では
-// hhmm が 03:08 を返して落ちる。hhmm は会場の時計をそのまま使う設計なので、
-// テストの基準もローカル時刻で作る。
-const NOW = new Date(2026, 9, 3, 12, 0, 0, 0).getTime();
+// 基準は JST の 10/3 12:00。hhmm は JST 固定なので、端末のタイムゾーンに
+// 関わらず同じ時刻を返す（端末ローカルで作ると、JST 以外の端末で落ちる）。
+const NOW = Date.parse('2026-10-03T12:00:00+09:00');
 const cup = (q, st, minAgo, made, extra = {}) => ({
   status: st, quantity: q, createdMs: NOW - minAgo * 60000,
   items: [{ flavor: 'plain', quantity: q }], made, ...extra });
@@ -146,12 +146,14 @@ console.log('\n[9] 厨房の体制（人数で決まる）');
 // （＝2カップ）くらいで、大きい台はマスを余らせて使う。
 // ここがずれると、約束する受け取り時刻が全部ずれる。
 eq('1回ぶんの個数（4人×12マス）', cyclePieces({ people:4 }), 48);
-eq('4人なら 4分に8カップ＝毎分2カップ', rateFromKitchen({ people:4, holes:12, cycleMin:4, margin:100 }), 2);
+// 既定の見込み率は 75%（当日の立ち上がりの実測が毎分 1.2〜1.4 カップだったため）。
+eq('4人・見込み75%なら毎分1.5カップ', rateFromKitchen(), 1.5);
+eq('4人・見込み100%なら毎分2カップ', rateFromKitchen({ people:4, holes:12, cycleMin:4, margin:100 }), 2);
 eq('6人なら毎分3カップ',             rateFromKitchen({ people:6, holes:12, cycleMin:4, margin:100 }), 3);
 eq('2人なら毎分1カップ',             rateFromKitchen({ people:2, holes:12, cycleMin:4, margin:100 }), 1);
 eq('見込み率で落とせる',             rateFromKitchen({ people:4, holes:12, cycleMin:4, margin:50 }), 1);
 eq('でたらめな設定は既定に戻す', kitchenOf({ people:'x', holes:0, cycleMin:-1, margin:999 }),
-   { people:4, holes:12, cycleMin:4, margin:100 });
+   { people:4, holes:12, cycleMin:4, margin:75 });
 
 const ord = (seq, f, q, made) => ({
   seq, createdMs: NOW - (100 - seq) * 60000, status: 'pending', quantity: q,
@@ -196,6 +198,32 @@ eq('100カップ＝34ボウル', bowlsFor(100), 34);
 eq('0カップ＝0ボウル',   bowlsFor(0), 0);
 eq('100カップ＝13.6kg',  weightText(gramsFor(100)), '13.6kg');
 eq('3カップは400g',      weightText(gramsFor(3)), '400g');
+
+console.log('\n[12] 届いた分をまとめて配る');
+// 厨房は板ごと持ってくる。受付順に、足りていないカップへ割り当てる。
+// ここを間違えると、焼けていない注文が「お渡し待ち」になって客が二度並ぶ。
+const DEAL = [
+  order({ id:'d1', seq:1, number:'#001', items:[{flavor:'plain',quantity:2}], made:{plain:1} }),
+  order({ id:'d2', seq:2, number:'#002', items:[{flavor:'plain',quantity:1},{flavor:'flavor_b',quantity:2}] }),
+  order({ id:'d3', seq:3, number:'#003', items:[{flavor:'plain',quantity:3}] }),
+  order({ id:'d4', seq:4, number:'#004', status:'ready',     items:[{flavor:'plain',quantity:1}] }),
+  order({ id:'d5', seq:5, number:'#005', status:'cancelled', items:[{flavor:'plain',quantity:5}] }),
+];
+eq('焼き待ちが欲しい数（ready と中止は数えない）',
+   dealDemand(DEAL), { plain:5, flavor_b:2 });
+const p1 = planDeal(DEAL, { plain:3, flavor_b:5 });
+eq('受付順に割り当てる',
+   p1.rows.map(r=>[r.number, r.add, r.done]),
+   [['#001',{plain:1},true], ['#002',{plain:1,flavor_b:2},true], ['#003',{plain:1},false]]);
+eq('配り切れない分は残る（どこにも書かない）', p1.left, { flavor_b:3 });
+eq('0 を配ると何も起きない', planDeal(DEAL, { plain:0 }).rows.length, 0);
+eq('ready と中止には配らない',
+   planDeal(DEAL, { plain:99 }).rows.map(r=>r.number), ['#001','#002','#003']);
+eq('欲しい数を超えて配っても、注文を超えて数えない',
+   planDeal(DEAL, { plain:99 }).rows.map(r=>r.add.plain), [1,1,3]);
+eq('小数や負は切り捨てて無視する', planDeal(DEAL, { plain:2.7, flavor_b:-3 }).rows.map(r=>r.add),
+   [{plain:1},{plain:1}]);
+eq('注文が 1 つも無ければ全部余る', planDeal([], { plain:4 }), { rows:[], left:{ plain:4 } });
 
 console.log(failures ? `\n✗ ${failures} 件失敗` : '\n✓ すべて通りました');
 process.exit(failures ? 1 : 0);

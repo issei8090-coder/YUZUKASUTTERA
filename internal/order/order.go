@@ -34,8 +34,8 @@ const (
 	MaxStock = 99999
 	// MaxTagCount は番号札の枚数として設定できる最大値。
 	MaxTagCount = 999
-	// DefaultTagCount は番号札の既定枚数。
-	DefaultTagCount = 50
+	// DefaultTagCount は番号札の既定枚数。実物のケースが 60 枚。
+	DefaultTagCount = 60
 )
 
 // Status は注文のライフサイクル上の状態。
@@ -833,18 +833,20 @@ func BuildOrder(req NewOrderRequest) BuildResult {
 		tag = req.Tag
 		if tag == 0 {
 			tag = req.Seq // 札を指定しない旧呼び出しは通し番号をそのまま使う
-		} else {
-			tagCount := req.TagCount
-			if tagCount < 1 || tagCount > MaxTagCount {
-				tagCount = DefaultTagCount
-			}
-			if tag < 1 || tag > tagCount {
-				return fail("番号札 %d は 1〜%d の範囲外です", tag, tagCount)
-			}
-			for _, u := range req.InUseTags {
-				if u == tag {
-					return fail("番号札 %d はまだ出ています", tag)
-				}
+		}
+		// 範囲と二重発行の検査は、札を指定したかどうかに関わらず行う。
+		// 以前は指定したときだけ検査しており、札切れで 0 が渡ると
+		// 実在しない札番号（seq のまま）や、まだ出ている札がそのまま通った。
+		tagCount := req.TagCount
+		if tagCount < 1 || tagCount > MaxTagCount {
+			tagCount = DefaultTagCount
+		}
+		if tag < 1 || tag > tagCount {
+			return fail("番号札 %d は 1〜%d の範囲外です", tag, tagCount)
+		}
+		for _, u := range req.InUseTags {
+			if u == tag {
+				return fail("番号札 %d はまだ出ています", tag)
 			}
 		}
 	}

@@ -14,7 +14,7 @@ import {
   tagsInUse as pureTagsInUse, fallbackBuild, normalize, inSession, DEFAULT_SESSION,
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines,
-  madeOf, backlogCups, oldestWaitMin, measuredRate,
+  madeOf, backlogCups, oldestWaitMin, measuredRate, planDeal, dealDemand,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
   soldRate, stockOutMin, bowlsFor, gramsFor, weightText,
@@ -72,7 +72,7 @@ let prices = { plain:250, flavor_b:250 };
 /* stock は「その日に出せる上限」＝用意した生地で作れるカップ数。
    作り置きはできないので棚にある数ではないが、売れる数の上限は同じ。
    maxPerOrder は 1 組のお客様が買い占めないための 1 注文あたりの合計上限。 */
-let limits = { maxPerOrder:10, stock:{ plain:100, flavor_b:100 }, tagCount:50 };
+let limits = { maxPerOrder:10, stock:{ plain:100, flavor_b:100 }, tagCount:60 };
 /* 番号札を使うかどうかは時間帯で変わる（空いていれば札は不要）。
    店全体の運用なので端末ごとではなく共有する。 */
 let useTags = true;
@@ -92,11 +92,16 @@ const $ = id => document.getElementById(id);
 
 /* 支払い口の番号。金額の配信先を口ごとに分けるために使う。
    URL に #pay:2 のように付けると、その端末は 2 番目の口として振る舞う。 */
-function station(){
+/* URL に番号が無ければ main。以前は端末に覚えさせていたが、前に #pay:2 で
+   使った iPad を素の #pay で開くと黙って 2 口目として振る舞い、お客様側の
+   画面に金額が出ない（しかも原因を示すものが画面に何も出ない）。
+   読み込み時に一度だけ決めて、以後ハッシュを変えても動かさない
+   （購読は読み込み時に張るので、書き込み先だけがずれると配信が迷子になる）。 */
+const STATION = (()=>{
   const m = (location.hash || '').match(/^#(?:pay|amount):([A-Za-z0-9_-]{1,16})$/);
-  if(m){ try{ localStorage.setItem('payStation', m[1]); }catch(e){} return m[1]; }
-  try{ return localStorage.getItem('payStation') || 'main'; }catch(e){ return 'main'; }
-}
+  return m ? m[1] : 'main';
+})();
+function station(){ return STATION; }
 const label = k => (FLAVORS.find(f=>f.key===k)||{}).label || k;
 /* 厨房は 1m 離れて一瞥する画面。正式名称を同じ幅に収めると字が小さくなって
    読めなくなるので、そこだけ短い名前を使う。 */
@@ -116,7 +121,7 @@ const soldOf      = (k, list) => pureSold(list || orders, k);
    してあるので、ここで既定を与えないと呼び忘れが実行時エラーになる。 */
 const tagsInUse   = list => pureTagsInUse(list || orders);
 const stockOf     = k => Number.isFinite(limits.stock?.[k]) ? limits.stock[k] : 0;
-const tagCount    = () => limits.tagCount || 50;
+const tagCount    = () => limits.tagCount || 60;
 const remainingOf = (k, list) => pureRemaining(list || orders, limits, k);
 const headroomOf  = key => pureHeadroom(orders, limits, cart, FLAVORS, key);
 
@@ -212,6 +217,10 @@ window.onGoWasmReady = function(){
     }
   }catch(e){ console.error('goLabels:', e); }
   try{ renderFigures(); }catch(e){ console.error('renderFigures:', e); }
+  /* 記録表の状態変更ボタンは goNextStatuses を見て組む。注文のスナップショットは
+     WASM (4.6MB) より先に着くので、ここで描き直さないと「用意した・渡した・中止」が
+     1 つも無い表のまま、次に注文が動くまで直らない（中止＝返金の唯一の導線）。 */
+  try{ renderRows(); }catch(e){ console.error('renderRows:', e); }
 };
 const go = new Go();
 async function loadWasm(){
@@ -388,7 +397,7 @@ function renderMenu(){
           <button type="button" class="step" data-step="-1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}減らす">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>
           </button>
-          <span class="qty" data-qty="${f.key}" data-zero="true" role="status" aria-label="${f.label}の数量">0<small>${f.unit}</small></span>
+          <span class="qty" data-qty="${f.key}" data-zero="true" role="status"><span class="sr-only">${f.label} </span>0<small>${f.unit}</small></span>
           <button type="button" class="step" data-step="1" data-key="${f.key}" aria-label="${f.label}を1${f.unit}増やす">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
@@ -429,7 +438,8 @@ function syncCart(){
     total += n * (prices[f.key] ?? f.defaultPrice);
 
     const q = document.querySelector(`[data-qty="${f.key}"]`);
-    if(q){ q.innerHTML = `${n}<small>${f.unit}</small>`; q.dataset.zero = String(n===0); }
+    if(q){ q.innerHTML = `<span class="sr-only">${f.label} </span>${n}<small>${f.unit}</small>`;
+           q.dataset.zero = String(n===0); }
     const p = document.querySelector(`[data-price="${f.key}"]`);
     if(p) p.innerHTML = `${yen(prices[f.key] ?? f.defaultPrice)}<small>円</small>`
       + `<span class="item-per">1${f.unit}${f.pieces?`（${f.pieces}個入り）`:''}</span>`;
@@ -767,15 +777,15 @@ let intakeStopped = false;           // いま受付を止めているか
 let closed = false;                 // 終了時刻を過ぎたか
 let flow = { backlog:0, cups:0, rate:1, waitMin:0, pickupMs:0 };
 
-/* 終了時刻の判定。'HH:MM' は端末の時計で見る（会場の時計と合っていること）。
-   日付をまたぐ運用はしないので、その日の時刻だけを見ればよい。 */
+/* 終了時刻の判定。'HH:MM' は JST で見る。端末のタイムゾーンで見ると、
+   日本以外の設定になっている端末だけが「開店した瞬間に閉店」または
+   「いつまでも閉まらない」になる。日付をまたぐ運用はしない。 */
 function isClosed(now = Date.now()){
   const m = /^(\d{1,2}):(\d{2})$/.exec(closeAt || '');
   if(!m) return false;
-  const d = new Date(now);
-  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(),
-                       Number(m[1]), Number(m[2]), 0, 0);
-  return now >= end.getTime();
+  const jst = new Date(now + 9 * 3600 * 1000);
+  const mins = jst.getUTCHours() * 60 + jst.getUTCMinutes();
+  return mins >= Number(m[1]) * 60 + Number(m[2]);
 }
 
 function tickFlow(){
@@ -1141,6 +1151,8 @@ function gateThanks(){
    何を買ったかは書かない（判断に要らないし、お客様の買い物が他の端末に出る）。 */
 function markBusy(startedMs, firstMs){
   if(!myDesk) return;
+  // 席が消えている間に書くと、client/at の無い幽霊席を作りにいって拒否される。
+  if(!desksOnline[myDesk]) return;
   update(ref(db,'desks/'+myDesk), {
     busy: startedMs > 0 ? startedMs : null,
     firstAt: firstMs > 0 ? firstMs : null
@@ -1163,16 +1175,20 @@ async function notePace(){
   const think = firstTapAt ? firstTapAt - orderStartedAt : total;
   // 置き忘れ・離席のぶんは混ぜない。平均が実態から離れると判断が狂う。
   if(total <= 0 || total > GATE_IDLE_MS) return;
-  const n = (pace.n || 0) + 1;
-  const a = n === 1 ? 1 : PACE_ALPHA;     // 1 件目はそのまま採る
-  const next = {
-    ms:    Math.round(pace.ms    * (1 - a) + total * a),
-    think: Math.round(pace.think * (1 - a) + think * a),
-    n
-  };
+  // 受付機は 4 台ある。購読の値から計算して書くと、同じ窓で終えた台のぶんが
+  // 片方消える（開店直後は全台が n=1 になり、互いを潰し合う）。
   try{
     await authReady;
-    await update(ref(db,'config/pace'), next);
+    await runTransaction(ref(db,'config/pace'), cur=>{
+      const base = cur || PACE_DEFAULT;
+      const n = (base.n || 0) + 1;
+      const a = n === 1 ? 1 : PACE_ALPHA;   // 1 件目はそのまま採る
+      return {
+        ms:    Math.round((base.ms    ?? PACE_DEFAULT.ms)    * (1 - a) + total * a),
+        think: Math.round((base.think ?? PACE_DEFAULT.think) * (1 - a) + think * a),
+        n
+      };
+    });
   }catch(e){ /* 共有できなくても受付は止めない */ }
 }
 
@@ -1358,7 +1374,11 @@ $('reserve-mode')?.addEventListener('click', async e=>{
 /* 厨房の体制。ここを変えると、見積もりも厨房の板の割り当ても一緒に変わる。
    シフトで人数が変わるたびに触る場所なので、押しやすい増減で持つ。 */
 async function setKitchen(patch){
-  const next = kitchenOf({ ...kitchen, ...patch });
+  // 触った鍵だけを送る。4 鍵まとめて書き戻すと、本部が人数を変えたのと
+  // 厨房が穴数を変えたのが重なったとき、片方が古い値で上書きされる。
+  const full = kitchenOf({ ...kitchen, ...patch });
+  const next = {};
+  for(const k of Object.keys(patch)) next[k] = full[k];
   try{ await authReady; await update(ref(db,'config/kitchen'), next); }
   catch(err){ toast(writeHint(err, '厨房の体制を共有できませんでした')); }
 }
@@ -1476,6 +1496,9 @@ async function claimDesk(id, quiet){
     try{ localStorage.setItem('deskNo', id); }catch(e){}
     if(err){ err.textContent = ''; err.classList.remove('show'); }
     paintDesks();
+    // 受付停止・終了の覆いは tickFlow でしか描き直されない。席を取った直後に
+    // 呼ばないと、止めている最中に交代した端末が 10 秒ほど空白の画面になる。
+    tickFlow();
     if(openEl?.id === 'm-desk') closeModal();
     if(!quiet) toast(`この端末は ${deskLabel(id)} です。`, 'info');
     return true;
@@ -1636,7 +1659,11 @@ const padErr = msg => { $('pad-err').textContent = msg || ''; };
 
 function padRender(){
   const d = $('pad-display');
-  d.textContent = padValue || '—';
+  // 値だけを差し替える。要素ごと textContent で潰すと、読み上げ用の
+  // 「入力中の番号」の文言まで消える（aria-label を使うと今度は数字が読まれない）。
+  const v = $('pad-value');
+  if(v) v.textContent = padValue || '—';
+  else d.textContent = padValue || '—';
   d.dataset.empty = String(padValue === '');
   $('pad-ok').disabled = padValue === '';
 }
@@ -1660,8 +1687,14 @@ function padReset(){
 function padSubmit(){
   const n = tagCount();
   const t = parseInt(padValue, 10);
+  const inUse = tagsInUse();
+  // 札を配り切った状態。番号ごとに「まだお渡し中」と断っても、
+  // 「もう配れる札が無い」ことは画面のどこにも出ていなかった。
+  if(inUse.length >= n){
+    return padErr(`番号札が全部出ています（${n}枚）。回収できた札を使うか、受付を一度止めてください。`);
+  }
   if(!Number.isFinite(t) || t < 1 || t > n) return padErr(`1〜${n} の番号を入れてください`);
-  if(tagsInUse().includes(t))              return padErr(`${t}番はまだお渡し中です`);
+  if(inUse.includes(t))                    return padErr(`${t}番はまだお渡し中です`);
 
   // テンキーの「決定」は押し間違えやすいので、最後に一度だけ確かめる。
   pendingPlace = t;
@@ -1784,6 +1817,9 @@ async function placeOrder(immediate, pickedTag){
     await authReady;   // 描画は待たせないが、書き込みは認証の後でしか通らない
     watchLap(w, '認証');
 
+    // 受付機を名乗っていない端末に注文を立てさせない。押す側のハンドラにも
+    // 同じ関門があるが、CSS や描画の順番で片方が外れることがあるので二重にする。
+    if(!myDesk){ closeModal(); desksKnown = true; ensureDesk(); return; }
     const noTag = immediate || !useTags;
     // 札は受付係が実物を見てタップしたものを使う。山の並び順に依存させない。
     const tag = noTag ? 0 : (pickedTag || 0);
@@ -1804,7 +1840,7 @@ async function placeOrder(immediate, pickedTag){
     // 窓を縮めるほうが割に合うと判断した。
     let live = orders;
     try{
-      const snap = await get(ref(db, 'orders'));
+      const snap = await tracked(get(ref(db, 'orders')));
       const v = snap.val();
       if(v) live = Object.entries(v).map(([k,o]) => normalize(o,k));
     }catch(e){ /* 読めなければ購読の値で進む。受付は止めない */ }
@@ -1840,7 +1876,7 @@ async function placeOrder(immediate, pickedTag){
     const dry = build({ ...req, seq: 1 });
     if(!dry.ok){ closeModal(); toast(dry.error || '注文を作成できませんでした。'); return; }
 
-    const seq = await nextSeq();
+    const seq = await tracked(nextSeq());
     watchLap(w, '採番');
     const built = build({ ...req, seq });
     if(!built.ok){ closeModal(); toast(built.error || '注文を作成できませんでした。'); return; }
@@ -1930,6 +1966,17 @@ $('m-done').addEventListener('click', closeModal);
 
    iOS は操作を経ていない AudioContext を動かさない。厨房・呼び出し・金額表示は
    誰も触らない端末なので、最初の操作で必ず起こしにいく。 */
+/* 通知音のスイッチは厨房と管理の 2 か所に置く。どちらを触っても揃える。
+   以前は厨房タブにしか無く、呼び出し表示や金額表示の端末で音を止めるには、
+   お客様に向けた画面でナビを開いて「見るだけ」と書いた厨房へ移るしかなかった。 */
+addEventListener('DOMContentLoaded', ()=>{
+  const a = document.getElementById('sound'), b = document.getElementById('sound-ctl');
+  if(!a || !b) return;
+  b.checked = a.checked;
+  a.addEventListener('change', ()=>{ b.checked = a.checked; });
+  b.addEventListener('change', ()=>{ a.checked = b.checked; });
+});
+
 const soundOn = () => $('sound') ? $('sound').checked : true;
 function ping(){ if(soundOn()) audio.newOrder(); }
 
@@ -2124,21 +2171,42 @@ onValue(ref(db,'.info/connected'), snap=>{
    時刻の比較はサーバー時刻で行う。端末の時計がずれていると、
    「一度も表示されない」か「永久に消えない」のどちらかになる。 */
 const AMOUNT_HOLD_MS = 10 * 60 * 1000;
+/* 受け取りが済んだあとの面を出しておく長さ。会計中より短くする。
+   次のお客様が前の人の受け取り時刻を見てしまうと、その時刻に戻ってくる。 */
+const AMOUNT_DONE_MS = 40 * 1000;
 let amountShown = null, amountTimer = null;
 let serverSkew = 0;   // サーバー時刻 − この端末の時刻
 const nowServer = () => Date.now() + serverSkew;
 
 function renderAmount(){
-  const live = $('amount-live'), idle = $('amount-idle');
+  const live = $('amount-live'), idle = $('amount-idle'), done = $('amount-done');
   if(!live || !idle) return;
   clearTimeout(amountTimer);
 
   const d = amountShown;
   const age = d?.at ? nowServer() - d.at : Infinity;
+  // 金額が入っていれば会計中、0 のまま注文が残っていれば「受け取りが済んだ」面。
+  // 配信ノードに項目を足さずに 2 つの面を分けるため、amount の 0 を印に使う。
   const fresh = !!d && d.amount > 0 && age < AMOUNT_HOLD_MS;
+  const paid  = !!d && !fresh && !!d.orderId && age < AMOUNT_DONE_MS;
 
   live.classList.toggle('hidden', !fresh);
-  idle.classList.toggle('hidden', !!fresh);
+  if(done) done.classList.toggle('hidden', !paid);
+  idle.classList.toggle('hidden', fresh || paid);
+
+  if(paid && done){
+    $('amount-done-num').textContent = d.number || '';
+    // 受け取り時刻は配信ノードではなく注文そのものから引く。
+    // この端末も注文を購読しているので、ルールを変えずに出せる。
+    const o = orders.find(x => x.id === d.orderId) || allOrders.find(x => x.id === d.orderId);
+    const when = $('amount-when');
+    const show = !!o && !!o.pickupMs && o.status !== 'completed' && o.status !== 'cancelled';
+    when.hidden = !show;
+    if(show) when.innerHTML = `<b>${hhmm(o.pickupMs)}</b><i>ごろ</i>`
+      + `<span>この時刻ごろにお越しください</span>`;
+    amountTimer = setTimeout(renderAmount, Math.max(1000, AMOUNT_DONE_MS - age));
+    return;
+  }
   if(!fresh) return;
 
   $('amount-num').textContent = d.number || '';
@@ -2294,6 +2362,12 @@ onValue(ref(db,'config/auto'), snap=>{
   renderDeskAdmin();
 }, ()=>{});
 
+/* 手元にある分（作り置き＋届いた分）。受渡の 2 面目だけが使う。 */
+onValue(ref(db,'config/onhand'), snap=>{
+  onhand = snap.val() || {};
+  renderDeal();
+}, ()=>{ /* 読めないときはこの端末の値で続ける */ });
+
 onValue(ref(db,'config/saver'), snap=>{
   const v = snap.val();
   saverMin = Number.isFinite(v) ? v : 3;
@@ -2448,6 +2522,20 @@ function renderKitchen(){
 
    下の 1 行は注文が 1 件でもあれば常に出す（「控えはありません」も出す）。
    あるときだけ出すと一覧の高さが変わり、測り直しが要る形になる。 */
+/* 呼び出し表示に札が入り切っているか。立てかけた画面は誰も送れないので、
+   見切れていること自体を文字で出す（厨房の「ほか N 件」と同じ考え方）。 */
+function fitCall(total){
+  const grid = $('call-grid'), more = $('call-more');
+  if(!grid || !more) return;
+  if(document.body.dataset.tab !== 'call' || total === 0){ more.hidden = true; return; }
+  const nums = Array.from(grid.querySelectorAll('.call-num'));
+  const room = grid.getBoundingClientRect().bottom;
+  let over = 0;
+  for(const el of nums){ if(el.getBoundingClientRect().bottom > room + 2) over++; }
+  more.hidden = over === 0;
+  if(over) more.textContent = `ほか ${over}件 お呼び出し中`;
+}
+
 function fitBoard(){
   const grid = $('kitchen-list'), foot = $('kitchen-more');
   if(!grid || !foot) return;
@@ -2563,6 +2651,197 @@ function paintList(el, html){
   if(back) back.focus();
 }
 
+/* ---------- 受渡 2 面目：届いた分を配る ----------
+   厨房は注文ごとではなく板ごと持ってくる（ゆず 12・チョコ 6 のように）。
+   1 カップずつ押していると、混んだときに押す回数そのものが行列の律速になり、
+   実際、当日いちばん待たせた時間帯は焼く速さではなく処理の順番で伸びていた。
+
+   味ごとの総数を受け取り、受付順に焼き待ちの注文へ割り当てる。
+   割り当ての規則は lib/pure.js の planDeal が唯一の正（Node からも試せる）。 */
+/* 手元にある分（作り置き＋厨房から届いた分）。
+   営業開始の前に焼いておく運用があるので、受渡はこれを持ち続ける必要がある。
+   全端末で共有したいので config/onhand に置く。ルールがまだ公開されていない
+   DB では書き込みが拒否されるので、その端末の中だけで数え続ける（止めない）。 */
+let onhand = {};
+let onhandLocal = null;        // ルール未公開のときの逃げ道
+const ONHAND_KEY = 'onhand';
+
+function readLocalOnhand(){
+  try{ return JSON.parse(localStorage.getItem(ONHAND_KEY) || '{}') || {}; }catch(e){ return {}; }
+}
+function writeLocalOnhand(v){
+  try{ localStorage.setItem(ONHAND_KEY, JSON.stringify(v)); }catch(e){}
+}
+/* いま手元に何カップあるか。共有できていればその値、できていなければ端末の値。 */
+function onhandMap(){
+  const src = onhandLocal || onhand;
+  const out = {};
+  FLAVORS.forEach(f=>{ out[f.key] = Math.max(0, Math.floor(Number(src[f.key]) || 0)); });
+  return out;
+}
+
+/* 手元の数を増減する。別の端末も触るのでトランザクションで足し引きする
+   （読んでから書くと、同時に押したぶんが片方消える）。 */
+async function bumpOnhand(key, delta){
+  if(onhandLocal){
+    onhandLocal[key] = Math.max(0, Math.min(9999, (onhandLocal[key] || 0) + delta));
+    writeLocalOnhand(onhandLocal); renderDeal(); return;
+  }
+  try{
+    await authReady;
+    await tracked(runTransaction(ref(db,'config/onhand/'+key),
+      cur => Math.max(0, Math.min(9999, (Number(cur) || 0) + delta))));
+  }catch(e){
+    // ルールがまだ公開されていない DB。その端末の中だけで数え続ける。
+    console.warn('手元の数を共有できません。この端末の中だけで数えます:', e);
+    onhandLocal = { ...onhandMap() };
+    onhandLocal[key] = Math.max(0, Math.min(9999, (onhandLocal[key] || 0) + delta));
+    writeLocalOnhand(onhandLocal);
+    renderDeal();
+  }
+}
+
+function renderDeal(){
+  const rowsEl = $('deal-rows'); if(!rowsEl) return;
+  const need = dealDemand(orders);
+  const have = onhandMap();
+  const plan = planDeal(orders, have);          // 手元から、焼き待ちへ自動で振り分ける
+
+  rowsEl.innerHTML = FLAVORS.map(f=>{
+    const n = have[f.key] || 0;
+    const want = need[f.key] || 0;
+    return `
+    <div class="deal-row">
+      <span class="deal-mark"><img src="${MARK[f.key]||''}" alt=""></span>
+      <span class="deal-name">${shortLabel(f.key)}
+        <span class="deal-need">焼き待ち ${want}${f.unit}</span></span>
+      <button type="button" class="deal-step" data-act="deal-step" data-key="${f.key}" data-step="-1"
+              aria-label="${f.label} の手元を 1 減らす" ${n <= 0 ? 'disabled' : ''}>−</button>
+      <span class="deal-n" data-zero="${n === 0}" role="status"
+            aria-label="${f.label} 手元に ${n}${f.unit}">${n}</span>
+      <button type="button" class="deal-step" data-act="deal-step" data-key="${f.key}" data-step="1"
+              aria-label="${f.label} の手元を 1 増やす">＋1</button>
+      <button type="button" class="deal-step deal-step5" data-act="deal-step" data-key="${f.key}" data-step="5"
+              aria-label="${f.label} の手元を 5 増やす">＋5</button>
+    </div>`;
+  }).join('');
+
+  const note = $('deal-note');
+  if(note) note.hidden = !onhandLocal;
+
+  const planEl = $('deal-plan');
+  planEl.innerHTML = plan.rows.map(r=>{
+    const what = Object.entries(r.add)
+      .map(([k,v])=>`${shortLabel(k)} ${v}${unit(k)}`).join(' ／ ');
+    return `
+    <div class="deal-bundle" data-done="${r.done}">
+      <span class="deal-bnum">${r.number || ('受付' + r.seq)}</span>
+      <span class="deal-badd">${what}</span>
+      ${r.done ? '<span class="deal-bdone">お渡し待ちへ</span>' : ''}
+    </div>`;
+  }).join('')
+    + (Object.keys(plan.left).length
+        ? `<p class="deal-left">配ったあと手元に残ります：`
+          + Object.entries(plan.left).map(([k,v])=>`${shortLabel(k)} ${v}${unit(k)}`).join('／')
+          + `</p>` : '');
+
+  const empty = $('deal-empty');
+  if(empty) empty.classList.toggle('hidden',
+    Object.values(need).some(n=>n > 0) || plan.rows.length > 0);
+
+  const go = $('deal-go');
+  if(go){
+    const cups = plan.rows.reduce((s,r)=>s+r.cups, 0);
+    go.disabled = plan.rows.length === 0;
+    go.textContent = cups === 0 ? '配れる注文がありません'
+      : `手元から ${cups}カップを ${plan.rows.length}件に配る`;
+  }
+}
+
+/* 1 件ぶんの割り当て。足す数で書く（絶対値で書くと、別の端末が
+   先に数えていた分を消してしまう）。そろえば受渡待ちにして呼び出しも始める。 */
+async function dealOne(id, add){
+  let ng = null;
+  try{
+    await authReady;
+    const tx = await tracked(runTransaction(ref(db,'orders/'+id), cur=>{
+      ng = null;
+      if(cur === null){ ng = '注文が見つかりません'; return; }
+      if(cur.status !== 'pending'){ ng = 'この注文はもう焼き待ちではありません'; return; }
+      const items = cur.items || [];
+      const made = { ...(cur.made || {}) };
+      for(const [k, v] of Object.entries(add)){
+        const want = (items.find(i=>i.flavor === k) || {}).quantity || 0;
+        made[k] = Math.max(0, Math.min(want, (Number(made[k]) || 0) + v));
+      }
+      cur.made = made;
+      if(items.every(i => (Number(made[i.flavor]) || 0) >= (i.quantity || 0))){
+        cur.status = 'ready';
+        if(!cur.calledAt) cur.calledAt = Date.now();
+      }
+      cur.updatedMs = Date.now();
+      return cur;
+    }));
+    if(ng || !tx.committed) return { ok:false, why: ng || '記録できませんでした' };
+    return { ok:true };
+  }catch(e){
+    console.error(e);
+    return { ok:false, why: writeHint(e, '記録できませんでした') };
+  }
+}
+
+async function applyDeal(){
+  const plan = planDeal(orders, onhandMap());
+  if(!plan.rows.length) return;
+  const go = $('deal-go'); if(go) go.disabled = true;
+
+  // 取り消しのために、押す前の姿を控える。束でまとめて動かすので、
+  // 1 件ずつ戻すのは現実的ではない。
+  const before = plan.rows.map(r=>{
+    const o = orders.find(x=>x.id === r.id) || {};
+    return { id: r.id, made: { ...(o.made || {}) }, status: o.status || 'pending' };
+  });
+
+  let okN = 0, cups = 0, ready = 0, ngMsg = '';
+  const used = {};
+  for(const r of plan.rows){
+    knownReady.add(r.id);        // 自分の操作では受渡の着信音を鳴らさない
+    const res = await dealOne(r.id, r.add);
+    if(res.ok){
+      okN++; cups += r.cups; if(r.done) ready++;
+      for(const [k,v] of Object.entries(r.add)) used[k] = (used[k] || 0) + v;
+    }else ngMsg = res.why;
+  }
+  // 配れたぶんだけ手元から引く（失敗した注文のぶんは手元に残す）。
+  for(const [k,v] of Object.entries(used)) await bumpOnhand(k, -v);
+  renderDeal();
+
+  if(!okN){ toast(ngMsg || '配れませんでした。もう一度お試しください。'); return; }
+  if(soundOn()) audio.confirm();
+  const msg = `${cups}カップを ${okN}件に配りました`
+            + (ready ? `（お渡し待ち ${ready}件）` : '')
+            + (okN < plan.rows.length ? `／${plan.rows.length - okN}件は配れませんでした` : '');
+  toast(msg, 'ok', ()=>undoDeal(before, used), 9000);
+}
+
+/* 配ったのを取り消す。押す前の made と状態に戻し、カップは手元へ返す。 */
+async function undoDeal(before, used){
+  for(const b of before){
+    try{
+      await authReady;
+      await tracked(runTransaction(ref(db,'orders/'+b.id), cur=>{
+        if(cur === null) return;
+        cur.made = { ...b.made };
+        if(cur.status === 'ready' && b.status === 'pending') cur.status = 'pending';
+        cur.updatedMs = Date.now();
+        return cur;
+      }));
+    }catch(e){ console.error(e); }
+  }
+  for(const [k,v] of Object.entries(used || {})) await bumpOnhand(k, v);
+  toast('配ったのを戻しました（カップは手元に戻しました）', 'ok');
+}
+
 /* ---------- 横に送って面を替える ----------
    受渡と支払い口は 1 台で何役も持つ。1 画面に全部出すと字が小さくなり、
    立って 1m 離れて使えなくなる。面を分けて指で送り、下の札でも移れるようにする
@@ -2662,13 +2941,16 @@ function renderReady(){
                      aria-label="${numOf(o)} の代金 ${amount}円 を受け取って渡す">
                ${amount}円 受け取って渡した</button>
              <div class="ops-row">
-               ${o.number ? `<button type="button" class="ops-sub" data-act="flash" data-id="${o.id}">呼ぶ</button>` : ''}
-               <button type="button" class="ops-sub" data-act="done" data-id="${o.id}">未払いのまま渡す</button>
+               ${o.number ? `<button type="button" class="ops-sub" data-act="flash" data-id="${o.id}"
+                       aria-label="${numOf(o)} をもう一度呼ぶ">呼ぶ</button>` : ''}
+               <button type="button" class="ops-sub" data-act="done" data-id="${o.id}"
+                       aria-label="${numOf(o)} を代金を受け取らずに渡す">未払いのまま渡す</button>
              </div>`
           : `<button type="button" class="ops-do" data-act="done" data-id="${o.id}"
                      aria-label="${numOf(o)} を渡した">渡した</button>
              ${o.number ? `<div class="ops-row">
-               <button type="button" class="ops-sub" data-act="flash" data-id="${o.id}">呼ぶ</button>
+               <button type="button" class="ops-sub" data-act="flash" data-id="${o.id}"
+                       aria-label="${numOf(o)} をもう一度呼ぶ">呼ぶ</button>
              </div>` : ''}`;
 
     return `
@@ -2688,11 +2970,13 @@ function renderReady(){
       ${prep ? `<span class="ops-state" data-kind="prep" data-late="${late}">ご用意中${
         o.pickupMs ? ` ・ ${hhmm(o.pickupMs)} お渡し予定${
           late ? `（${Math.floor((Date.now() - o.pickupMs)/60000)}分 遅れ）` : ''}` : ''}</span>` : ''}
-      ${prep ? fillRows(o) : opsLines(o)}
+      ${prep || (o.status === 'ready' && !done) ? fillRows(o) : opsLines(o)}
       ${due ? `<p class="ops-amount">${amount}<small>円</small></p>` : ''}
       ${actions}
     </article>`;
   }).join(''));
+
+  renderDeal();   // 2 面目も同じ注文を見ているので一緒に描き直す
 
   // 絞り込みの札。件数も出す（押さなくても全体の内訳が読める）。
   document.querySelectorAll('#ready-filter [data-rf]').forEach(b=>{
@@ -2839,6 +3123,9 @@ function renderCall(){
   $('call-grid').classList.toggle('hidden', ready.length === 0);
   $('call-empty').classList.toggle('hidden', ready.length > 0);
   $('call-pending').textContent = orders.filter(o=>o.status === 'pending').length;
+  // 入り切らない札があっても、お客様はこの画面を触れないので自分で送れない。
+  // 何番まで出ているかを文字で添える（厨房の「ほか N 件」と同じ考え方）。
+  fitCall(ready.length);
   tickCall();
 }
 
@@ -2868,7 +3155,9 @@ function recall(now){
   for(const o of orders){
     if(o.status !== 'ready' || !o.number || !o.calledAt) continue;
     if(now - o.calledAt < RECALL_MS) continue;
-    if(now - (o.createdMs || 0) > RECALL_STOP) continue;
+    // 打ち切りは「呼んでから」で測る。受付からの経過で測ると、焼きに時間が
+    // かかった注文ほど早く打ち切られ、いちばん待たせた相手を呼ばなくなる。
+    if(now - o.calledAt > RECALL_STOP) continue;
     // 自分の書き込みが返るまでの間、二重に書かない。
     if(now - (recalled.get(o.id) || 0) < RECALL_MS) continue;
     recalled.set(o.id, now);
@@ -2956,7 +3245,8 @@ function renderPay(){
                 aria-label="${numOf(o)} の ${amount}円 を受け取る">
           ${amount}円 受け取る</button>
         ${o.status==='ready' ? `<div class="ops-row">
-          <button type="button" class="ops-sub" data-act="paydone" data-id="${o.id}">受け取って渡した</button>
+          <button type="button" class="ops-sub" data-act="paydone" data-id="${o.id}"
+                  aria-label="${numOf(o)} の ${amount}円 を受け取って渡した">受け取って渡した</button>
         </div>` : ''}`}
     </article>`;
   }).join(''));
@@ -3021,7 +3311,7 @@ function renderRows(){
       <td><span class="tag ${cls}">${txt}</span>${o.status!=='cancelled' && !o.paid ? ' <span class="tag tag-unpaid">未払い</span>' : ''}</td>
       <td><div class="row-actions">
         ${o.status!=='cancelled' && !o.paid ? `<button type="button" class="mini" data-act="takepaid" data-id="${o.id}" data-num="${numOf(o)}" aria-label="${numOf(o)} の支払いを受け取った">支払い受取</button>`:''}
-        ${o.status!=='cancelled' && o.paid ? `<button type="button" class="mini" data-act="unpay" data-id="${o.id}" data-num="${o.number}" aria-label="${o.number} を未払いに戻す">未払いに戻す</button>`:''}
+        ${o.paid ? `<button type="button" class="mini" data-act="unpay" data-id="${o.id}" data-num="${o.number}" aria-label="${o.number} を未払いに戻す">未払いに戻す</button>`:''}
         ${transitionButtons(o)}
       </div></td>
     </tr>`;
@@ -3038,7 +3328,15 @@ function renderFigures(){
   const s = window.goCalculateStats(JSON.stringify(orders));
   if(!s || s.ok === false){ $('figures').innerHTML = `<p class="fig-wait">集計に失敗しました: ${s?.error||'不明なエラー'}</p>`; return; }
   const cells = [
-    ...FLAVORS.map(f=>[`${f.label} 残り`, `${remainingOf(f.key)}<small>${f.unit}</small>`]),
+    // 残りは売り切れ表示のために 0 で止めてある。記録表だけは実数を出す。
+    // 受付が 2 台で最後の 1 カップを同時に売ると、止めた側の表示では
+    // 「残り 0」に見えて、売り過ぎていること自体が画面から読めない。
+    ...FLAVORS.map(f=>{
+      const over = stockOf(f.key) - soldOf(f.key);
+      return [`${f.label} 残り`, over < 0
+        ? `<b style="color:var(--red)">${over}</b><small>${f.unit}（売り過ぎ）</small>`
+        : `${over}<small>${f.unit}</small>`];
+    }),
     // 受注額と手元の現金は一致しない。締めで照合できるよう必ず分けて出す。
     ['受注額',      `${yen(s.totalSales||0)}<small>円</small>`],
     ['受取済み',    `${yen(s.paidSales||0)}<small>円</small>`],
@@ -3048,7 +3346,11 @@ function renderFigures(){
     ['注文数',      `${s.totalOrders||0}<small>件</small>`],
     // 渡したのに未払い＝取りはぐれ。締めで真っ先に見る数字なので独立して出す。
     ['渡したのに未払い', `${yen(s.unpaidDeliveredSales||0)}<small>円 / ${s.unpaidDeliveredOrders||0}件</small>`],
-    ['平均客単価',  `${yen(s.avgOrderYen||0)}<small>円</small>`]
+    // 支払い済みのまま中止された注文。現金だけが手元に残り、受注額にも
+    // 受取済みにも入らないので、ここに出さないと締めまで誰も気づけない。
+    ['返金すべき', `${yen(s.cancelledPaidSales||0)}<small>円 / ${s.cancelledPaidOrders||0}件</small>`],
+    ['金庫にあるべき額', `${yen((s.paidSales||0) + (s.cancelledPaidSales||0))}<small>円（返金前）</small>`],
+    ['平均客単価',  `${yen(s.avgOrderYen||0)}<small>円（中止を除く）</small>`]
   ];
   $('figures').innerHTML = cells.map(([k,v])=>`<div><span class="fig-k">${k}</span><span class="fig-v">${v}</span></div>`).join('');
 }
@@ -3088,6 +3390,21 @@ async function showAmount(o){
     console.error('金額表示の配信に失敗:', e);
     toast(writeHint(e, 'お客様側の画面に金額を出せませんでした'));
   }
+}
+
+/* 受け取りが済んだ。金額を 0 にして「◯時◯分ごろ」の面に切り替える。
+   消さずに残すのは、お客様が番号札を受け取ってから顔を上げるまでに間があるため。 */
+async function showPaid(o){
+  try{
+    await authReady;
+    await set(ref(db,'display/payment/' + station()), {
+      orderId: o.id,
+      number: numOf(o),
+      items: encodeLines(o.items),
+      amount: 0,
+      at: nowServer()
+    });
+  }catch(e){ console.error('受け取り後の表示に失敗:', e); }
 }
 
 async function clearAmount(){
@@ -3143,7 +3460,7 @@ function unlockTap(b, id){
    金額の記録を先に戻す。状態の差し戻しが失敗しても、現金の記録だけは合う。 */
 function cashDone(msg, id, alsoHandOver){
   toast(msg, 'info', ()=>{
-    setPaid(id, false).then(ok=>{
+    setPaid(id, false).then(({ok})=>{
       if(ok && alsoHandOver) changeStatus(id,'completed','ready');
     });
   }, 7000);
@@ -3227,17 +3544,23 @@ async function confirmCollect(){
   if(!c) return;
   const o = orders.find(x=>x.id===c.id);
   const amount = o ? yen(o.price||0) : '';
-  collecting = null;
-  chgPaid = 0;
-  clearAmount();
-  renderPay();
-  if(await setPaid(c.id, true)){
+  // 記録が通ってから画面を進める。先に畳むと、支払いの書き込みだけが失敗した
+  // ときに「お客様の画面は消えたのに未払いのまま」が残り、締めで差額になる。
+  if((await setPaid(c.id, true)).ok){
+    collecting = null;
+    chgPaid = 0;
+    // 受け取りが済んだ面へ。会計中の金額はここで消える。
+    if(o) showPaid(o); else clearAmount();
+    renderPay();
     if(soundOn()) audio.paid();
     if(c.alsoHandOver) changeStatus(c.id,'ready','completed');
     // 会計中のカードは押した時点で一覧から消える。何を記録したのかを
     // 番号と金額で言い直し、その場から戻せるようにする。
     cashDone(`${numOf(o)} ${amount}円 受け取りました`, c.id, c.alsoHandOver);
+    return;
   }
+  // 記録できなかった。会計中のまま残し、もう一度押せるようにする。
+  renderPay();
 }
 
 /* 未払い確認ダイアログの対象。モーダルを閉じたら必ず捨てる。 */
@@ -3248,7 +3571,7 @@ $('unpaid-back').addEventListener('click', ()=>{ pendingHandOver = null; closeMo
 $('unpaid-take').addEventListener('click', async ()=>{
   const id = pendingHandOver; pendingHandOver = null; closeModal();
   if(!id) return;
-  if(await setPaid(id, true)) changeStatus(id,'ready','completed');
+  if((await setPaid(id, true)).ok) changeStatus(id,'ready','completed');
 });
 
 $('unpaid-skip').addEventListener('click', ()=>{
@@ -3259,18 +3582,23 @@ $('unpaid-skip').addEventListener('click', ()=>{
 /* 支払いは受渡ステータスとは独立した軸。
    受付・支払い口・受渡口のどこで受け取るか決まっていないため、
    どの画面からでも打てる。打ち間違いの取り消しも認める（現金と合わなくなるため）。 */
+/* 戻り値は { ok, already }。already は「すでにその状態だった」。
+   これを失敗として扱うと、支払い口が先に入金を記録した直後に受渡が
+   「◯円 受け取って渡した」を押したとき、お渡しの記録だけが落ちる
+   （現金は二重に受け取り、注文は ready のまま呼び出しが鳴り続ける）。 */
 async function setPaid(id, next){
-  let ng = null;
+  let ng = null, already = false;
   try{
     await authReady;
     const tx = await tracked(runTransaction(ref(db,'orders/'+id), cur=>{
       ng = null;
       if(cur === null){ ng = '注文が見つかりません'; return; }
       const now = !!cur.paid;
+      already = (now === next);
       if(window.wasmReady && window.goSetPaid){
         const r = window.goSetPaid(now, next, cur.status || 'pending');
         if(!r.valid){ ng = r.reason; return; }
-      }else if(now === next){
+      }else if(already){
         ng = next ? 'すでに支払い済みです' : 'すでに未払いです'; return;
       }
       cur.paid = next;
@@ -3279,13 +3607,15 @@ async function setPaid(id, next){
       cur.updatedMs = Date.now();
       return cur;
     }));
-    if(ng){ toast(ng); return false; }
-    if(!tx.committed){ toast('支払いを記録できませんでした。もう一度お試しください。'); return false; }
-    return true;
+    // すでにその状態なら、書き込みはしないが「済んでいる」ので先へ進ませる。
+    if(already) return { ok:true, already:true };
+    if(ng){ toast(ng); return { ok:false }; }
+    if(!tx.committed){ toast('支払いを記録できませんでした。もう一度お試しください。'); return { ok:false }; }
+    return { ok:true };
   }catch(e){
     console.error(e);
     toast(writeHint(e, '支払いを記録できませんでした'));
-    return false;
+    return { ok:false };
   }
 }
 
@@ -3313,9 +3643,12 @@ async function fillCup(id, flavor, delta){
       const all = items.every(i => (Number(made[i.flavor]) || 0) >= (i.quantity || 0));
       if(all && cur.status === 'pending'){
         cur.status = 'ready';
-        if(!cur.calledAt) cur.calledAt = Date.now();
+        // 受渡待ちになるたびに呼び直す。前の calledAt を残すと、焼き待ちへ
+        // 戻してからそろえ直したとき、呼び出し表示が一度も点かない。
+        cur.calledAt = Date.now();
       }else if(!all && cur.status === 'ready'){
         cur.status = 'pending';          // 足りなくなった＝まだ焼き待ち
+        delete cur.calledAt;             // 呼んでいない状態に戻す
       }
       cur.updatedMs = Date.now();
       return cur;
@@ -3348,14 +3681,14 @@ async function fillAll(id, before){
                                                  Number(before[i.flavor]) || 0));
         cur.made = made;
         const all = items.every(i => (made[i.flavor] || 0) >= (i.quantity || 0));
-        if(!all && cur.status === 'ready') cur.status = 'pending';
+        if(!all && cur.status === 'ready'){ cur.status = 'pending'; delete cur.calledAt; }
       }else{
         const made = {};
         for(const i of items) made[i.flavor] = i.quantity || 0;
         cur.made = made;
         if(cur.status === 'pending'){
           cur.status = 'ready';
-          if(!cur.calledAt) cur.calledAt = Date.now();
+          cur.calledAt = Date.now();
         }
       }
       cur.updatedMs = Date.now();
@@ -3376,7 +3709,14 @@ const CALL_HOLD_MS = 40000;
 async function callOrder(id){
   try{
     await authReady;
-    await update(ref(db,'orders/'+id), { calledAt: Date.now() });
+    // 状態を見ずに書くと、別の端末が渡し終えた注文にも呼び出し時刻が入り、
+    // あとで「お渡し待ちに戻す」を押した瞬間に誰も呼んでいない番号が鳴る。
+    await runTransaction(ref(db,'orders/'+id), cur=>{
+      if(cur === null || cur.status !== 'ready') return;   // 中止＝書かない
+      cur.calledAt = Date.now();
+      cur.updatedMs = Date.now();
+      return cur;
+    });
   }catch(e){
     toast('呼び出しを送れませんでした。通信を確かめてください。');
   }
@@ -3393,11 +3733,20 @@ async function changeStatus(id, from, to){
         const r = window.goUpdateOrderStatus(cur.status || 'pending', to);
         if(!r.valid){ ng = r.reason; return; }    // undefined を返すと中止
       }
+      const was = cur.status;
       cur.status = to;
       // 受渡待ちになった時点で呼び出しも済ませる。別に「呼ぶ」を押させると、
       // 焼き上げてから呼ぶまでの間が人の気づき待ちになる。
       // ここで書けば writer は「用意できた」を押した 1 台だけで、書き込みも 1 回。
-      if(to === 'ready' && !cur.calledAt) cur.calledAt = Date.now();
+      if(to === 'ready') cur.calledAt = Date.now();
+      if(to === 'pending') delete cur.calledAt;
+      // 記録表から「用意した」を押したときは made が空のまま ready になり、
+      // 焼き待ちカップが厨房の板と見積もりから静かに消える。実物に合わせて埋める。
+      if(to === 'ready' && was === 'pending'){
+        const made = { ...(cur.made || {}) };
+        for(const i of (cur.items || [])) made[i.flavor] = i.quantity || 0;
+        cur.made = made;
+      }
       cur.updatedMs = Date.now();
       return cur;
     }));
@@ -3414,6 +3763,13 @@ document.addEventListener('click', e=>{
   if(!b) return;
   const id = b.dataset.id;
   switch(b.dataset.act){
+    // 手元にある分の数え上げ。営業前の作り置きも、営業中に厨房から
+    // 届いた分も、同じこの数に足す。焼き待ちより多くても構わない。
+    case 'deal-step':
+      bumpOnhand(b.dataset.key, Number(b.dataset.step) || 0);
+      return;
+    case 'deal-go': applyDeal(); return;
+
     // 1 カップ受け取った／取り消した。厨房の画面は立てかけてあるだけで
     // 触れないので、品物を受け取った受渡口がここを打つ。
     case 'made':
@@ -3443,7 +3799,7 @@ document.addEventListener('click', e=>{
     // （記録表には確定も取消もボタンが無いので、誰も消せなくなる）。
     // ここは客側の画面を一切触らず、記録だけを直す。
     case 'takepaid':
-      setPaid(id, true).then(ok=>{ if(ok && soundOn()) audio.paid(); });
+      setPaid(id, true).then(({ok})=>{ if(ok && soundOn()) audio.paid(); });
       break;
     // 受渡口の「N円を受け取って渡した」。未払いの注文はこれが普通の道なので、
     // 確認を挟まず 1 タップで済ませる。押し間違いはその場のトーストから戻せる。
@@ -3454,14 +3810,16 @@ document.addEventListener('click', e=>{
       // 無しだと 2 回目が「すでに支払い済みです」の赤いエラーになり、
       // 受け取れたのか失敗したのか画面から判断できない。
       if(!lockTap(b, id)) break;
-      setPaid(id, true).then(ok=>{
+      setPaid(id, true).then(({ok, already})=>{
         unlockTap(b, id);
         if(!ok) return;                       // 支払いを記録できなければ渡さない
-        if(soundOn()) audio.paid();
+        if(soundOn() && !already) audio.paid();
         changeStatus(id,'ready','completed');
         // 現金を受け取った記録が残ったことを、音とは別に目でも示す。
         // 音は切れる（soundOn が false・周りがうるさい）ので、これが唯一の合図。
-        cashDone(`${numOf(o)} ${amount}円 受け取って渡しました`, id, true);
+        cashDone(already
+          ? `${numOf(o)} は支払い口で受け取り済みでした。お渡しを記録しました`
+          : `${numOf(o)} ${amount}円 受け取って渡しました`, id, !already);
       });
       break;
     }
@@ -3549,14 +3907,27 @@ function paintSession(){
     : `営業回：${session}`;
   const sub = $('session-sub');
   if(sub) sub.textContent =
-    `この回の注文 ${live.length}件 ／ これより前の記録 ${allOrders.length - live.length}件（消さずに残っています）`;
+    `この回の注文 ${live.length}件 ／ これより前の記録 ${allOrders.length - live.length}件（消さずに残っています）`
+    + (prevSession ? ` ／ ひとつ前の回：${prevSession}` : '');
 }
 
+/* ひとつ前の営業回。締めを押し間違えたとき、戻すのに要るのはこの文字列だけ。
+   画面にもどこにも残っていないと、CSV のファイル名から拾うしかなかった。 */
+let prevSession = (()=>{ try{ return localStorage.getItem('prevSession') || ''; }catch(e){ return ''; } })();
+
 $('session-new')?.addEventListener('click', ()=>{
+  // 進行中の件数を実数で出す。「集計が 0 から始まります」を
+  // 「焼き待ちの注文が全画面から消える」と読み取れる人はいない。
+  const live = orders.filter(o=>o.status === 'pending' || o.status === 'ready').length;
+  const owed = orders.filter(o=>!o.paid && o.status !== 'cancelled').length;
   ask({
     title: '締めて、次の回を始めますか？',
     sub: '今の回のCSVを保存してから切り替えます。売上・在庫・番号札の集計が 0 から始まります。',
-    warn: '注文は消えません。これまでの記録はそのまま残ります。',
+    warn: (live || owed)
+      ? `いま進行中の 焼き待ち・受渡待ち ${live}件、未収 ${owed}件 が、`
+        + '厨房・受渡・支払い口・呼び出しの画面から見えなくなります。'
+        + `戻すには営業回 ${session} を入れ直す必要があります（画面からは戻せません）。`
+      : '注文は消えません。これまでの記録はそのまま残ります。',
     onYes: async ()=>{
       // 締めの CSV を自動で落とす。人手の「保存し忘れ」を無くす。
       //
@@ -3569,6 +3940,15 @@ $('session-new')?.addEventListener('click', ()=>{
             + '（営業回はまだ切り替えていません）', 'error', null, 9000);
         return;
       }
+      // 0 件のまま締めると、ヘッダだけの CSV が「その回の唯一の記録」として
+      // 残り、営業回だけが進む。注文の購読がまだ届いていない・切られている
+      // ときがこれに当たる（9/29 に 102 バイトの実例が残っている）。
+      if(!closeReady()){
+        toast('この回の注文がまだ画面に届いていません。'
+            + '注文が表に出てから締めてください。'
+            + '（営業回はまだ切り替えていません）', 'error', null, 9000);
+        return;
+      }
       if(!saveCSV('orders')) return;
       // ダウンロードを続けて 2 回起こすと、2 枚目が黙って落ちない端末がある。
       // 1 枚目が保存ダイアログを抜けるまで少し待つ。
@@ -3578,8 +3958,14 @@ $('session-new')?.addEventListener('click', ()=>{
       const id = d.toISOString().slice(0,16).replace(/[-:T]/g,'').replace(/(\d{8})(\d{4})/,'$1-$2');
       try{
         await authReady;
+        const from = session;
         await tracked(set(ref(db,'config/session'), id));
-        toast(`新しい営業回 ${id} を始めました。`, 'info');
+        // 戻すのに要るのはこの文字列だけ。画面にもどこにも残っていないと、
+        // CSV のファイル名から拾うしかなかった。
+        prevSession = from;
+        try{ localStorage.setItem('prevSession', from); }catch(e){}
+        paintSession();
+        toast(`新しい営業回 ${id} を始めました。（ひとつ前は ${from}）`, 'info', null, 9000);
       }catch(e){ toast(writeHint(e, '営業回を切り替えられませんでした')); }
     }
   });
@@ -3703,6 +4089,10 @@ $('price-save').addEventListener('click', async ()=>{
 /* CSV を作れる状態か。締めの前に一度だけ確かめ、作れないなら締めを始めない。 */
 const csvReady = () =>
   !!(window.wasmReady && window.goGenerateOrdersCSV && window.goGenerateSummaryCSV);
+/* 締めてよいか。0 件のまま締めると、ヘッダだけの CSV が「その回の唯一の記録」
+   として残り、営業回は進んでしまう（9/29 に 102 バイトの実例が残っている）。
+   注文の最初のスナップショットが届く前や、購読が切られている間がこれに当たる。 */
+const closeReady = () => csvReady() && !firstSnap && orders.length > 0;
 
 function saveCSV(kind){
   const fn = kind === 'summary' ? window.goGenerateSummaryCSV : window.goGenerateOrdersCSV;
@@ -3714,10 +4104,15 @@ function saveCSV(kind){
   if(!bytes){ toast('CSVを作れませんでした。'); return false; }
   const url = URL.createObjectURL(new Blob([bytes],{type:'text/csv;charset=utf-8;'}));
   const a = document.createElement('a');
-  const day = new Date().toISOString().slice(0,10);
+  // 日付も JST。UTC で採ると、日本の 0:00〜9:00 に締めたとき前日の名前になる
+  // （営業回 ID は JST で付けているので、同じ操作の中で基準が 2 つあった）。
+  const day = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0,10);
   a.href = url;
   a.download = `${kind === 'summary' ? 'summary' : 'orders'}_${session}_${day}.csv`;
-  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  document.body.appendChild(a); a.click(); a.remove();
+  // Safari は blob の読み出しを非同期で行うので、click の直後に捨てると
+  // 0 バイトで保存される（しかも saveCSV は成功を返す）。
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
   return true;
 }
 $('csv-btn').addEventListener('click', ()=>saveCSV('orders'));
@@ -3761,6 +4156,7 @@ function switchTab(t){
   }
   // 厨房は display:none の間は高さが測れない。開いた時点で測り直す。
   if(t === 'kitchen') fitBoard();
+  if(t === 'call') renderCall();
   // 画面ごとに省エネの条件が違う。切り替えたら必ず取り直す。
   busySince = Date.now();
   setSaver(false);

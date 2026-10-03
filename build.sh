@@ -44,6 +44,9 @@ fi
 echo "==> 配信物 public/ を組む"
 rm -rf public && mkdir -p public
 cp index.html app.js sw.js main.wasm wasm_exec.js public/
+# 当日その場で開く紙。配信物に入れておかないと、現場の URL からは辿れない。
+cp manual.html public/ 2>/dev/null || true
+[ -f poster.html ] && cp poster.html public/ || true
 [ -f firebase-config.js ] && cp firebase-config.js public/ || true
 cp -r art lib vendor public/
 [ -f tailwind.local.js ] && cp tailwind.local.js public/ || true

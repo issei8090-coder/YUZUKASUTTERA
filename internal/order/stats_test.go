@@ -295,6 +295,48 @@ func TestPaymentInCSV(t *testing.T) {
 	}
 }
 
+// 代金を受け取ったあとに中止した注文は、受注額にも受取済みにも入らない。
+// 現金だけが手元に残るので、サマリに返金すべき額と金庫の理論値が出ること。
+// 当日（2026-10-03）はこれが 5 件 1,800 円あり、どの数字にも現れなかった。
+func TestRefundDueInSummaryCSV(t *testing.T) {
+	res := DecodeResult{Orders: []Order{
+		{ID: "a", Number: "#001", Status: StatusCompleted, Paid: true, Price: 500, Quantity: 2,
+			Items: []Item{{Flavor: "plain", Quantity: 2, UnitPrice: 250, Price: 500}}, CreatedAt: "12:00:00"},
+		{ID: "b", Number: "#002", Status: StatusCancelled, Paid: true, Price: 300, Quantity: 1,
+			Items: []Item{{Flavor: "plain", Quantity: 1, UnitPrice: 300, Price: 300}}, CreatedAt: "12:05:00"},
+	}}
+	b, err := SummaryCSV(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(b, utf8BOM)))
+	r.FieldsPerRecord = -1
+	rows, err := r.ReadAll()
+	if err != nil {
+		t.Fatalf("サマリ CSV が読み戻せない: %v", err)
+	}
+	got := map[string]string{}
+	for _, row := range rows {
+		if len(row) >= 2 {
+			got[strings.TrimSpace(row[0])] = row[1]
+		}
+	}
+	for k, v := range map[string]string{
+		"受取済み金額(円)":        "500",
+		"▲ 返金すべき金額(円)":     "300",
+		"▲ 返金すべき件数(件)":     "1",
+		"金庫にあるべき額(円・返金前)": "800",
+	} {
+		if got[k] != v {
+			t.Errorf("サマリ %s = %q, want %q", k, got[k], v)
+		}
+	}
+	// 件数だけでは現物を探せない。要対応の一覧に注文IDが出ること。
+	if !bytes.Contains(b, []byte("■ 要対応の注文")) || !bytes.Contains(b, []byte("要返金")) {
+		t.Error("要対応の注文の一覧がサマリに出ていない")
+	}
+}
+
 func TestPaymentInSummaryCSV(t *testing.T) {
 	b, err := SummaryCSV(decode(t, paymentSample))
 	if err != nil {
@@ -315,12 +357,16 @@ func TestPaymentInSummaryCSV(t *testing.T) {
 		}
 	}
 	want := map[string]string{
-		"受取済み金額(円)":     "500",
-		"未収金額(円)":       "750",
-		"うち渡したのに未払い(円)": "500",
-		"うち渡したのに未払い(件)": "1",
-		"支払い済み(件)":      "2",
-		"未払い(件)":        "2",
+		"受取済み金額(円)":      "500",
+		"未収金額(円)":        "750",
+		"うち渡したのに未払い(円)":  "500",
+		"うち渡したのに未払い(件)":  "1",
+		"支払い済み(件・中止を除く)": "2",
+		"未払い(件・中止を除く)":   "2",
+		// この見本の中止は未払いなので、返金すべき額は無い。
+		"▲ 返金すべき金額(円)":      "0",
+		"▲ 返金すべき件数(件)":      "0",
+		"金庫にあるべき額(円・返金前)": "500",
 	}
 	for k, v := range want {
 		if got[k] != v {
