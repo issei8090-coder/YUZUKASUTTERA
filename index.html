@@ -1027,6 +1027,11 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .deal-note{margin:0;color:var(--warn);font-size:clamp(14px,2vh,18px);letter-spacing:.04em;
   border:1px solid var(--warn);border-radius:var(--r-card);padding:8px 14px}
 .deal-note[hidden]{display:none}
+/* 返金の面。普段は空なので、1 件でも出たら目に入る強さにする。 */
+.refund-sum{flex:none;margin:0;font-family:var(--serif);color:var(--warn);
+  font-size:clamp(22px,3.4vh,32px);letter-spacing:.06em;line-height:1.2}
+.refund-sum[hidden]{display:none}
+.ops-card[data-refund="true"]{border-color:var(--warn)}
 /* 呼び出し表示に入り切らない札。お客様は触れないので自分で送れない。 */
 #call-more{color:var(--red);font-weight:700;margin-right:1em}
 #call-more[hidden]{display:none}
@@ -2187,6 +2192,10 @@ if (location.protocol === 'file:') {
         <span class="kds-stat ops-alert" id="pay-lost-wrap" hidden
               role="status" aria-atomic="true">
           渡したのに未払い <b id="pay-lost">0</b> 件</span>
+        <!-- 返金すべき額。3 面目を開かないと存在に気づけないので、ここにも出す。 -->
+        <span class="kds-stat ops-due" id="pay-refund-wrap" hidden
+              role="status" aria-atomic="true">
+          返金 <b id="pay-refund">0</b> 件 <b id="pay-refund-yen">0</b> 円</span>
         <span class="ops-find">
           <label class="sr-only" for="pay-find">番号で絞り込む</label>
           <input type="text" id="pay-find" inputmode="numeric" autocomplete="off"
@@ -2239,11 +2248,27 @@ if (location.protocol === 'file:') {
           <button type="button" class="ops-sub" id="chg-clear">クリア</button>
         </div>
       </section>
+
+      <!-- 3 面目：返金。中止したのに代金を受け取っている注文。
+           受注額にも受取済みにも入らないので、ここに出さないと
+           締めるまで誰も気づけない（当日 5 件 1,800 円が残った）。
+           返したかどうかを残す欄が無いので、この操作がその記録になる。 -->
+      <section class="deck-page" aria-label="返金">
+        <p class="deck-head">返金（中止したのに代金を受け取っている注文）</p>
+        <p class="refund-sum" id="refund-sum"></p>
+        <div class="kds-grid" id="refund-list"></div>
+        <p class="kds-empty hidden" id="refund-empty">
+          <b>返金すべき注文はありません</b>
+          代金を受け取ったあとに中止した注文が、ここに出ます。<br>
+          現金をお返ししたら「返したと記録」を押すと、金庫の理論値から外れます。
+        </p>
+      </section>
       </div>
 
       <nav class="deck-dots" id="pay-dots" aria-label="支払い口の画面">
         <button type="button" data-page="0" aria-current="page">未収</button>
         <button type="button" data-page="1">おつり</button>
+        <button type="button" data-page="2">返金</button>
       </nav>
     </section>
 

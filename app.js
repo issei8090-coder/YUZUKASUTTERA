@@ -3278,6 +3278,53 @@ function renderPay(){
               aria-label="${numOf(o)} を未払いに戻す">未払いに戻す</button>
     </div>`).join('');
   $('paid-empty').classList.toggle('hidden', paid.length>0);
+  renderRefund();
+}
+
+/* ---------- 支払い口 3 面目：返金 ----------
+   代金を受け取ったあとに中止した注文。キャンセルは受注額からも支払い軸からも
+   外れるので、どの数字にも現れないまま現金だけが手元に残る。
+   当日（2026-10-03）はこれが 5 件 1,800 円あり、締めで初めて差額として出た。
+
+   返したかどうかを残す欄が無いので、「返したと記録」＝ paid を落とす操作が
+   その記録になる。押すと集計の「返金すべき」と金庫の理論値から外れる。 */
+function renderRefund(){
+  const list = $('refund-list'); if(!list) return;
+  const due = orders.filter(o => o.status === 'cancelled' && o.paid).sort(byOrder);
+  const sum = due.reduce((n,o)=>n + (o.price||0), 0);
+
+  // 上のバーにも出す。3 面目を開かないと存在に気づけない数字なので。
+  const wrap = $('pay-refund-wrap');
+  if(wrap){
+    wrap.hidden = due.length === 0;
+    $('pay-refund').textContent = due.length;
+    $('pay-refund-yen').textContent = yen(sum);
+  }
+
+  const head = $('refund-sum');
+  if(head){
+    head.hidden = due.length === 0;
+    head.textContent = `お返しする合計 ${yen(sum)}円 ／ ${due.length}件`;
+  }
+
+  list.innerHTML = due.map(o=>`
+    <article class="ops-card" data-refund="true"
+             aria-label="${numOf(o)} 返金 ${yen(o.price||0)}円">
+      <header class="ops-head">
+        <span class="ops-num">${numOf(o)}</span>
+        <span class="ops-timer">${o.createdAt || ''}</span>
+      </header>
+      <span class="ops-state" data-kind="lost">中止・代金を受け取り済み</span>
+      ${opsLines(o)}
+      <p class="ops-amount">${yen(o.price||0)}<small>円</small></p>
+      <button type="button" class="ops-do" data-kind="cash" data-act="unpay"
+              data-id="${o.id}" data-num="${numOf(o)}"
+              aria-label="${numOf(o)} に ${yen(o.price||0)}円 を返したと記録する">
+        ${yen(o.price||0)}円 返したと記録</button>
+    </article>`).join('');
+
+  const empty = $('refund-empty');
+  if(empty) empty.classList.toggle('hidden', due.length > 0);
 }
 
 /* 記録表の操作ボタン。どの状態から何へ動かせるかは Go の遷移表が唯一の正で、
