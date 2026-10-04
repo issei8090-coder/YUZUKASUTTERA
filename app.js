@@ -11,7 +11,7 @@ import * as audio from "./lib/audio.js";
 import { countUp, bloom, nudge, reduced } from "./lib/motion.js";
 import {
   soldOf as pureSold, remainingOf as pureRemaining, headroomOf as pureHeadroom,
-  tagsInUse as pureTagsInUse, fallbackBuild, normalize, inSession, DEFAULT_SESSION,
+  tagsInUse as pureTagsInUse, fallbackBuild, normalize, inSession, sessionOf, DEFAULT_SESSION,
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines,
   madeOf, backlogCups, oldestWaitMin, measuredRate, planDeal, dealDemand,
@@ -4342,6 +4342,61 @@ function paintSession(){
    画面にもどこにも残っていないと、CSV のファイル名から拾うしかなかった。 */
 let prevSession = (()=>{ try{ return localStorage.getItem('prevSession') || ''; }catch(e){ return ''; } })();
 
+/* ---------- 営業回を選び直す ----------
+   締めやテストを押し間違えると、進行中の注文が全画面から消える。
+   ひとつ前の回を端末の中にしか覚えていなかったので、別の端末では戻せなかった。
+   注文そのものが session を持っているので、そこから一覧を作る。
+   注文は消えないので、戻せば全部そのまま出てくる。 */
+function openSessionPick(){
+  const seen = new Map();
+  for(const o of allOrders){
+    const key = sessionOf(o);
+    const cur = seen.get(key) || { key, n: 0, last: 0 };
+    cur.n++;
+    cur.last = Math.max(cur.last, o.createdMs || 0);
+    seen.set(key, cur);
+  }
+  if(!seen.has(session)) seen.set(session, { key: session, n: 0, last: Date.now() });
+  const list = [...seen.values()].sort((a,b)=> b.last - a.last);
+
+  $('session-list').innerHTML = list.map(x=>`
+    <button type="button" class="session-row" data-session="${x.key}"
+            data-test="${/^test-/.test(x.key)}" aria-current="${x.key === session}"
+            aria-label="営業回 ${x.key} に切り替える">
+      <b>${x.key === DEFAULT_SESSION ? '既定（仕切りなし）' : x.key}</b>
+      <small>${x.n}件${x.last ? ` ／ 最後 ${hhmm(x.last)}` : ''}${
+        x.key === session ? ' ／ いまここ' : ''}</small>
+    </button>`).join('');
+  openModal('m-session');
+}
+
+$('session-pick')?.addEventListener('click', openSessionPick);
+$('session-pick-no')?.addEventListener('click', closeModal);
+$('session-list')?.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-session]');
+  if(!b) return;
+  const to = b.dataset.session;
+  if(to === session){ closeModal(); return; }
+  closeModal();
+  const n = allOrders.filter(o => inSession(o, to)).length;
+  ask({
+    title: `営業回 ${to} に切り替えますか？`,
+    sub: `その回の注文 ${n}件 が、厨房・受渡・支払い口・記録に戻ります。`,
+    warn: 'いまの回の注文は消えません。いつでもここから戻せます。',
+    onYes: async ()=>{
+      try{
+        await authReady;
+        const from = session;
+        await tracked(set(ref(db,'config/session'), to));
+        prevSession = from;
+        try{ localStorage.setItem('prevSession', from); }catch(e){}
+        paintSession();
+        toast(`営業回 ${to} に切り替えました。`, 'ok');
+      }catch(e){ toast(writeHint(e, '営業回を切り替えられませんでした')); }
+    }
+  });
+});
+
 /* ---------- テスト（稽古） ----------
    本番と同じ DB のまま、営業回だけを test- で始まる名前に切り替える。
    画面も売上も在庫も番号札も営業回で絞られているので、これだけで
@@ -4350,7 +4405,8 @@ let prevSession = (()=>{ try{ return localStorage.getItem('prevSession') || ''; 
 $('session-test')?.addEventListener('click', ()=>{
   if(isTest()){
     const back = prevSession;
-    if(!back){ toast('戻る先の営業回が分かりません。記録・売上から選び直してください。'); return; }
+    // この端末で始めたテストでなければ、覚えていない。一覧から選ばせる。
+    if(!back){ openSessionPick(); return; }
     ask({
       title: 'テストを終えて本番に戻しますか？',
       sub: `営業回を ${back} に戻します。テスト中に受けた注文は残りますが、画面からは外れます。`,

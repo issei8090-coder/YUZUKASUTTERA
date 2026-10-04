@@ -889,6 +889,17 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .plate-name{font-family:var(--serif);color:var(--brown);font-size:18px;min-width:3.5em}
 .plate-row .field{margin:0}
 .plate-row .field input{width:5.5em}
+/* 営業回の一覧。押し間違えたときの戻り道なので、1 行ずつ大きく出す。 */
+.session-list{display:grid;gap:10px;margin:16px 0;max-height:46vh;overflow-y:auto}
+.session-row{display:flex;align-items:center;gap:14px;width:100%;cursor:pointer;
+  background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);
+  padding:14px 18px;min-height:var(--tap);text-align:left;font-size:16px;color:var(--brown)}
+.session-row:hover{background:var(--lift)}
+.session-row[aria-current="true"]{border-color:var(--brown);background:var(--lift)}
+.session-row b{font-family:var(--serif);font-size:18px}
+.session-row small{margin-left:auto;color:var(--brown-soft);font-size:14px;text-align:right}
+.session-row[data-test="true"] b::after{content:"　テスト";color:#8A6410;font-size:14px}
+
 .plate-state{margin-left:auto;font-size:15px;letter-spacing:.06em;color:#1F7A4D;font-weight:700}
 .plate-state[data-use="false"]{color:var(--red)}
 .plate-mode{min-height:var(--tap);padding:0 20px;border-radius:var(--r-ctl);cursor:pointer;
@@ -2502,6 +2513,8 @@ if (location.protocol === 'file:') {
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <!-- 稽古用の仕切り。本番と同じ DB のまま、売上も在庫も番号札も
                別の営業回にするので、本番の数字に一切混ざらない。 -->
+          <button type="button" class="cta-ghost" id="session-pick"
+                  style="min-height:var(--tap);font-size:15px;padding:0 24px">営業回を選び直す</button>
           <button type="button" class="cta-ghost" id="session-test"
                   style="min-height:var(--tap);font-size:15px;padding:0 24px">テストを始める</button>
           <button type="button" class="cta-ghost" id="session-new"
@@ -2671,6 +2684,20 @@ if (location.protocol === 'file:') {
     <div class="sheet-actions" style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
       <button type="button" class="cta" id="place-yes" style="width:100%;justify-content:center">取りました・確定する</button>
       <button type="button" class="cta-ghost" id="place-no" style="width:100%;justify-content:center">まだです・戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- 営業回を選び直す。締めやテストを押し間違えても、ここから戻れる。
+     ひとつ前の回を端末の中にしか覚えていないと、別の端末では戻せなかった。
+     注文そのものが session を持っているので、そこから一覧を作る。 -->
+<div class="modal" id="m-session" role="dialog" aria-modal="true" aria-labelledby="session-h">
+  <div class="sheet">
+    <h2 id="session-h">どの営業回に切り替えますか？</h2>
+    <p class="sheet-sub">いま見えている注文が切り替わります。注文そのものは消えません。</p>
+    <div class="session-list" id="session-list"></div>
+    <div class="sheet-actions" style="margin-top:8px">
+      <button type="button" class="cta-plain" id="session-pick-no" style="width:100%;justify-content:center">戻る</button>
     </div>
   </div>
 </div>
