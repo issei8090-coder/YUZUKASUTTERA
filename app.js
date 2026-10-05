@@ -15,7 +15,7 @@ import {
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines,
   madeOf, backlogCups, oldestWaitMin, measuredRate, planDeal, dealDemand,
-  voidedOf, wantOf, netPriceOf, netQtyOf, heldOf, timeBuckets, kpiOf,
+  voidedOf, wantOf, netPriceOf, netQtyOf, heldOf, timeBuckets, kpiOf, waitMsOf,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
   usedPlates, kitchenPeople, batterRate,
@@ -4097,6 +4097,9 @@ async function changeStatus(id, from, to){
       // ここで書けば writer は「用意できた」を押した 1 台だけで、書き込みも 1 回。
       if(to === 'ready'){ cur.calledAt = Date.now(); cur.calls = (was === 'ready' ? (cur.calls||0) : 0) + 1; }
       if(to === 'pending'){ delete cur.calledAt; delete cur.calls; }
+      // 実際にお渡しした時刻。待ち時間はこれで測る（支払いの時刻ではない）。
+      if(to === 'completed') cur.completedMs = Date.now();
+      if(was === 'completed' && to !== 'completed') delete cur.completedMs;
       // 記録表から「用意した」を押したときは made が空のまま ready になり、
       // 焼き待ちカップが厨房の板と見積もりから静かに消える。実物に合わせて埋める。
       if(to === 'ready' && was === 'pending'){
@@ -4642,6 +4645,8 @@ function renderKpi(){
     ['受注額',       `${yen(k.yen)}<small>円</small>`],
     ['客単価',       `${yen(k.avgYen)}<small>円</small>`],
     ['待ち時間（中央）', k.waitMin === null ? '—' : `${k.waitMin.toFixed(1)}<small>分</small>`],
+    // 中央値だけ見ると混雑が消える。10 人に 1 人がどれだけ待ったかを併記する。
+    ['10人に1人は', k.waitP90Min === null ? '—' : `${k.waitP90Min.toFixed(0)}<small>分 以上</small>`],
     ['いちばん待たせた', k.maxWaitMin === null ? '—' : `${k.maxWaitMin.toFixed(0)}<small>分</small>`],
     ['混んだ時刻',   k.busiestCups ? `${hhmm(k.busiestAt)}<small>　${k.busiestCups}カップ</small>` : '—'],
     ['動いた時間',   `${k.activeMin}<small>分</small>`],
@@ -4655,7 +4660,9 @@ function renderKpi(){
   const padL = 44, padR = 44, padT = 16, padB = 34;
   const iw = W - padL - padR, ih = H - padT - padB;
   const maxCups = Math.max(1, ...b.map(x => x.cups));
-  const maxWait = Math.max(1, ...b.map(x => x.waitMin || 0));
+  // 目盛りは上位 10% に合わせる。最長に合わせると、1 件の取りはぐれを
+  // 後から回収しただけで（当日 288 分）、ほかの山が全部つぶれる。
+  const maxWait = Math.max(1, ...b.map(x => x.waitP90Min || 0));
   const bw = Math.max(6, iw / b.length - 6);
   const x = i => padL + (i + 0.5) * (iw / b.length);
   const yC = v => padT + ih - (v / maxCups) * ih;
@@ -4683,7 +4690,23 @@ function renderKpi(){
     }).join('');
   }).join('');
 
-  // 待ち時間（折れ線）。カップ数とは単位が違うので右軸で読む。
+  // 待ち時間。中央値だけだと混雑が消えるので、中央〜上位10% を帯で出し、
+  // 中央値を実線で引く。カップ数とは単位が違うので右軸で読む。
+  const clamp = v => Math.min(v, maxWait);
+  // 中央値から上位10% までを「ひげ」で出す。棒と同じ幅の帯にすると、
+  // 積み上げの 3 つ目の味に見えてしまう（実際そう見えた）。
+  const band = b.map((x0,i)=>{
+    if(x0.waitMin === null) return '';
+    const y0 = yW(clamp(x0.waitP90Min)), y1 = yW(x0.waitMin);
+    if(y1 - y0 < 2) return '';
+    const cx = x(i), cap = Math.min(10, bw * 0.4);
+    return `<g stroke="#A63D30" stroke-width="2" opacity=".85">
+              <line x1="${cx.toFixed(1)}" x2="${cx.toFixed(1)}" y1="${y0.toFixed(1)}" y2="${y1.toFixed(1)}"/>
+              <line x1="${(cx-cap).toFixed(1)}" x2="${(cx+cap).toFixed(1)}"
+                    y1="${y0.toFixed(1)}" y2="${y0.toFixed(1)}"/>
+              <title>${hhmm(x0.t)} 10人に1人は ${x0.waitP90Min.toFixed(0)}分以上</title>
+            </g>`;
+  }).join('');
   const pts = b.map((x0,i)=> x0.waitMin === null ? null : `${x(i).toFixed(1)},${yW(x0.waitMin).toFixed(1)}`)
                .filter(Boolean);
   const line = pts.length > 1
@@ -4691,7 +4714,8 @@ function renderKpi(){
                  stroke-linejoin="round" stroke-linecap="round"/>` : '';
   const dots = b.map((x0,i)=> x0.waitMin === null ? '' :
     `<circle cx="${x(i).toFixed(1)}" cy="${yW(x0.waitMin).toFixed(1)}" r="3.5" fill="#A63D30">
-       <title>${hhmm(x0.t)} 待ち ${x0.waitMin.toFixed(1)}分</title></circle>`).join('');
+       <title>${hhmm(x0.t)} 中央 ${x0.waitMin.toFixed(1)}分 ／ 上位10% ${x0.waitP90Min.toFixed(0)}分`
+       + `${x0.maxWaitMin > x0.waitP90Min ? ` ／ 最長 ${x0.maxWaitMin.toFixed(0)}分` : ''}</title></circle>`).join('');
   const waitAxis = [0, 0.5, 1].map(r=>{
     const v = maxWait * r;
     return `<text x="${W-padR+8}" y="${yW(v)+4}" font-size="11" fill="#A63D30">${v.toFixed(0)}分</text>`;
@@ -4707,11 +4731,18 @@ function renderKpi(){
   host.innerHTML =
     `<svg viewBox="0 0 ${W} ${H}" role="img"
           aria-label="時間帯ごとの出たカップ数と待ち時間">
-       ${grid}${bars}${line}${dots}${waitAxis}${ticks}
+       ${grid}${bars}${band}${line}${dots}${waitAxis}${ticks}
      </svg>
      <p class="kpi-legend">`
     + FLAVORS.map(f=>`<span><i style="background:${COL[f.key]||'#8A6C34'}"></i>${f.label}（カップ・左目盛り）</span>`).join('')
-    + `<span><i style="background:#A63D30;border-radius:999px"></i>待ち時間（分・右目盛り）</span></p>`;
+    + `<span><i style="background:#A63D30;border-radius:999px"></i>待ち時間の中央値（分・右目盛り）</span>`
+    + `<span><i style="background:#A63D30;width:3px;border-radius:0"></i>中央〜上位10%（ひげ）</span></p>`
+    + `<p class="kpi-note">待ち時間は<b>受付からお渡しまで</b>。`
+    + (k.waitFromHandover < 0.5
+        ? 'お渡しの時刻を記録していない注文は、支払いの時刻で代えています'
+          + `（この回は ${Math.round(k.waitFromHandover*100)}% だけが実測）。`
+        : `この回は ${Math.round(k.waitFromHandover*100)}% がお渡しの実測です。`)
+    + `目盛りは上位10%に合わせているので、それを超えた分はひげの上端で止まります。</p>`;
 }
 
 $('kpi-span')?.addEventListener('click', e=>{
