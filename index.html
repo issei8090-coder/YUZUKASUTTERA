@@ -890,6 +890,23 @@ body[data-tab="pay"] .nav-toggle{background:#242019;border-color:#3A322A;color:#
 .plate-row .field{margin:0}
 .plate-row .field input{width:5.5em}
 /* 営業回の一覧。押し間違えたときの戻り道なので、1 行ずつ大きく出す。 */
+/* 時間帯の推移。外部の作図ライブラリは入れない（回線が死んでいても出す必要がある）。
+   SVG を自分で組み、色は商品カードと同じ胡桃／チョコに揃える。 */
+.kpi-sum{display:grid;gap:12px;margin:18px 0 4px;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.kpi-cell{background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);
+  padding:14px 16px}
+.kpi-k{display:block;font-size:13px;letter-spacing:.1em;color:var(--brown-soft)}
+.kpi-v{display:block;font-family:var(--serif);color:var(--brown);line-height:1.1;
+  font-size:clamp(24px,3.4vw,32px);margin-top:4px}
+.kpi-v small{font-size:.45em;margin-left:.15em;color:var(--brown-soft)}
+.kpi-chart{margin-top:18px;overflow-x:auto}
+.kpi-chart svg{display:block;min-width:520px;width:100%;height:auto}
+.kpi-legend{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0 0;font-size:14px;color:var(--brown-soft)}
+.kpi-legend span{display:flex;align-items:center;gap:7px}
+.kpi-legend i{width:14px;height:14px;border-radius:3px;display:inline-block}
+.kpi-empty{color:var(--brown-soft);font-size:15px;margin:18px 0 0}
+
 .session-list{display:grid;gap:10px;margin:16px 0;max-height:46vh;overflow-y:auto}
 .session-row{display:flex;align-items:center;gap:14px;width:100%;cursor:pointer;
   background:var(--card);border:1px solid var(--gold-line);border-radius:var(--r-card);
@@ -2520,6 +2537,23 @@ if (location.protocol === 'file:') {
           <button type="button" class="cta-ghost" id="session-new"
                   style="min-height:var(--tap);font-size:15px;padding:0 24px">締めて次の回を始める</button>
         </div>
+      </div>
+
+      <!-- 時間帯の推移。締めた CSV は合計しか教えてくれないが、
+           次に同じ規模で動かすときの設定（台数・見込み率・作り置きの量）は
+           「いつ混んだか」「そのとき何分待たせたか」でしか決められない。 -->
+      <div class="panel" style="margin-top:34px">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center">
+          <h2 class="sec-title" style="margin:0">時間帯の推移</h2>
+          <div class="ops-chips" id="kpi-span" role="group" aria-label="刻みの長さ">
+            <button type="button" class="mini" data-span="10" aria-pressed="false">10分</button>
+            <button type="button" class="mini" data-span="15" aria-pressed="true">15分</button>
+            <button type="button" class="mini" data-span="30" aria-pressed="false">30分</button>
+          </div>
+        </div>
+        <div id="kpi-sum" class="kpi-sum"></div>
+        <div id="kpi-chart" class="kpi-chart"></div>
+        <p class="kpi-empty hidden" id="kpi-empty">この回の注文がまだありません。</p>
       </div>
 
       <div class="panel" style="margin-top:34px">

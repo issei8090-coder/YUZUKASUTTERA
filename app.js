@@ -15,7 +15,7 @@ import {
   seqOf, byOrder, waitText, waitClass, elapsedSec, mmss, ageOf,
   encodeLines, decodeLines,
   madeOf, backlogCups, oldestWaitMin, measuredRate, planDeal, dealDemand,
-  voidedOf, wantOf, netPriceOf, netQtyOf, heldOf,
+  voidedOf, wantOf, netPriceOf, netQtyOf, heldOf, timeBuckets, kpiOf,
   forecast, reserveOn, stopIntake, hhmm,
   kitchenOf, cyclePieces, rateFromKitchen, planBakers, piecesLeft,
   usedPlates, kitchenPeople, batterRate,
@@ -278,7 +278,7 @@ function applySession(){
   tickFlow();
   // 仕事が入ったら幕を上げる。暗いまま見逃すのがいちばん重い。
   if(workCount() > 0) wakeSaver();
-  renderKitchen(); renderReady(); renderPay(); renderRows();
+  renderKitchen(); renderReady(); renderPay(); renderRows(); renderKpi();
   renderFigures(); renderCall(); renderTags(); syncCart();
 }
 
@@ -4615,6 +4615,112 @@ $('price-save').addEventListener('click', async ()=>{
   }catch(e){
     fail('保存できませんでした。通信を確かめてください。', '[data-pkey]');
   }
+});
+
+/* ---------- 時間帯の推移（KPI） ----------
+   作図のライブラリは入れない。回線が死んでいても出せる必要があるし、
+   この店が外から読み込んでいるのはフォントだけにしてある。SVG を自分で組む。
+
+   出すのは 3 本だけ。
+     ・何カップ出たか（味ごとの積み上げ）… 作り置きと在庫の配分を決める
+     ・何分待たせたか（中央値と最長）    … 台数と見込み率を決める
+     ・いちばん混んだ刻み                 … シフトの厚みを決める
+   それ以外は締めの CSV で足りる。 */
+let kpiSpan = 15;
+
+function renderKpi(){
+  const host = $('kpi-chart');
+  if(!host) return;
+  const flavors = FLAVORS.map(f => f.key);
+  const b = timeBuckets(orders, { minutes: kpiSpan, flavors });
+  const k = kpiOf(orders, { minutes: kpiSpan, flavors });
+
+  const empty = $('kpi-empty');
+  if(empty) empty.classList.toggle('hidden', b.length > 0);
+  $('kpi-sum').innerHTML = b.length ? [
+    ['出たカップ',   `${k.cups}<small>カップ</small>`],
+    ['受注額',       `${yen(k.yen)}<small>円</small>`],
+    ['客単価',       `${yen(k.avgYen)}<small>円</small>`],
+    ['待ち時間（中央）', k.waitMin === null ? '—' : `${k.waitMin.toFixed(1)}<small>分</small>`],
+    ['いちばん待たせた', k.maxWaitMin === null ? '—' : `${k.maxWaitMin.toFixed(0)}<small>分</small>`],
+    ['混んだ時刻',   k.busiestCups ? `${hhmm(k.busiestAt)}<small>　${k.busiestCups}カップ</small>` : '—'],
+    ['動いた時間',   `${k.activeMin}<small>分</small>`],
+    ['毎分',         `${k.cupsPerMin.toFixed(2)}<small>カップ</small>`],
+  ].map(([kk,v])=>`<div class="kpi-cell"><span class="kpi-k">${kk}</span><span class="kpi-v">${v}</span></div>`).join('')
+   : '';
+  if(!b.length){ host.innerHTML = ''; return; }
+
+  // --- 作図 ---
+  const W = Math.max(520, b.length * 34 + 70), H = 300;
+  const padL = 44, padR = 44, padT = 16, padB = 34;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const maxCups = Math.max(1, ...b.map(x => x.cups));
+  const maxWait = Math.max(1, ...b.map(x => x.waitMin || 0));
+  const bw = Math.max(6, iw / b.length - 6);
+  const x = i => padL + (i + 0.5) * (iw / b.length);
+  const yC = v => padT + ih - (v / maxCups) * ih;
+  const yW = v => padT + ih - (v / maxWait) * ih;
+  const COL = { plain: '#C08A3E', flavor_b: '#5A3A24' };
+
+  // 横の目盛り（カップ数）
+  const grid = [0, 0.5, 1].map(r=>{
+    const v = maxCups * r, y = yC(v);
+    return `<line x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}" stroke="#E6DCC4"/>`
+         + `<text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="11" fill="#6B4E35">${Math.round(v)}</text>`;
+  }).join('');
+
+  // 積み上げ棒（味ごと）
+  const bars = b.map((x0,i)=>{
+    let acc = 0;
+    return flavors.map(key=>{
+      const v = x0.byFlavor[key] || 0;
+      if(!v) return '';
+      const y0 = yC(acc + v), y1 = yC(acc);
+      acc += v;
+      return `<rect x="${(x(i)-bw/2).toFixed(1)}" y="${y0.toFixed(1)}" width="${bw.toFixed(1)}"
+                    height="${Math.max(1,y1-y0).toFixed(1)}" fill="${COL[key]||'#8A6C34'}" rx="2">
+                <title>${hhmm(x0.t)} ${label(key)} ${v}カップ</title></rect>`;
+    }).join('');
+  }).join('');
+
+  // 待ち時間（折れ線）。カップ数とは単位が違うので右軸で読む。
+  const pts = b.map((x0,i)=> x0.waitMin === null ? null : `${x(i).toFixed(1)},${yW(x0.waitMin).toFixed(1)}`)
+               .filter(Boolean);
+  const line = pts.length > 1
+    ? `<polyline points="${pts.join(' ')}" fill="none" stroke="#A63D30" stroke-width="2.5"
+                 stroke-linejoin="round" stroke-linecap="round"/>` : '';
+  const dots = b.map((x0,i)=> x0.waitMin === null ? '' :
+    `<circle cx="${x(i).toFixed(1)}" cy="${yW(x0.waitMin).toFixed(1)}" r="3.5" fill="#A63D30">
+       <title>${hhmm(x0.t)} 待ち ${x0.waitMin.toFixed(1)}分</title></circle>`).join('');
+  const waitAxis = [0, 0.5, 1].map(r=>{
+    const v = maxWait * r;
+    return `<text x="${W-padR+8}" y="${yW(v)+4}" font-size="11" fill="#A63D30">${v.toFixed(0)}分</text>`;
+  }).join('');
+
+  // 時刻の目盛り。全部出すと読めないので、1 時間ごとに絞る。
+  const ticks = b.map((x0,i)=>{
+    const d = new Date(x0.t + 9*3600*1000);
+    if(d.getUTCMinutes() !== 0 && b.length > 8) return '';
+    return `<text x="${x(i).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="11" fill="#6B4E35">${hhmm(x0.t)}</text>`;
+  }).join('');
+
+  host.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" role="img"
+          aria-label="時間帯ごとの出たカップ数と待ち時間">
+       ${grid}${bars}${line}${dots}${waitAxis}${ticks}
+     </svg>
+     <p class="kpi-legend">`
+    + FLAVORS.map(f=>`<span><i style="background:${COL[f.key]||'#8A6C34'}"></i>${f.label}（カップ・左目盛り）</span>`).join('')
+    + `<span><i style="background:#A63D30;border-radius:999px"></i>待ち時間（分・右目盛り）</span></p>`;
+}
+
+$('kpi-span')?.addEventListener('click', e=>{
+  const b = e.target.closest('button[data-span]');
+  if(!b) return;
+  kpiSpan = Number(b.dataset.span) || 15;
+  document.querySelectorAll('#kpi-span [data-span]').forEach(x=>
+    x.setAttribute('aria-pressed', String(Number(x.dataset.span) === kpiSpan)));
+  renderKpi();
 });
 
 /* ---------- CSV ---------- */
